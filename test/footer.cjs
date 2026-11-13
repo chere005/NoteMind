@@ -18,6 +18,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   check(Number((await words()).split(' ')[0])<=5,'Folded sections are not counted');
   await js(()=>{document.getElementById('status').textContent='Saved';});await pause(150);
   check(await js(()=>/^Saved \d/.test(document.getElementById('savedAt').textContent)),'The footer says when the Notepad was saved');
+  await js(()=>addTab({path:null,text:'A different draft',assets:{}}));check(await js(()=>document.getElementById('savedAt').textContent===''),'Switching notes clears the previous note’s saved timestamp');
 
   const view=Menu.getApplicationMenu().items.find(i=>i.label==='View').submenu.items;
   check(view.some(i=>i.label==='Zoom In'&&i.accelerator==='CmdOrCtrl+=')&&view.some(i=>i.label==='Zoom Out'&&i.accelerator==='CmdOrCtrl+-')&&view.some(i=>i.label==='Actual Size'&&i.accelerator==='CmdOrCtrl+0'),'View has Zoom In, Zoom Out and Actual Size');

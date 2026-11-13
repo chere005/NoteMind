@@ -17,6 +17,8 @@
  }
  setInterval(update,500);rich.addEventListener('input',()=>update(true));source.addEventListener('input',()=>update(true));update(true);
  new MutationObserver(()=>{if(/^(Saved|Autosaved)\b/.test($('status').textContent))saved.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}).observe($('status'),{childList:true,characterData:true,subtree:true});
+ let savedTab=activeTab?.id;
+ window.addEventListener('notemind-document',event=>{if(event.detail.activeId!==savedTab){savedTab=event.detail.activeId;saved.textContent='';}});
 
  let writing;
  function setZoom(percent,remember=true){
