@@ -1,12 +1,20 @@
-import React,{useEffect,useState} from 'react';
+import {useEffect,useState} from 'react';
 import {MenuButton} from './MenuButton';
-import {videoMenu} from './videoMenu';
-import {useOrientation,setOrientation} from './orientation';
-const command=id=>window.dispatchEvent(new CustomEvent('notemind-command',{detail:id}));
+const command=detail=>window.dispatchEvent(new CustomEvent('notemind-command',{detail}));
 const input=detail=>window.dispatchEvent(new CustomEvent('notemind-input',{detail}));
-export function VideoControl({source,visible}){
- const [devices,setDevices]=useState([]),[device,setDevice]=useState(''),[notes,setNotes]=useState(!document.querySelector('main').hidden);const orientation=useOrientation();
- const refresh=()=>navigator.mediaDevices?.enumerateDevices().then(list=>setDevices(list.filter(d=>d.kind==='videoinput'))).catch(()=>{});
- useEffect(()=>{refresh();const receive=e=>{setDevice(e.detail.device);setDevices(e.detail.devices)};window.addEventListener('notemind-camera-device',receive);navigator.mediaDevices?.addEventListener('devicechange',refresh);const observer=new MutationObserver(()=>setNotes(!document.querySelector('main').hidden));observer.observe(document.querySelector('main'),{attributes:true,attributeFilter:['hidden']});return()=>{window.removeEventListener('notemind-camera-device',receive);navigator.mediaDevices?.removeEventListener('devicechange',refresh);observer.disconnect()}},[]);
- return <MenuButton icon="camera" tint={visible} name="Video" title="Show or hide video" onMain={()=>document.getElementById('paneToggle').click()} dataBar="video" caretDataBar="video-menu" menuBar="video-options" items={()=>videoMenu({platform:'win32',camera:visible,cameras:devices.map(d=>({id:d.deviceId,name:d.label||'Camera'})),cameraId:source==='tablet'?'tablet':source==='off'?null:device,notesPane:notes,orientation},{toggleVideo:()=>document.getElementById('paneToggle').click(),pick:id=>{command(id==='tablet'?'source:tablet':'source:camera');if(id!=='tablet')input({device:id})},off:()=>command('inputOff'),refresh:()=>{refresh();input({refresh:true})},turn:direction=>input({turn:direction==='turn-left'?'left':'right'}),orient:setOrientation,toggleNotesPane:()=>command('toggleEditor')})}/>;
+export function VideoControl({source,visible,documentActive=false,documentId=null,openDocuments=[],onDocument}){
+ const [devices,setDevices]=useState([]),[device,setDevice]=useState(''),[editor,setEditor]=useState(!document.querySelector('main').hidden);
+ const refresh=()=>navigator.mediaDevices?.enumerateDevices().then(list=>setDevices(list.filter(item=>item.kind==='videoinput'))).catch(()=>{});
+ useEffect(()=>{refresh();const receive=event=>{setDevice(event.detail.device);setDevices(event.detail.devices)};window.addEventListener('notemind-camera-device',receive);navigator.mediaDevices?.addEventListener('devicechange',refresh);const observer=new MutationObserver(()=>setEditor(!document.querySelector('main').hidden));observer.observe(document.querySelector('main'),{attributes:true,attributeFilter:['hidden']});return()=>{window.removeEventListener('notemind-camera-device',receive);navigator.mediaDevices?.removeEventListener('devicechange',refresh);observer.disconnect()}},[]);
+ const label=documentActive?'Document':source==='tablet'?'Drawing':source==='camera'?'Camera':'Capture';
+ return <MenuButton icon={documentActive?'doc':source==='tablet'?'pen':'camera'} label={label} chevron name="Capture source" title="Choose drawing, camera or a document" dataBar="video-menu" menuBar="video-options" items={()=>[
+  {label:'Drawing',icon:'pen',checked:!documentActive&&source==='tablet',dataBar:'video-tablet',onClick:()=>command('source:tablet')},
+  {label:'Camera',icon:'camera',checked:!documentActive&&source==='camera',dataBar:'video-camera',onClick:()=>command('source:camera')},
+  ...(openDocuments.length?[{label:'Open Documents',submenu:openDocuments.map(item=>({label:item.name,checked:item.path===documentId,onClick:()=>onDocument(item.path)}))}]:[]),
+  {label:'Open Document…',icon:'doc',onClick:()=>document.getElementById('open').click()},'-',
+  {label:'Camera Device',submenu:devices.length?devices.map(item=>({label:item.label||'Camera',checked:item.deviceId===device,onClick:()=>{command('source:camera');input({device:item.deviceId})}})):[{label:'No cameras found',disabled:true}]},
+  {label:'Refresh Devices',dataBar:'video-refresh',onClick:()=>{refresh();input({refresh:true})}},'-',
+  {label:'Show Editor',checked:editor,dataBar:'video-only',onClick:()=>command('toggleEditor')},
+  {label:'Hide Capture Pane',dataBar:'video-show',onClick:()=>document.getElementById('paneToggle').click()},
+ ]}/>;
 }

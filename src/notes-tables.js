@@ -59,7 +59,7 @@
     changed(); if (table) focus(table.rows[0].children[0]);
   }
   function add() {
-    if (visual && target(anchor())) { const r=$('insertTable').getBoundingClientRect(); menu(r.left,r.bottom); return; }
+    if (visual && target(anchor())) { const r=($('insertMenu')||$('insertTable')).getBoundingClientRect(); menu(r.left,r.bottom); return; }
     let text=source.value.slice(source.selectionStart,source.selectionEnd);
     if(visual){
       const selection=getSelection();text='';

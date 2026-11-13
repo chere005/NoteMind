@@ -9,7 +9,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  const mediaBox=file=>{const text=fs.readFileSync(file).toString('latin1');const m=text.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)/);return m?[Math.round(Number(m[1])),Math.round(Number(m[2]))]:null;};
  try{
   await pause(1000);
-  const item=Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Export as PDF…');
+  const item=Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Export').submenu.items.find(i=>i.label==='Export as PDF…');
   check(item&&item.accelerator==='CmdOrCtrl+Shift+E','File has Export as PDF… on Ctrl+Shift+E');
   const image=fs.readFileSync('test/fixtures/ocr-english.png').toString('base64');
   await js(image=>{addTab({path:null,text:'# Quarterly notes\n\n![Photo](assets/photo.png)\n\n'+Array.from({length:60},(_,i)=>'Line '+i+' of the report.').join('\n\n'),assets:{'assets/photo.png':image},meta:{}});},image);await pause(200);

@@ -69,7 +69,7 @@
     richChanged=true;markDirty();NoteMindWriting.decorate();update();
   }
   function items(){const key=current(),disabled=inTable();return styles.map(([id,label])=>({label,checked:key===id,disabled,labelStyle:/^h[1-6]$/.test(id)?{fontWeight:600,fontSize:[0,19,17,15,14,13,12][Number(id[1])]}:id==='pre'?{fontFamily:'Consolas, monospace'}:id==='blockquote'?{fontStyle:'italic'}:undefined,run:()=>apply(id)}));}
-  button.onclick=()=>{if(visual&&getSelection()?.rangeCount&&rich.contains(getSelection().anchorNode))saved=getSelection().getRangeAt(0).cloneRange();const r=button.getBoundingClientRect();window.notemindMenu(items(),r.left,r.bottom);};
+  button.onclick=()=>{if(visual&&getSelection()?.rangeCount&&rich.contains(getSelection().anchorNode))saved=getSelection().getRangeAt(0).cloneRange();const r=button.getBoundingClientRect();window.notemindMenu(items(),r.left,r.bottom,{trigger:button,label:'Text style'});};
   document.addEventListener('selectionchange',update);source.addEventListener('select',update);source.addEventListener('keyup',update);source.addEventListener('click',update);rich.addEventListener('input',update);source.addEventListener('input',update);
   window.NoteMindStyles={apply,items,update};update();
 })();

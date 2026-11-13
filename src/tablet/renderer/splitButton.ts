@@ -18,7 +18,7 @@ export const shapeOf = (onMain: unknown): MenuShape => (onMain ? "split" : "menu
  * The width of the ▾ segment, in px. "Comfortable" is the point of it: the corner it replaces was 12px square. The bar's fold
  * arithmetic (barFold.ts, cameraHeaderFit.ts) and bars.css (`.bar-split > .bar-btn.caret`) both read this one number.
  */
-export const CARET_WIDTH = 18
+export const CARET_WIDTH = 24
 
 /**
  * Where a menu's left edge goes. A SPLIT's menu hangs under the whole shape and is right-aligned with it (the pen's, at the end of
@@ -52,4 +52,3 @@ export function optionsName(name: string | undefined, title: string): string {
  */
 export const caretBarFor = (dataBar: string | undefined, explicit: string | undefined): string | undefined =>
   explicit ?? (dataBar ? `${dataBar}-menu` : undefined)
-

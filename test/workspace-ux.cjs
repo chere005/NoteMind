@@ -21,7 +21,7 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   check(await js(()=>{const bar=document.getElementById('pen-control'),r=bar.getBoundingClientRect();return r.height<=70&&[...bar.querySelectorAll('button,select')].every(el=>{const b=el.getBoundingClientRect();return !b.width||(b.left>=r.left&&b.right<=r.right&&b.bottom<=r.bottom);});}),'all pen tools, swatches, width and location fit two rows');
   check(await js(()=>!!document.querySelector('[data-tablet=orientation-menu]')&&!!document.querySelector('[data-drawing-location]')),'orientation and the drawing location icon are directly available');
   await js(()=>document.getElementById('writingTools').click());await pause(80);
-  check(await js(()=>['Underline','Strikethrough','Inline Code','Insert Image…','Insert Table','Checklist'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.textContent.trim()===label))),'More retains access to formatting and insertion when toolbar controls are hidden');
+  check(await js(()=>['Underline','Strikethrough','Inline Code','Lists','Paragraph'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.getAttribute('data-menu-label')===label))),'Format retains access to advanced formatting and list menus when controls are hidden');
   await js(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(80);
   await js(()=>{document.getElementById('sidebarToggle').click();document.querySelector('.workspace').style.setProperty('--sidebar-w','360px');});await pause(150);
   check(await js(()=>{const main=document.querySelector('main').getBoundingClientRect(),more=document.getElementById('writingTools').getBoundingClientRect();return main.width>=300&&more.right<=main.right&&more.width>0;}),'a remembered wide sidebar cannot squeeze controls out of a small window');
@@ -37,7 +37,7 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   await command('toggleEditor');check(await js(()=>document.querySelector('main').hidden&&document.getElementById('sidebar').hidden),'capture-only mode removes both writing and sidebar');
   await command('toggleEditor');check(await js(()=>!document.querySelector('main').hidden&&!document.getElementById('sidebar').hidden),'returning from capture restores the visible sidebar');
   await js(()=>{document.querySelector('[data-command=bold]').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));});
-  check(await js(()=>document.activeElement.id==='writingTools'),'toolbar arrow navigation reaches the final visible control');
+  check(await js(()=>document.activeElement.getAttribute('aria-label')==='Toggle Markdown'),'toolbar arrow navigation reaches the Markdown toggle');
   await js(()=>{addTab({path:null,text:'# Heading\n\nCount **these** words.\n\n![Missing picture](assets/missing.png)',assets:{}});window.NoteMindFooter.update(true);});const visualWords=await js(()=>document.getElementById('wordCount').textContent);
   await js(()=>{switchMode(false);window.NoteMindFooter.update(true);});check(await js(()=>document.getElementById('wordCount').textContent)===visualWords,'word counts agree between visual and Markdown modes');
   fs.writeFileSync(path.join(root,'workspace.png'),(await w.webContents.capturePage()).toPNG());report.ok=true;

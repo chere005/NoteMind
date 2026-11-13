@@ -44,10 +44,9 @@ export function PaperMenu() {
     },
   ]
   return (
-    <MenuButton className="menu" data={{ tablet: "paper" }} title={`Paper: ${kind}. Dot grid, lines, squares, isometric dots, Cornell notes; spacing; white, cream or dark.`}
+    <MenuButton name="Paper" live className="menu" data={{ tablet: "paper" }} title={`Paper: ${kind} · Style, spacing and colour`}
                 items={items}>
-      <Icon name="doc" />
+      <Icon name="paper" />
     </MenuButton>
   )
 }
-

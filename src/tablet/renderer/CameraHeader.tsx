@@ -55,74 +55,36 @@ interface CameraProps {
 }
 
 
-export function CameraHeader(p: CameraProps) {
-  const percent = `${p.zoomPercent}%`
-  if (p.empty) {
-    return (
-      <div className="bar-row camera-bar camera-head empty" role="toolbar" aria-label="Camera" data-camera-head="camera">
-        {!p.showEditor && (
-          <button type="button" className="bar-btn label" data-pane="notes" title="Back to Side by Side: the notes and the video together again"
-                  onClick={() => p.onToggleEditor?.()}><span className="bar-label-text">Back to Side by Side</span></button>
-        )}
-        <span className="grow" />
-        <button type="button" className="bar-btn" aria-label="Put the camera away" title="Put the camera away" onClick={p.onHide}><Icon name="close" /></button>
-      </div>
-    )
-  }
-  return (
-    <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Camera" data-camera-head="camera">
-      {}
-      {p.fit.turns && (
-        <>
-          <button type="button" className="bar-btn" data-camera-turn="left" aria-label="Turn left" title="Turn the picture a quarter turn anticlockwise"
-                  disabled={!p.pictured} onClick={() => p.turn(-90)}><Icon name="rotl" /></button>
-          <button type="button" className="bar-btn" data-camera-turn="right" aria-label="Turn right" title="Turn the picture a quarter turn clockwise"
-                  disabled={!p.pictured} onClick={() => p.turn(90)}><Icon name="rotate" /></button>
-        </>
-      )}
-      <MenuButton icon="zoom" label={p.fit.readout && p.zoomed ? percent : undefined} on={p.zoomed || p.zooming}
-                  disabled={!p.pictured && !p.zoomed} data={{ "camera-zoom": "square" }} caretData={{ "camera-zoom": "menu" }} caretDataBar="zoom-menu"
-                  name="Zoom" caretTitle="Zoom options: Zoom to a Box, Original Size"
-                  title={p.zoomed ? `Zoom: the pane shows ${percent} of the picture. Click to drag a box and zoom further; the arrow has Original size.`
-                    : "Zoom: drag a box on the picture and the pane shows just that much"}
-                  onMain={p.onZoom}
-                  items={[
-                    { header: p.zoomed ? `Showing ${percent} of the picture` : "Showing the whole picture" },
-                    { label: "Zoom to a Box", icon: "zoom", onClick: p.onZoom, dataBar: "zoom-box" },
-                    { label: "Original Size", disabled: !p.zoomed, onClick: p.onOriginalSize, dataBar: "zoom-original" },
-                  ]} />
-      <button type="button" className={`bar-btn${p.holding ? " on" : ""}`} data-camera="hold" aria-pressed={p.holding} aria-label="Hold image"
-              title={p.holdTitle} disabled={p.holdOff} onClick={p.onHold}><Icon name="pause" /></button>
-      {p.fit.keep && p.keep && (
-        <button type="button" className="bar-btn" data-camera="keep" aria-label="Keep Page" title={p.keep.off ?? p.keep.title}
-                disabled={p.keep.off !== null} onClick={p.keep.onKeep}><Icon name="keeppage" /></button>
-      )}
-      <MenuButton icon="straighten" dataBar="find-page" on={p.findPage} disabled={!p.pictured && !p.findPage} onMain={p.onFindPage}
-                  name="Find Page" caretTitle="Find Page options: Zoom to Page"
-                  title={p.findPage
-                    ? "Find Page is on: the page is selected (drag a corner if it is off) and is what Writing and Image take, squared up. Click to let it go."
-                    : "Find Page: look for the page under the camera and select it, squared up (its corners can be dragged). Click again to let it go."}
-                  items={[{ label: "Zoom to Page", icon: "zoom", disabled: !p.pictured, onClick: p.onZoomToPage, dataBar: "zoom-page" }]} />
-      {p.fit.undo && <>
-        <button type="button" className="bar-btn" data-camera="undo" aria-label="Undo ink" title="Take back the last stroke" disabled={!p.canUndoInk} onClick={p.onUndoInk}><Icon name="undo" /></button>
-        <button type="button" className="bar-btn danger" data-camera="clear-ink" data-bar="clear-ink" aria-label="Clear the Ink" title="Clear ink on this tab (Undo restores it)" disabled={!p.canClearInk} onClick={p.onClearInk}><Icon name="trash" /></button>
-      </>}
-      {!p.showEditor && (
-        <button type="button" className="bar-btn label" data-pane="notes" title="Back to Side by Side: the notes and the video together again"
-                onClick={() => p.onToggleEditor?.()}><span className="bar-label-text">Back to Side by Side</span></button>
-      )}
-      <span className="grow" />
-      <span className="bar-seg" role="group" aria-label="Take">
-        {TAKES.map((one) => (
-          <button key={one.mode} type="button" className={`bar-btn${p.mode === one.mode ? " on" : ""}`} data-capture={one.mode}
-                  aria-label={one.label} title={one.title} disabled={!p.pictured || p.busy} onClick={() => p.onTake(one.mode)}>
-            {p.fit.words ? one.label : <Icon name={one.icon} />}
-          </button>
-        ))}
-      </span>
-      <button type="button" className="bar-btn" aria-label="Put the camera away" title="Put the camera away" onClick={p.onHide}><Icon name="close" /></button>
-    </div>
-  )
+function EditorButton({onClick}:{onClick?:()=>void}) {
+ return <button type="button" className="bar-btn" data-pane="notes" aria-label="Show editor" title="Show the editor beside the capture pane" onClick={onClick}><Icon name="sidebar"/></button>
+}
+export function CameraHeader(p:CameraProps) {
+ if(p.empty)return <div className="bar-row camera-bar camera-head empty" role="toolbar" aria-label="Camera" data-camera-head="camera">{!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}<span className="camera-empty-label">Choose a camera from the source menu</span></div>
+ const current=TAKES.find(item=>item.mode===p.mode)||TAKES[0]
+ return <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Camera" data-camera-head="camera">
+  {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
+  {p.fit.turns&&<>
+   <button type="button" className="bar-btn" data-camera-turn="left" aria-label="Rotate camera left" title="Rotate camera left" disabled={!p.pictured} onClick={()=>p.turn(-90)}><Icon name="rotl"/></button>
+   <button type="button" className="bar-btn" data-camera-turn="right" aria-label="Rotate camera right" title="Rotate camera right" disabled={!p.pictured} onClick={()=>p.turn(90)}><Icon name="rotate"/></button>
+  </>}
+  <MenuButton icon="zoom" name="Camera zoom" title="Drag a box to zoom" on={p.zoomed||p.zooming} disabled={!p.pictured&&!p.zoomed}
+    data={{"camera-zoom":"square"}} caretData={{"camera-zoom":"menu"}} caretDataBar="zoom-menu" onMain={p.onZoom}
+    items={[{label:'Zoom to a Box',onClick:p.onZoom,dataBar:'zoom-box'},{label:'Zoom to Page',disabled:!p.pictured,onClick:p.onZoomToPage,dataBar:'zoom-page'},{label:'Show Whole Image',disabled:!p.zoomed,onClick:p.onOriginalSize,dataBar:'zoom-original'}]}/>
+  <button type="button" className={'bar-btn'+(p.holding?' tint':'')} data-camera="hold" aria-pressed={p.holding} aria-label={p.holding?'Resume camera':'Hold image'} title={p.holdTitle} disabled={p.holdOff} onClick={p.onHold}><Icon name="pause"/></button>
+  <button type="button" className={'bar-btn'+(p.findPage?' tint':'')} data-bar="find-page" aria-pressed={p.findPage} aria-label="Find Page" title="Find and straighten the page; drag its corners to adjust" disabled={!p.pictured&&!p.findPage} onClick={p.onFindPage}><Icon name="straighten"/></button>
+  {p.keep&&<button type="button" className="bar-btn" data-camera="keep" aria-label="Keep Page" title={p.keep.off??'Keep this camera image as a new page'} disabled={p.keep.off!==null} onClick={p.keep.onKeep}><Icon name="keeppage"/></button>}
+  {p.fit.undo&&<>
+   <button type="button" className="bar-btn" data-camera="undo" aria-label="Undo ink" title="Undo the last ink change" disabled={!p.canUndoInk} onClick={p.onUndoInk}><Icon name="undo"/></button>
+   <button type="button" className="bar-btn danger" data-camera="clear-ink" data-bar="clear-ink" aria-label="Clear the Ink" title="Clear camera ink; Undo restores it" disabled={!p.canClearInk} onClick={p.onClearInk}><Icon name="trash"/></button>
+  </>}
+  <span className="grow"/>
+  <MenuButton icon={current.icon} label={p.fit.words?'Insert '+current.label:undefined} name={'Insert '+current.label} primary disabled={!p.pictured||p.busy} title={'Insert '+current.label.toLowerCase()+' into the open Notepad'} data={{capture:p.mode}} caretData={{camera:'insert-menu'}} onMain={()=>p.onTake(p.mode)}
+    items={[{header:'Insert into Notepad'},...TAKES.map(item=>({label:item.mode==='raw'?'Raw Image':item.label,checked:p.mode===item.mode,disabled:!p.pictured||p.busy,dataBar:'camera-insert-'+item.mode,onClick:()=>p.onTake(item.mode)}))]}/>
+  <MenuButton icon="more" name="Camera options" title="Rotation and ink actions" dataBar="camera-more" items={[
+   {label:'Rotate Left',disabled:!p.pictured,onClick:()=>p.turn(-90)},{label:'Rotate Right',disabled:!p.pictured,onClick:()=>p.turn(90)},'-',
+   {label:'Undo Ink',disabled:!p.canUndoInk,onClick:p.onUndoInk},{label:'Clear Ink',disabled:!p.canClearInk,onClick:p.onClearInk,danger:true},
+  ]}/>
+ </div>
 }
 
 interface TabletProps {
@@ -172,48 +134,27 @@ interface TabletProps {
 }
 
 
-export function TabletHeader(p: TabletProps) {
-  return (
-    <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Tablet sheet" data-camera-head="tablet">
-      <PaperMenu />
-      <OrientationMenu />
-      <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo" /></button>
-      <button type="button" className="bar-btn danger" data-tablet="clear" data-bar="clear" aria-label="Clear the Sheet" title="Clear all strokes (Undo restores them)" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash" /></button>
-      {!p.showEditor && (
-        <button type="button" className="bar-btn label" data-pane="notes" title="Back to Side by Side: the notes and the video together again"
-                onClick={() => p.onToggleEditor?.()}><span className="bar-label-text">Back to Side by Side</span></button>
-      )}
-      <span className="grow" />
-      {p.files && (
-        <MenuButton icon="doc" label="Save" name="Save" data={{ tablet: "pane-save" }} caretData={{ tablet: "pane-menu" }} caretDataBar="pane-menu"
-                    title={p.files.file ? `Save this tab over ${p.files.file}${p.files.dirty ? "" : " (nothing has changed)"}` : "Save this tab as a .nm file: the picture and what is written on it, in one file"}
-                    caretTitle="Save As…, Open…, and what this tab's file is kept with"
-                    onMain={p.files.save}
-                    items={[
-                      ...(p.files.picture || p.files.rescan ? [
-                        { header: "This picture" } as const,
-                        ...(p.files.picture ? [
-                          { label: "Save to Original", hint: p.files.picture.saveOriginal ? undefined : "from a note", disabled: !p.files.picture.saveOriginal,
-                            dataBar: "pane-save-original", onClick: p.files.picture.saveOriginal ?? (() => undefined) },
-                          { label: "Save as New Image", dataBar: "pane-save-new", onClick: p.files.picture.saveNew },
-                        ] : []),
-                        ...(p.files.rescan ? [{ label: "Rescan with Camera", dataBar: "pane-rescan", onClick: p.files.rescan }] : []),
-                        "-" as const,
-                      ] : []),
-                      { header: "This tab" },
-                      { label: "Save As…", dataBar: "pane-save-as", onClick: p.files.saveAs },
-                      { label: "Open…", dataBar: "pane-open", onClick: p.files.open },
-                      "-",
-                      { header: "Keep this file with" },
-                      { label: "The open note", checked: p.files.keptNote, disabled: !p.files.canKeepNote, dataBar: "pane-keep-note",
-                        onClick: () => p.files!.onKeep("note", !p.files!.keptNote) },
-                      { label: "This project", checked: p.files.keptProject, disabled: !p.files.canKeepProject, dataBar: "pane-keep-project",
-                        onClick: () => p.files!.onKeep("project", !p.files!.keptProject) },
-                    ]} />
-      )}
-      <BringInMenu to={p.to} onChange={p.onBringTo} title={p.bringTitle} off={p.bringOff} onBring={p.onBring} onPage={p.onBringPage} onSheetText={p.onBringSheetText}
-                   reader={p.reader} textOff={p.textOff} />
-      <button type="button" className="bar-btn" aria-label="Put the sheet away" title="Put the sheet away" onClick={p.onHide}><Icon name="close" /></button>
-    </div>
-  )
+export function TabletHeader(p:TabletProps) {
+ const original=p.files?.picture?.saveOriginal
+ return <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Tablet sheet" data-camera-head="tablet">
+  {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
+  <PaperMenu/><OrientationMenu/>
+  <span className="toolbar-separator"/>
+  <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo"/></button>
+  <button type="button" className="bar-btn danger" data-tablet="clear" data-bar="clear" aria-label="Clear the Sheet" title="Clear all strokes; Undo restores them" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash"/></button>
+  <span className="grow"/>
+  {p.files&&<button type="button" className="bar-btn label" data-tablet="pane-save" aria-label={original?'Save to Original':'Save Sheet'} title={original?'Update the original graphics pane in the Notepad':p.files.file?'Save drawing changes':'Save this drawing as a .nm file'} onClick={original||p.files.save}><Icon name="save"/><span className="bar-label-text">{original?'Update':'Save'}</span></button>}
+  <BringInMenu title="Insert drawing into the open Notepad" off={p.bringOff} onBring={p.onBring} onPage={p.onBringPage}/>
+  <MenuButton icon="more" name="Drawing options" title="Save, open and keep drawings" data={{tablet:'pane-menu'}} dataBar="pane-menu" items={p.files?[
+   ...(p.files.picture?[
+    {label:'Save to Original',disabled:!original,dataBar:'pane-save-original',onClick:original||(()=>{})},
+    {label:'Save as New Image…',dataBar:'pane-save-new',onClick:p.files.picture.saveNew},'-' as const,
+   ]:[]),
+   {label:'Save Drawing As…',dataBar:'pane-save-as',onClick:p.files.saveAs},{label:'Open Drawing…',dataBar:'pane-open',onClick:p.files.open},
+   ...(p.files.rescan?[{label:'Rescan with Camera',dataBar:'pane-rescan',onClick:p.files.rescan}]:[]),'-',
+   {header:'Keep a copy with'},
+   {label:'The open note',checked:p.files.keptNote,disabled:!p.files.canKeepNote,dataBar:'pane-keep-note',onClick:()=>p.files.onKeep('note',!p.files.keptNote)},
+   {label:'This project',checked:p.files.keptProject,disabled:!p.files.canKeepProject,dataBar:'pane-keep-project',onClick:()=>p.files.onKeep('project',!p.files.keptProject)},
+  ]:[]}/>
+ </div>
 }

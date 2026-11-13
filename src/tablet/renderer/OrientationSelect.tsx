@@ -17,12 +17,12 @@ export function OrientationMenu() {
   const value = useOrientation()
   const now = ORIENTATIONS.find((one) => one.value === value)?.label ?? ""
   return (
-    <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`${TITLE} Now: ${now}.`}
+    <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`Tablet orientation: ${now}`}
                 items={ORIENTATIONS.map((one) => ({
                   label: one.label, checked: one.value === value, dataBar: `orientation-${one.value}`,
                   onClick: () => setOrientation(one.value),
                 }))}>
-      <Icon name="rotate" />
+      <Icon name="orientation" />
     </MenuButton>
   )
 }

@@ -1,17 +1,41 @@
-import {VideoControl} from './VideoControl';
 import {FloatingMenu} from './FloatingMenu';
 import {PaneDivider} from './PaneDivider';
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {Icon} from './icons';
 import {MenuButton} from './MenuButton';
+const toMenu=items=>items.map(item=>item==='-'?item:{...item,...(item.submenu?{submenu:toMenu(item.submenu)}:{}),...(item.run?{onClick:()=>Promise.resolve().then(item.run).catch(error=>window.alert(error.message))}:{})});
 const click=id=>document.getElementById(id)?.click();
-const command=id=>window.dispatchEvent(new CustomEvent('notemind-command',{detail:id}));
 export function ShellChrome({source}){
  const [floating,setFloating]=useState(null),[visible,setVisible]=useState(!document.getElementById('pane').hidden);
- useEffect(()=>{const original=window.notemindMenu;const adapt=items=>items.map(item=>item==='-'?item:{...item,...(item.submenu?{submenu:adapt(item.submenu)}:{}),...(item.run?{onClick:()=>Promise.resolve().then(item.run).catch(e=>window.alert(e.message))}:{})});const show=(items,x,y,options={})=>setFloating({x,y,...options,items:adapt(items)});window.notemindMenu=show;window.notemindFloatingMenu=show;const observer=new MutationObserver(()=>setVisible(!document.getElementById('pane').hidden));observer.observe(document.getElementById('pane'),{attributes:true,attributeFilter:['hidden']});return()=>{window.notemindMenu=original;delete window.notemindFloatingMenu;observer.disconnect()}},[]);
- const [sidebar,setSidebar]=useState(!document.getElementById('sidebar').hidden),[visual,setVisual]=useState(true),[editing,setEditing]=useState(false),[count,setCount]=useState(1);
+ const dismissed=useRef({trigger:null,time:0}),serial=useRef(0);
+ const close=reason=>{dismissed.current={trigger:reason==='toggle'?floating?.trigger:null,time:performance.now()};setFloating(null)};
+ useEffect(()=>{
+  const original=window.notemindMenu;
+  const show=(items,x,y,options={})=>{if(options.trigger&&dismissed.current.trigger===options.trigger&&performance.now()-dismissed.current.time<100)return;setFloating({serial:++serial.current,x,y,...options,returnTo:document.activeElement,items:toMenu(items)})};
+  window.notemindMenu=show;window.notemindFloatingMenu=show;
+  const observer=new MutationObserver(()=>setVisible(!document.getElementById('pane').hidden));observer.observe(document.getElementById('pane'),{attributes:true,attributeFilter:['hidden']});
+  return()=>{window.notemindMenu=original;delete window.notemindFloatingMenu;observer.disconnect()};
+ },[]);
+ useEffect(()=>{const trigger=floating?.trigger;if(!trigger)return;trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','true');trigger.setAttribute('aria-controls','notemind-actions');return()=>{trigger.setAttribute('aria-expanded','false');trigger.removeAttribute('aria-controls')}},[floating]);
+ const [sidebar,setSidebar]=useState(!document.getElementById('sidebar').hidden),[visual,setVisual]=useState(!document.getElementById('rich').hidden),[editing,setEditing]=useState(false),[count,setCount]=useState(1);
  useEffect(()=>{const update=()=>{setCount(document.querySelectorAll('.document-tab').length);setVisual(!document.getElementById('rich').hidden);setSidebar(!document.getElementById('sidebar').hidden)};const observer=new MutationObserver(update);observer.observe(document.getElementById('documentTabs'),{childList:true});observer.observe(document.getElementById('rich'),{attributes:true,attributeFilter:['hidden']});observer.observe(document.getElementById('sidebar'),{attributes:true,attributeFilter:['hidden']});return()=>observer.disconnect()},[]);
  const portal=(id,node)=>document.getElementById(id)?createPortal(node,document.getElementById(id)):null;
- return <>{floating&&createPortal(<FloatingMenu {...floating} onClose={()=>setFloating(null)}/>,document.body)}{portal('paneResize',<PaneDivider sidebar={sidebar}/>)}{portal('sidebar-buttons',<><MenuButton icon="plus" name="New Notepad" title="New Notepad" onMain={()=>click('new')} items={[{label:'New Notepad',onClick:()=>click('new')},{label:'New Section…',onClick:()=>command('newSection')},'-',{label:'Open…',onClick:()=>click('open')},{label:'Add Folder…',onClick:()=>click('chooseFolder')}]}/><button className={'bar-btn'+(editing?' on':'')} title={editing?'Done Editing':'Edit Notepads'} aria-label={editing?'Done Editing':'Edit Notepads'} onClick={()=>{setEditing(!editing);window.dispatchEvent(new CustomEvent('sidebar-edit',{detail:!editing}))}}><Icon name="edit"/></button></>)}{portal('tab-switches',<><button className={'bar-btn'+(sidebar?' tint':'')} title={sidebar?'Hide Notepads Sidebar':'Show Notepads Sidebar'} aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded={sidebar} onClick={()=>click('sidebarToggle')}><Icon name="sidebar"/></button><button className={'bar-btn'+(visual?' tint':'')} title={visual?'Show Markdown':'Show Rendered Page'} aria-label="Toggle Markdown" aria-pressed={!visual} onClick={()=>click(visual?'markdown':'visual')}><Icon name="eye"/></button></>)}{portal('tab-new',<button className="bar-btn tab-new" title="New Notepad" aria-label="New Tab" onClick={()=>click('new')}><Icon name="plus"/></button>)}{portal('tab-list',<MenuButton icon="list" className="tab-list" label={String(count)} name="Open Notepads" title="Open Notepads" items={Array.from(document.querySelectorAll('.document-tab>button:first-child')).map((b:HTMLButtonElement)=>({label:b.textContent||'Untitled',onClick:()=>b.click()}))}/>)}{portal('video-options',<VideoControl source={source} visible={visible}/>)}</>;
+ return <>
+  {floating&&<FloatingMenu key={floating.serial} {...floating} id="notemind-actions" onClose={close}/>}
+  {portal('paneResize',<PaneDivider sidebar={sidebar}/>)}
+  {portal('sidebar-buttons',<>
+   <button className="bar-btn" data-sidebar="new" title="New Notepad" aria-label="New Notepad" onClick={()=>click('new')}><Icon name="plus"/></button>
+   <button className={'bar-btn'+(editing?' tint':'')} data-sidebar="edit" title={editing?'Finish organizing Notepads':'Rename, move or delete Notepads'} aria-label={editing?'Done organizing':'Organize Notepads'} aria-pressed={editing} onClick={()=>{setEditing(!editing);window.dispatchEvent(new CustomEvent('sidebar-edit',{detail:!editing}))}}><Icon name={editing?'check':'edit'}/></button>
+   <MenuButton icon="more" name="Notepads options" title="Notepads options" dataBar="sidebar-menu" items={()=>toMenu(window.NoteMindSidebar?.menuItems()||[])}/>
+  </>)}
+  {portal('tab-switches',<button className={'bar-btn'+(sidebar?' tint':'')} title={sidebar?'Hide Notepads sidebar':'Show Notepads sidebar'} aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded={sidebar} onClick={()=>click('sidebarToggle')}><Icon name="sidebar"/></button>)}
+  {portal('editor-mode',<button className={'bar-btn editor-mode'+(!visual?' tint':'')} title={visual?'Edit Markdown source':'Return to the rendered page'} aria-label="Toggle Markdown" aria-pressed={!visual} onClick={()=>click(visual?'markdown':'visual')}><Icon name="code"/><span className="bar-label-text">Markdown</span></button>)}
+  {portal('tab-new',<button className="bar-btn tab-new" title="New Notepad" aria-label="New Tab" onClick={()=>click('new')}><Icon name="plus"/></button>)}
+  {portal('tab-list',<MenuButton icon="more" name="Notepad options" title="Save, find and manage the open Notepad" dataBar="notepad-menu" items={()=>[
+   ...(window.NoteMindMenus?.noteItems()||[]),'-',
+   {label:`Open Notepads (${count})`,submenu:Array.from(document.querySelectorAll('.document-tab>button:first-child')).map((button:HTMLButtonElement)=>({label:button.textContent||'Untitled',checked:button.getAttribute('aria-selected')==='true',onClick:()=>button.click()}))},
+  ]}/>)}
+  {portal('capture-toggle',<button className={'bar-btn'+(visible?' tint':'')} data-bar="capture-toggle" title={visible?'Hide capture pane':'Show drawing, camera or document pane'} aria-label="Toggle capture pane" aria-expanded={visible} aria-controls="pane" onClick={()=>click('paneToggle')}><Icon name="window"/></button>)}
+ </>;
 }

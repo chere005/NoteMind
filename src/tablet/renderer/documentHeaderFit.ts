@@ -18,7 +18,7 @@ const ROTATE = 54
 const VIEW_WORD = 56
 const VIEW_ICON = BAR_BTN
 
-const BACK = 150
+const BACK = 28
 
 export interface DocumentHeaderInput {
   
@@ -50,7 +50,7 @@ export interface DocumentHeaderFit {
 export function documentHeaderWidth(longLabel: boolean, { pdf, picture, converting, backToNotes, view = true }: Omit<DocumentHeaderInput, "width">, percent = true, viewWord = false, rotate = true): number {
   const first = converting ? CANCEL : longLabel ? CONVERT_LONG : CONVERT_SHORT
   return PAD + first + (pdf || picture ? GAP + (percent ? ZOOM : ZOOM_ARROWS) : 0) + (picture && rotate ? GAP + ROTATE : 0)
-    + (view ? GAP + (viewWord ? VIEW_WORD : VIEW_ICON) : 0) + (backToNotes ? GAP + BACK : 0) + 2 * (GAP + BAR_BTN)
+    + (view ? GAP + (viewWord ? VIEW_WORD : VIEW_ICON) : 0) + (backToNotes ? GAP + BACK : 0) + (GAP + BAR_BTN)
 }
 
 

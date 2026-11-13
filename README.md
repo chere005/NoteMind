@@ -1,6 +1,6 @@
 # NoteMind
 
-A desktop Notepad application with a visual/Markdown editor, a folder and project sidebar, and integrated drawing and camera panes. The sidebar can be resized and adapts to small windows; More keeps writing actions available when the editor is narrow.
+A desktop Notepad application with a visual/Markdown editor, a folder and project sidebar, and integrated drawing and camera panes. The sidebar can be resized and adapts to small windows; Lists, Insert and Format group writing actions; the capture pane owns its source and device menu.
 
 ## Run
 
@@ -18,7 +18,7 @@ The portable Windows application is `dist/NoteMind/NoteMind.exe`. On Apple Silic
 - Find and Replace as a floating card (match case, whole word, Replace All as one Undo, F3, Ctrl+H, Use Selection for Find). Move Section Up/Down, collapse and expand all headings, quote continuation, and auto-pairing in code blocks.
 - Paste of an HTML-only clipboard becomes Markdown, a pasted or dropped picture is added to the Notepad, dropped Notepads and documents open, and the context menus have Cut, Copy, Paste, Select All and spelling suggestions.
 - File → Open Recent and Projects → Open Recent, tab-wheel switching, the file actions in the tab menu, and each tab reopening at the same words.
-- File → Export as PDF… with a first-page preview: A4 or Letter, orientation, margins, page numbers and picture-background removal. F1 lists every shortcut from the real menu; Help → Quick Reference is a Notepad that is rewritten when the app is newer.
+- File → Export → Export as PDF… with a first-page preview: A4 or Letter, orientation, margins, page numbers and picture-background removal. F1 lists every shortcut from the real menu; Help → Quick Reference is a Notepad that is rewritten when the app is newer.
 - Notes-style tables: immediate 2×2 insertion, row/column handles, add/delete/reorder, inline formatting, HTML and tab-separated copy/paste, and text conversion. Tab moves across entries; Return moves down; Shift+Return inserts a line break; Escape exits the table. Drag a handle to reorder, or use its menu. Delete clears a selected row/column before removing it on the next press.
 - Pinned Notepads, tags, saved smart filters, title/date sorting, links between Notepads, persistent Recently Deleted, and version preview/restoration.
 - Select an embedded picture for resize and rotate controls, or use its context menu to crop it. Edits make a new picture, so other uses of the original stay unchanged and the edit can be undone.

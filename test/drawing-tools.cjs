@@ -26,7 +26,7 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   await js(`(()=>{const name=document.querySelector('#rich img[data-asset]').dataset.asset+'.json',sheet=NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[name]))));sheet.aspect=.75;doc.assets[name]=btoa(unescape(encodeURIComponent(NoteMindGraphics.encode(sheet))))})()`);
   await click('[data-edit-graphics]');await pause(650);check(sheets().length===2&&sheets()[1].strokes.length===2&&sheets()[1].aspect===.75,'Edit in Wacom restores the editable stroke data and preserves its aspect ratio');
   await click('[data-bar=pen]');await drag([.45,.6],[.55,.6]);
-  await click('[data-tablet=pane-menu]');await js(`[...document.querySelectorAll('.float-menu button')].find(b=>b.textContent.includes('Save to Original')).click()`);await pause(300);
+  check(await js(`document.querySelector('[data-tablet=pane-save]').getAttribute('aria-label')==='Save to Original'`),'editing an embedded pane makes the primary Save action update its original');await click('[data-tablet=pane-save]');await pause(300);
   check(await js(`document.querySelectorAll('#rich .graphics-pane').length===1&&NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===3`),'Save to Original updates the same pane and its editable strokes');
   await js(`document.querySelector('#rich').focus()`);await command('undoText');
   check(await js(`NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===2`),'a Notepad Undo restores the original pane and sidecar together');

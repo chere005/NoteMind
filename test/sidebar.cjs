@@ -13,8 +13,8 @@ app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',
  const wait=async fn=>{for(let n=0;n<40;n++){if(await fn())return;await pause(100)}throw Error('Timed out waiting for sidebar update')};
  try{
   await wait(()=>js("!!document.querySelector('.tree-row.note-row')"));await js('window.confirm=()=>true;undefined');
-  check(await js("document.querySelector('.section-row').querySelectorAll('svg').length===3 && document.querySelectorAll('.add-row').length===2"),'folder rows use original disclosure, folder, count and per-folder add controls');
-  await click('#sidebar-buttons>button');
+  check(await js("document.querySelector('.section-row').querySelectorAll('svg').length===3 && document.querySelectorAll('.add-row').length===1"),'folder rows use original disclosure, folder, count and per-folder add controls');
+  await click('[data-sidebar=edit]');
   await js(`${findRow('Draft.md')}.querySelector('[title=Duplicate]').click()`);
   await wait(()=>Promise.resolve(fs.readdirSync(folder).filter(n=>n.endsWith('.md')).length===2));
   check(true,'edit-row Duplicate creates and opens a real copy');
@@ -29,7 +29,7 @@ app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',
   check(true,'second Trash click removes the copied file');
   await js("window.dispatchEvent(new CustomEvent('notemind-command',{detail:'undoFile'}))");await wait(()=>Promise.resolve(fs.existsSync(path.join(folder,copy))));
   check(true,'file undo restores the trashed copy');
-  await click('#sidebar-buttons>button');await js(`${findRow('Draft.md')}.querySelector('.row-more').click()`);await pause(100);
+  await click('[data-sidebar=edit]');await js(`${findRow('Draft.md')}.querySelector('.row-more').click()`);await pause(100);
   await js("[...document.querySelectorAll('.float-menu button')].find(b=>b.textContent==='Rename…').click()");
   check(await js("!!document.querySelector('dialog.modal[open]')"),'Rename opens the source-styled prompt');
   await js("const form=document.querySelector('dialog.modal form');form.querySelector('input').value='Renamed';form.requestSubmit();undefined");

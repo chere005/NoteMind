@@ -1,26 +1,6 @@
-/**
- * A small menu that opens where it is asked to: the sidebar's right-click
- * menus and its Folder button's, the bars' menus, the seam's +, the notes'
- * Cut / Copy / Paste. It is the page's own, not the shell's, because a native
- * menu cannot be driven by an end-to-end script.
- *
- * ITS COLUMNS are the wireframes' (docs/ui-2026-10/FinalToolbar.png, FinalStates.png): a menu that ticks anything keeps ONE
- * column for the tick on every row, then a row's own icon (only the rows that have one), then the label; a key hint is drawn
- * the Mac's way (⇧⌘L) on a Mac and in words elsewhere.
- *
- * It takes the keyboard while it is up (Up, Down, Enter, Escape, Right/Left
- * for a submenu) and gives it back to where it was when it goes: a menu is a
- * chrome action, and the caret must be where it was afterwards.
- *
- * ON OPENING NO ROW IS CHOSEN (docs/PLAN-bars-2026-10.md, P6): the menu itself has the keyboard, so the first row is not
- * painted as the answer before anything was pressed — it was, and Enter on a menu opened by a mouse click did
- * the first row's thing. The first arrow key moves onto a row (Down the first, Up the last); Home and End go to the ends;
- * Enter acts on the row that has the keyboard and on nothing when none does. A mouse over a row lights it as ever.
- */
-
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { chordGlyphs } from "../shared/chord"
-import { returnFocus } from "./focusReturn"
 import { hostPlatform } from "./hostPlatform"
 import { Icon, type IconName } from "./icons"
 import { menuLeft } from "./splitButton"
@@ -55,143 +35,93 @@ export type MenuItem =
     danger?: boolean
   }
 
+type CloseReason="dismiss"|"action"|"outside"|"switch"|"toggle"
 interface Props {
-  /** Where the pointer was (or the button's edge). */
-  x: number
-  y: number
-  items: MenuItem[]
-  /** Open upward from y (a button at the bottom of the window). */
-  above?: boolean
-  /** `x` is the menu's RIGHT edge, not its left (the pen's button at the end of the bar). */
-  right?: boolean
-  /** With `right`: where its LEFT edge goes when there is no room to hang it to the left of `x` (a split button near the window's left). */
-  leftX?: number
-  onClose(): void
-  /** The test hook: an id on the element. */
-  id?: string
-  /** The test hook: `data-bar` on the menu itself (the video menu is `video-options`). */
-  dataBar?: string
+  x: number; y: number; items: MenuItem[]
+  above?: boolean; right?: boolean; leftX?: number
+  onClose(reason?:CloseReason): void
+  trigger?:HTMLElement
+  id?: string; dataBar?: string; label?: string
+  ownerDocument?: Document
+  returnTo?: HTMLElement | null
+  initialFocus?: "first" | "last" | "none"
 }
 
-/** Something that is typed into: a field, or the notes (a contenteditable). */
-const takesKeys = (element: HTMLElement): boolean => element.isContentEditable || element.matches("input, textarea, select")
-
-export function FloatingMenu({ x, y, items, above, right, leftX, onClose, id, dataBar }: Props) {
-  const box = useRef<HTMLDivElement>(null)
-  const [at, setAt] = useState({ x, y })
-  const was = useRef<Element | null>(document.activeElement)
-
-  // Kept inside the window: a menu near the right or bottom edge opens the other way.
-  useLayoutEffect(() => {
-    const element = box.current
-    if (!element) return
-    const { width, height } = element.getBoundingClientRect()
-    const left = menuLeft(width, x, !!right, leftX, window.innerWidth)
-    const top = above ? Math.max(4, y - height) : Math.max(4, Math.min(y, window.innerHeight - height - 4))
-    setAt({ x: left, y: top })
-    // The MENU has the keyboard, not its first row (a row is chosen with the first arrow key); and only when it OPENS —
-    // a menu that stays up while a choice in it changes the rows (the pen's colour and width) must not take the keyboard
-    // back from the row the person is on.
-    if (!element.contains(document.activeElement)) element.focus({ preventScroll: true })
-  }, [x, y, above, right, leftX, items])
-
-  useLayoutEffect(() => {
-    const away = (event: Event) => {
-      if (box.current && event.target instanceof Node && box.current.contains(event.target)) return
-      onClose()
-    }
-    // Escape closes it wherever the keyboard is (a click on a disabled row, the page's own focus-return): heard on the
-    // window in the capture phase, and it goes no further, so the one press does not also let go of a tool or a box.
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.isComposing) return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose()
-    }
-    window.addEventListener("pointerdown", away, true)
-    window.addEventListener("keydown", escape, true)
-    window.addEventListener("blur", onClose)
-    window.addEventListener("resize", onClose)
-    return () => {
-      window.removeEventListener("pointerdown", away, true)
-      window.removeEventListener("keydown", escape, true)
-      window.removeEventListener("blur", onClose)
-      window.removeEventListener("resize", onClose)
-    }
-  }, [onClose])
-
-  // On the way out the keyboard goes back to the notes, or to a field that had it. NOT to the button the menu was opened
-  // from: a click gives a web page's button the focus, which the Mac's buttons never take, and Escape then left the caret
-  // nowhere (typing after it went nowhere, Space opened the menu again).
-  useEffect(() => () => {
-    const back = was.current
-    if (back instanceof HTMLElement && back !== document.body && document.contains(back) && takesKeys(back)) back.focus({ preventScroll: true })
-    else returnFocus()
-  }, [])
-
-  return (
-    <div ref={box} className="float-menu" role="menu" id={id} data-bar={dataBar} tabIndex={-1}
-         style={{ left: at.x, top: at.y }}
-         // (Not the bar's own right-click either: a menu hangs under the bar it was opened from, inside its React tree.)
-         onContextMenu={(event) => { event.preventDefault(); event.stopPropagation() }}
-         onKeyDown={(event) => {
-           const buttons = [...(box.current?.querySelectorAll<HTMLButtonElement>(":scope > .float-row > button:not(:disabled), :scope > .float-custom button:not(:disabled)") ?? [])]
-           const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
-           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose() }
-           else if (event.key === "ArrowDown") { event.preventDefault(); buttons[index < 0 ? 0 : (index + 1) % buttons.length]?.focus() }
-           else if (event.key === "ArrowUp") { event.preventDefault(); buttons[index < 0 ? buttons.length - 1 : (index - 1 + buttons.length) % buttons.length]?.focus() }
-           else if (event.key === "Home") { event.preventDefault(); buttons[0]?.focus() }
-           else if (event.key === "End") { event.preventDefault(); buttons[buttons.length - 1]?.focus() }
-         }}>
-      <Items items={items} onClose={onClose} />
-    </div>
-  )
+// Menus belong to their triggering window, including the separate pen display.
+export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,label="Actions",ownerDocument:doc=document,returnTo,trigger,initialFocus="none"}:Props) {
+  const token=useId(),restore=useRef(true),closing=useRef(false),back=useRef(returnTo??doc.activeElement),window=doc.defaultView!
+  const dismiss=(focus=true,reason:CloseReason="dismiss")=>{if(closing.current)return;closing.current=true;restore.current=focus;onClose(reason)}
+  useLayoutEffect(()=>{
+    const opening=(event:CustomEvent)=>{if(event.detail!==token)dismiss(false,"switch")}
+    doc.dispatchEvent(new window.CustomEvent("notemind-menu-opening",{detail:token}))
+    doc.addEventListener("notemind-menu-opening",opening as EventListener)
+    const away=(event:PointerEvent)=>{const target=event.target as Element;if(target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,trigger?.contains(target)?"toggle":"outside")}
+    const focusAway=(event:FocusEvent)=>{const target=event.target as Element;if(target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
+    const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();dismiss()}}
+    const resized=()=>dismiss(false,"outside")
+    const commanded=()=>dismiss(false,"outside")
+    doc.addEventListener("pointerdown",away,true);doc.addEventListener("focusin",focusAway);doc.addEventListener("notemind-menu-dismiss",commanded);window.addEventListener("keydown",escape);window.addEventListener("resize",resized);window.addEventListener("blur",resized)
+    return()=>{doc.removeEventListener("notemind-menu-opening",opening as EventListener);doc.removeEventListener("pointerdown",away,true);doc.removeEventListener("focusin",focusAway);doc.removeEventListener("notemind-menu-dismiss",commanded);window.removeEventListener("keydown",escape);window.removeEventListener("resize",resized);window.removeEventListener("blur",resized)}
+  },[])
+  useEffect(()=>()=>{
+    if(!restore.current||window.closed)return
+    window.setTimeout(()=>{const previous=back.current as HTMLElement,active=doc.activeElement as HTMLElement;if(doc.querySelector('dialog[open],.float-menu'))return;if(active&&active!==doc.body&&active.isConnected&&!active.closest('.float-menu'))return;if(previous?.isConnected&&previous.getClientRects().length)previous.focus({preventScroll:true})},0)
+  },[])
+  const tab=(event:React.KeyboardEvent)=>{
+    event.preventDefault();restore.current=false
+    const controls=[...doc.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex],[contenteditable=true]')].filter(el=>!el.closest('.float-menu')&&!el.matches(':disabled,[tabindex="-1"]')&&el.getClientRects().length)
+    const at=controls.indexOf(back.current as HTMLElement),next=controls[at+(event.shiftKey?-1:1)]
+    onClose("dismiss");window.setTimeout(()=>next?.focus({preventScroll:true}),0)
+  }
+  return createPortal(<MenuLevel items={items} doc={doc} token={token} id={id||token} dataBar={dataBar} label={label} point={{x,y,above,right,leftX}} initialFocus={initialFocus} onClose={reason=>dismiss(true,reason)} onTab={tab}/>,doc.body)
 }
 
-function Items({ items, onClose }: { items: MenuItem[]; onClose(): void }) {
-  const [open, setOpen] = useState<number | null>(null)
-  // A menu that ticks anything keeps the tick's column on every row, so the labels line up; an icon is the row's own.
-  const ticks = items.some((item) => typeof item === "object" && "label" in item && item.checked !== undefined)
-  return (
-    <>
-      {items.map((item, index) => {
-        if (item === "-") return <hr key={`-${index}`} />
-        if ("header" in item) return <div className="float-header" key={`h${index}:${item.header}`}>{item.header}</div>
-        if ("custom" in item) return <div className="float-custom" key={`c${index}`}>{typeof item.custom === "function" ? item.custom(onClose) : item.custom}</div>
-        const nested = item.submenu
-        return (
-          <div className="float-row" key={`${index}:${item.label}`}>
-            <button role={item.checked !== undefined ? "menuitemcheckbox" : item.toggle !== undefined ? "menuitemcheckbox" : "menuitem"}
-                    aria-checked={item.checked ?? item.toggle}
-                    disabled={item.disabled} data-bar={item.dataBar}
-                    className={[nested ? "has-sub" : "", item.danger ? "danger" : ""].filter(Boolean).join(" ") || undefined}
-                    onMouseEnter={() => setOpen(nested ? index : null)}
-                    onKeyDown={(event) => {
-                      if (nested && event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); setOpen(index) }
-                      else if (event.key === "ArrowLeft" && open !== null) { event.preventDefault(); event.stopPropagation(); setOpen(null) }
-                    }}
-                    onClick={() => {
-                      // (A click on a row with a submenu opens it and leaves it open: the pointer arriving already did, and a click
-                      // that then shut it again made the row feel dead.)
-                      if (nested) { setOpen(index); return }
-                      if (!item.keepOpen && item.toggle === undefined) onClose()
-                      item.onClick?.()
-                    }}>
-              {ticks && <span className="float-mark" aria-hidden="true">{item.checked ? "✓" : null}</span>}
-              {item.icon && <span className="float-icon" aria-hidden="true"><Icon name={item.icon} size={14} /></span>}
-              <span className="float-label" style={item.labelStyle}>{item.label}</span>
-              {item.toggle !== undefined ? <span className={`float-switch${item.toggle ? " on" : ""}`} aria-hidden="true" />
-                : nested ? <span className="hint">▸</span> : item.hint ? <span className="hint">{chordGlyphs(item.hint, hostPlatform())}</span> : null}
-            </button>
-            {nested && open === index && (
-              <div className="float-menu sub" role="menu">
-                <Items items={nested} onClose={onClose} />
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </>
-  )
+interface LevelProps {
+  items:MenuItem[];doc:Document;token:string;id:string;label:string
+  dataBar?:string;point?:{x:number;y:number;above?:boolean;right?:boolean;leftX?:number};anchor?:HTMLElement
+  initialFocus?:"first"|"last"|"none"
+  onClose(reason?:CloseReason):void;onTab(event:React.KeyboardEvent):void;onBack?():void
 }
-
+function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="none",onClose,onTab,onBack}:LevelProps) {
+  const box=useRef<HTMLDivElement>(null),[at,setAt]=useState({x:point?.x||0,y:point?.y||0}),[open,setOpen]=useState<{index:number;anchor:HTMLElement;keyboard:boolean}|null>(null),typed=useRef({text:'',time:0}),[activeIndex,setActiveIndex]=useState<number|null>(null)
+  const buttons=()=>[...box.current.querySelectorAll<HTMLElement>(':scope > .float-row > button:not(:disabled),:scope > .float-custom button:not(:disabled),:scope > .float-custom select:not(:disabled),:scope > .float-custom input:not(:disabled)')]
+  const focus=(element:HTMLElement)=>{if(!element)return;setActiveIndex(element.hasAttribute('data-menu-index')?Number(element.getAttribute('data-menu-index')):null);element.focus()}
+  useLayoutEffect(()=>{
+    const element=box.current,win=doc.defaultView!,width=element.offsetWidth,height=element.offsetHeight
+    let left,top
+    if(anchor){const r=anchor.getBoundingClientRect();left=r.right+2+width<=win.innerWidth-4?r.right+2:Math.max(4,r.left-width-2);top=Math.max(4,Math.min(r.top-5,win.innerHeight-height-4))}
+    else{left=menuLeft(width,point.x,!!point.right,point.leftX,win.innerWidth);top=point.above?Math.max(4,point.y-height):Math.max(4,Math.min(point.y,win.innerHeight-height-4))}
+    setAt({x:left,y:top})
+  },[items,anchor,point?.x,point?.y])
+  useLayoutEffect(()=>{if(anchor&&initialFocus==="none")return;const list=buttons();focus(initialFocus==='first'?list[0]:initialFocus==='last'?list.at(-1):box.current)},[])
+  const ticks=items.some(item=>typeof item==='object'&&'label' in item&&item.checked!==undefined)
+  return <div ref={box} className={'float-menu'+(anchor?' sub':'')} role="menu" aria-label={label} id={id} data-bar={dataBar} data-menu-owner={token} tabIndex={-1} style={{left:at.x,top:at.y}} onScroll={()=>setOpen(null)} onContextMenu={event=>{event.preventDefault();event.stopPropagation()}}
+    onKeyDown={event=>{
+      if(event.isComposing)return
+      const list=buttons(),index=list.indexOf(doc.activeElement as HTMLElement)
+      if(event.key==='Escape'||(event.key==='ArrowLeft'&&onBack)){event.preventDefault();event.stopPropagation();onBack?onBack():onClose("dismiss");return}
+      if(event.key==='Tab'){onTab(event);event.stopPropagation();return}
+      if((event.target as Element).matches('input,select,textarea'))return
+      if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();event.stopPropagation();setOpen(null);const next=event.key==='Home'?0:event.key==='End'?list.length-1:event.key==='ArrowDown'?(index+1)%list.length:index<0?list.length-1:(index+list.length-1)%list.length;focus(list[next]);return}
+      if(event.key.length===1&&!event.metaKey&&!event.ctrlKey&&!event.altKey&&event.key!==' '){const now=Date.now();typed.current={text:now-typed.current.time<700?typed.current.text+event.key:event.key,time:now};let query=typed.current.text.toLocaleLowerCase();if([...query].every(letter=>letter===query[0]))query=query[0];for(let step=1;step<=list.length;step++){const candidate=list[(index+step)%list.length];if((candidate.getAttribute('data-menu-label')||candidate.textContent||'').trim().toLocaleLowerCase().startsWith(query)){focus(candidate);event.preventDefault();event.stopPropagation();break}}}
+    }}>
+    {items.map((item,index)=>{
+      if(item==='-')return <hr role="separator" key={index}/>
+      if('header' in item)return <div className="float-header" key={index}>{item.header}</div>
+      if('custom' in item)return <div className="float-custom" key={index}>{typeof item.custom==='function'?item.custom(()=>onClose("action")):item.custom}</div>
+      const nested=item.submenu,expanded=open?.index===index,childId=id+'-'+index
+      const show=(anchor:HTMLElement,keyboard=false)=>setOpen({index,anchor,keyboard})
+      return <div className="float-row" key={index} onMouseEnter={event=>{if(item.disabled){setOpen(null);focus(box.current);return}const button=event.currentTarget.querySelector('button');focus(button);nested?show(button):setOpen(null)}}>
+        <button role={item.checked!==undefined||item.toggle!==undefined?'menuitemcheckbox':'menuitem'} tabIndex={-1} aria-checked={item.checked??item.toggle} aria-haspopup={nested?'menu':undefined} aria-expanded={nested?expanded:undefined} aria-controls={expanded?childId:undefined} data-menu-label={item.label} data-menu-index={index} data-active={activeIndex===index?true:undefined} onFocus={()=>setActiveIndex(index)} disabled={item.disabled} data-bar={item.dataBar} className={item.danger?'danger':undefined}
+          onKeyDown={event=>{if(nested&&['ArrowRight','Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();show(event.currentTarget,true)}else if(!nested&&['Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();event.currentTarget.click()}}}
+          onClick={event=>{if(nested){show(event.currentTarget,event.detail===0);return}if(!item.keepOpen&&item.toggle===undefined)onClose("action");item.onClick?.()}}>
+          {ticks&&<span className="float-mark" aria-hidden="true">{item.checked?'✓':null}</span>}
+          {item.icon&&<span className="float-icon" aria-hidden="true"><Icon name={item.icon} size={14}/></span>}
+          <span className="float-label" style={item.labelStyle}>{item.label}</span>
+          {item.toggle!==undefined?<span className={'float-switch'+(item.toggle?' on':'')} aria-hidden="true"/>:nested?<span className="hint" aria-hidden="true">›</span>:item.hint?<span className="hint">{chordGlyphs(item.hint,hostPlatform())}</span>:null}
+        </button>
+        {nested&&expanded&&createPortal(<MenuLevel key={index} items={nested} doc={doc} token={token} id={childId} label={item.label} anchor={open.anchor} initialFocus={open.keyboard?'first':'none'} onClose={onClose} onTab={onTab} onBack={()=>{const parent=open.anchor;setOpen(null);parent.focus({preventScroll:true})}}/>,doc.body)}
+      </div>
+    })}
+  </div>
+}

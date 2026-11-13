@@ -11,6 +11,9 @@
 import type { CSSProperties } from "react"
 
 const PATHS = {
+  save: "<path d=\"M3 2h9l2 2v10H2V2z\"/><path d=\"M5 2v4h6V2M5 14V9h6v5\"/>",
+  paper: "<path d=\"M4 1.75h5.5L13 5.25v9H4z\"/><path d=\"M9.5 1.75v3.5H13M6.5 8h4M6.5 10.5h4\"/>",
+  orientation: "<rect x=\"3.5\" y=\"2\" width=\"9\" height=\"12\" rx=\"1\"/><path d=\"M1 5V2h3M15 11v3h-3\"/>",
   edit: "<path d=\"M7.5 2.75H3.75a1.5 1.5 0 0 0-1.5 1.5v8a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5V8.5\"/><path d=\"m6.75 9.25.5-2.25 5.25-5.25 1.75 1.75L9 8.75z\"/>",
   // Extract writing (Sean 2026-10-25): the same scan corners round a line of handwriting.
   extract: "<path d=\"M2.25 5.25v-1.5a1.5 1.5 0 0 1 1.5-1.5h1.5\"/><path d=\"M10.75 2.25h1.5a1.5 1.5 0 0 1 1.5 1.5v1.5\"/><path d=\"M13.75 10.75v1.5a1.5 1.5 0 0 1-1.5 1.5h-1.5\"/><path d=\"M5.25 13.75h-1.5a1.5 1.5 0 0 1-1.5-1.5v-1.5\"/><path d=\"M4.75 9.75c.9-2.9 1.7-2.9 2.5-.9s1.6 1.4 2.3-.9c.4-1.2 1.1-1.2 1.7-.2\"/>",

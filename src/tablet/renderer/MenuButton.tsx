@@ -1,20 +1,7 @@
-/**
- * A bar button that opens a menu — the one every bar uses for its drop-downs.
- *
- * Two shapes (splitButton.ts holds the rule). A MENU BUTTON (no `onMain`): the whole button opens the menu. A SPLIT BUTTON
- * (`onMain`): the main button does the button's own job and a separate ▾ SEGMENT beside it opens the menu, the two one rounded
- * shape [XX|▾] — the pen's shape, and since 2026-10-18 every split's (Sean: "the buttons that have dropdowns to pick a
- * default.. its hard to press the corner.. can we make the button one of those like [XX|^] where ^ is actually the down
- * arrow style buttons?"; the small triangle in the button's lower-right corner is gone). The arrow segment is a full-height
- * target of its own (bars.css), named "<button> options", with its own test hook; the menu opens under the whole shape,
- * right-aligned. A right-click, a press held for half a second (the pen's, the Wacom's way) and ArrowDown / Alt+ArrowDown on
- * the focused main button open the menu too. The menu is the page's FloatingMenu, so Escape, the arrows, clamping to the
- * window and handing the keyboard back to the notes are all its own.
- */
+/** Shared menu and split-action buttons; each popup stays in its triggering window. */
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { FloatingMenu, type MenuItem } from "./FloatingMenu"
-import { returnFocusSoon } from "./focusReturn"
 import { Icon, type IconName } from "./icons"
 import { caretBarFor, optionsName, shapeOf } from "./splitButton"
 
@@ -75,12 +62,13 @@ const dataAttributes = (data: Record<string, string> | undefined) =>
   Object.fromEntries(Object.entries(data ?? {}).map(([key, value]) => [`data-${key}`, value]))
 
 export function MenuButton({ icon, label, title, name, items, onMain, on, tint, disabled, mainOff, chevron, primary, caretTitle, optionsLabel, caretDataBar, caretData, live, className, dataBar, menuBar, data, style, children }: Props) {
+  const sequence=useRef(0),menuId=useId(),focusTarget=useRef<HTMLElement|null>(null)
   const split = shapeOf(onMain) === "split"
   const button = useRef<HTMLButtonElement>(null)
   const shape = useRef<HTMLSpanElement>(null)
   // The menu is built when it is opened and kept: a render of the page behind it (a clock, a save) must not rebuild its
   // rows, which would take the keyboard from the row the person had moved to.
-  const [at, setAt] = useState<{ x: number; y: number; left: number; items: MenuItem[] } | null>(null)
+  const [at, setAt] = useState<{ x: number; y: number; left: number; items: MenuItem[]; serial:number; initialFocus: "first"|"last"|"none" } | null>(null)
   const hold = useRef<number | null>(null)
   const held = useRef(false)
   // The press that puts the menu away (the menu hears it first, on the window) must not also open it again as the click:
@@ -96,14 +84,15 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
 
   const list = typeof items === "function" ? items : () => items
   // A split's menu hangs under the WHOLE shape and is right-aligned with it (the pen's way); a menu button's under itself.
-  const open = () => {
+  const open = (initialFocus: "first"|"last"|"none" = "none") => {
     const box = (split ? shape.current : button.current)?.getBoundingClientRect()
     if (!box) return
-    setAt({ x: split ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })
+    focusTarget.current=button.current?.ownerDocument.activeElement as HTMLElement
+    setAt({ serial:++sequence.current,initialFocus,x: split ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })
   }
   // A bar's menu is a chrome action: when it goes (Escape, a click elsewhere, a pick) the keyboard is the notes' again
   // (a field a menu item opened keeps it).
-  const close = () => { closedAt.current = performance.now(); setAt(null); returnFocusSoon() }
+  const close = () => { closedAt.current = performance.now(); setAt(null) }
   useEffect(() => () => { if (hold.current !== null) window.clearTimeout(hold.current) }, [])
 
   const classes = ["bar-btn", label !== undefined ? "label" : "", on ? "on" : "", tint ? "tint" : "", primary ? "primary" : "", className ?? ""]
@@ -113,8 +102,10 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
             {...dataAttributes(data)}
             aria-label={name ?? (label === undefined ? title : undefined)} title={title}
             // (A split's main part opens no menu on a click: its popup, and whether it is open, are its ▾'s to say, not both parts'.)
+            aria-controls={!split&&at?menuId:undefined}
             aria-haspopup={split ? undefined : "menu"} aria-expanded={split ? undefined : at !== null}
-            aria-pressed={split ? !!(on || tint) : undefined}
+            aria-pressed={split && (on!==undefined||tint!==undefined) ? !!(on || tint) : undefined}
+            onMouseDown={event=>{if(event.button===0)event.preventDefault()}}
             onPointerDown={(event) => {
               downAt.current = performance.now()
               if (!split || event.button !== 0) return
@@ -127,7 +118,7 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
             onContextMenu={(event) => { if (!split) return; event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
             onKeyDown={(event) => {
               if (disabled) return
-              if (event.key === "ArrowDown" || (event.altKey && event.key === "ArrowDown")) { event.preventDefault(); open() }
+              if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
             }}
             onClick={() => {
               if (disabled || mainOff) return
@@ -154,13 +145,14 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
           <button type="button" className="bar-btn caret" disabled={disabled} data-bar={caretBarFor(dataBar, caretDataBar)}
                   {...dataAttributes(caretData)}
                   aria-label={arrowName} title={caretTitle ?? arrowName}
-                  aria-haspopup="menu" aria-expanded={at !== null}
+                  aria-controls={at?menuId:undefined} aria-haspopup="menu" aria-expanded={at !== null}
+                  onMouseDown={event=>{if(event.button===0)event.preventDefault()}}
                   onPointerDown={() => { downAt.current = performance.now() }}
                   // (A right-click on the arrow is the menu too, not the bar's Customize toolbar…)
                   onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
                   onKeyDown={(event) => {
                     if (disabled) return
-                    if (event.key === "ArrowDown") { event.preventDefault(); open() }
+                    if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
                   }}
                   onClick={() => {
                     if (disabled || closedByThisPress()) return
@@ -170,8 +162,7 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
           </button>
         </span>
       ) : main}
-      {at && <FloatingMenu x={at.x} y={at.y} items={live ? list() : at.items} right={split} leftX={at.left} dataBar={menuBar} onClose={close} />}
+      {at && <FloatingMenu key={at.serial} x={at.x} y={at.y} items={live ? list() : at.items} right={split} leftX={at.left} dataBar={menuBar} id={menuId} label={name||title} ownerDocument={button.current?.ownerDocument} returnTo={focusTarget.current} initialFocus={at.initialFocus} onClose={close} />}
     </>
   )
 }
-

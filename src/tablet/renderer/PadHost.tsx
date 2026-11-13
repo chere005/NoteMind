@@ -30,11 +30,11 @@ export function PadHost({children}:{children:ReactNode}){
    const css=d.createElement('style');css.textContent='html,body,#notemind-pad-root{width:100%;height:100%;margin:0;overflow:hidden}#notemind-pad-root>.tablet-pane{height:100%;width:100%}';d.head.append(css)
    d.body.replaceChildren();const root=d.createElement('div');root.id='notemind-pad-root';d.body.append(root);setTarget(root)
    const lost=()=>{if(!cancelled)setTarget(null)};pad.addEventListener('beforeunload',lost)
-   setPenStatus('');const stopWatch=watchPenIn(pad),stopActions=installPenActions(pad),stopPen=installPadPen(pad,(window as any).notemind.pad,status=>setPenStatus(status.reason||''))
+   setPenStatus('');const stopToolbar=(window as any).NoteMindToolbarKeys?.(pad.document),stopWatch=watchPenIn(pad),stopActions=installPenActions(pad),stopPen=installPadPen(pad,(window as any).notemind.pad,status=>setPenStatus(status.reason||''))
    const forward=(event:KeyboardEvent)=>{if(event.defaultPrevented)return;const target=event.target as Element|null;if(target?.closest?.('input, textarea, select, [contenteditable=true]')&&event.key!=='Escape')return;if(!event.ctrlKey&&!event.metaKey&&event.key!=='Escape')return;const again=new KeyboardEvent('keydown',{key:event.key,code:event.code,ctrlKey:event.ctrlKey,metaKey:event.metaKey,shiftKey:event.shiftKey,altKey:event.altKey,bubbles:true,cancelable:true});window.dispatchEvent(again);if(again.defaultPrevented)event.preventDefault()}
    pad.addEventListener('keydown',forward)
    const timer=window.setTimeout(()=>{if(!cancelled)(window as any).notemind.pad.ready().catch(()=>{})},50)
-   return()=>{cancelled=true;window.clearTimeout(timer);stopPen();stopActions();stopWatch();pad?.removeEventListener('keydown',forward);pad?.removeEventListener('beforeunload',lost);if(pad&&!pad.closed)pad.close()}
+   return()=>{cancelled=true;window.clearTimeout(timer);stopPen();stopActions();stopWatch();stopToolbar?.();pad?.removeEventListener('keydown',forward);pad?.removeEventListener('beforeunload',lost);if(pad&&!pad.closed)pad.close()}
   }catch(error){console.error('Could not open the pen display',error);if(pad&&!pad.closed)pad.close();setTarget(null)}
  },[state?.available,state?.enabled,state?.owned])
  if(!target)return <>{children}</>
