@@ -1,0 +1,402 @@
+import { installNativeButtons } from "./nativeButtonsFeed"
+/**
+ * penFeed.ts - the renderer's half of the native pen feed (docs/spikes/DESIGN-pen-capture.md 8.1 - 8.3).
+ *
+ *   pen:samples (main already applied the device frame) -> the person's Tablet orientation -> a client point on the target -> the SYNTHESISER
+ *   (shared/penEvents.ts: sample -> events)  ->  real `PointerEvent`s{pointerType: "pen"} dispatched on the element under that point.
+ *
+ * WHY SYNTHETIC EVENTS and not a new draw path: the e2e harness has driven the sheet and the notes page with exactly such events since the pen
+ * suites were written, so every handler (TabletSurface, penButtons.resolvePress / tapStep, penLive, penCursor, penActions) is proven to accept
+ * them. Reusing them guarantees that every pen feature (pressure, the lower / upper / eraser buttons and their actions, tap actions, the in-app
+ * ring, palm rejection, ExpressKeys) behaves identically on the native feed, and the pen and tablet suites keep testing the real thing.
+ * The target is the Tablet sheet or the camera's tablet-shaped area round its picture as shown (`penTarget.ts`, cameraInkGeometry.ts
+ * `inkPenArea`): the same shape on the screen, turned by the person's Tablet orientation and by nothing else, so the pen goes the same
+ * way on the camera as on the sheet (Sean, 2026-10-26: "the tablet orientation doesn't match in the live camera view and is wrong compared
+ * to the normal tablet view": 3.25.0 added the picture's own turn and stretched the tablet over the picture). Camera events ALWAYS go to
+ * its ink canvas: the tablet cannot send a stroke into a note or a header under those coordinates. Tablet events retain their
+ * hit-testing, clicks and box-row handover. A change of target, page, camera turn or orientation ends the old contact before another begins.
+ *
+ * The events pass the gate because the dispatch runs inside `gate.emit(...)`. A stroke keeps its target: from pointerdown to pointerup every event
+ * goes to the element that took the pointerdown (like implicit pointer capture, which a synthetic pointer id cannot have), so a stroke that crosses
+ * the strip or a button still ends on the sheet. Synthetic pointer events never produce `click`, so a pointerup on the same button as its
+ * pointerdown after < 6 px of movement clicks it.
+ *
+ * A contact that begins on an element that lies OVER the sheet and hands strokes to it (`[data-pen-handover]`: the dashed box's row of
+ * buttons, BoxActions.tsx) is HELD BACK until it says what it is: moved CLICK_SLOP_PX or more from where it began, it is the sheet's
+ * (its pointerdown at the first point and every held move go to the sheet, then the rest of it: a stroke, an erase, a box, as the
+ * pen's buttons say); lifted before that, it is the button's (the held events go to it, then the pointerup, and a tip tap clicks it).
+ *
+ * The dispatcher is plain TypeScript over a few injected functions (the DOM is behind `DispatchEnv`), so the whole mapping is a vitest.
+ */
+
+import { useSyncExternalStore } from "react"
+import type { FeedStatus, PenApi, PenBatch, PenFeedSettings, PenSample, Turn } from "../shared/pen"
+import { createSynth, type SynthEvent } from "../shared/penEvents"
+import { tabletToSheet } from "../shared/orientation"
+import { currentTurns, setTabletAspect } from "./orientation"
+import { penGate, type Gate } from "./penGate"
+import { nativePenTarget, type NativePenTarget } from "./penTarget"
+
+/** The fixed pointer id of the synthetic pen (design 8.3). */
+export const SYNTH_POINTER_ID = 4242
+/** A pointerup this close to its pointerdown clicks the button it started on. */
+export const CLICK_SLOP_PX = 6
+
+export interface Rect { left: number; top: number; width: number; height: number }
+
+/** What the dispatcher needs of the page; tests fake it. */
+export interface DispatchEnv {
+  /** The legacy tablet rectangle (tests); real dispatch uses `surface` for both the camera and tablet. */
+  sheetRect(): Rect | null
+  /** Native camera input always goes to its canvas, even when zoom maps the point outside the visible canvas. */
+  surface?(): NativePenTarget | null
+  turns(): Turn
+  elementAt(x: number, y: number): Element | null
+  fallbackTarget(): Element
+  /** Build and dispatch one pointer event on `target`; returns nothing (the gate's `emit` wraps the whole batch). */
+  dispatch(target: Element, init: SynthInit): void
+  /** A clickable ancestor of `target` (button, [role=button], link, summary) that is enabled and not part of the sheet itself, or null. */
+  clickable(target: Element): HTMLElement | null
+  /** ctrl / alt / shift / meta as the page's keys have them now. */
+  modifiers(): { ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }
+  /**
+   * `target` lies over the sheet and hands it a contact that moves (inside `[data-pen-handover]`, the box's row of buttons): the
+   * sheet's element, which then takes such a contact from its first point; else null. Absent: nothing is handed over.
+   */
+  handover?(target: Element): Element | null
+}
+
+export interface SynthInit {
+  type: SynthEvent["type"]
+  clientX: number
+  clientY: number
+  button: number
+  buttons: number
+  pressure: number
+  tiltX?: number
+  tiltY?: number
+  relatedTarget: Element | null
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}
+
+export interface Dispatcher {
+  /** One batch of normalized samples in; pointer events out on the active surface. Returns the events dispatched. */
+  batch(samples: PenSample[]): number
+  /** Blur, failover, close, backend change: end any contact and leave. Never a pointercancel. */
+  reset(): void
+  readonly inRange: boolean
+}
+
+const isEnterLeave = (type: SynthEvent["type"]): boolean => type === "pointerenter" || type === "pointerleave"
+
+export function createDispatcher(env: DispatchEnv, hooks: { onTip?(): void; onThrow?(error: unknown): void } = {}): Dispatcher {
+  const synth = createSynth()
+  let hover: Element | null = null
+  let surface: NativePenTarget | null = null
+  let mappedTurns: Turn | null = null
+  /**
+   * `tip`: the contact began with the tip (a side button pressed in the air never clicks: its taps are the pen's own).
+   * `held`: a contact begun on the sheet's handover row (`env.handover`), its events not dispatched yet; null once it is decided
+   * (a tap: the button's; moved CLICK_SLOP_PX: the sheet's, `sheet`). Only the TIP's contact is held: a side button pressed
+   * in the air over the row goes to the row at once, as it always did (the pen's double-tap timing reads each press as it
+   * is dispatched, penActions.ts). If the tip then touches the row with that button still down, the contact is held from
+   * the touch (`x`, `y` move there), and handed to the sheet as the sheet would have had it: `lead`, a press in the air
+   * at the touch point, then the moves.
+   */
+  let down: {
+    target: Element; x: number; y: number; tip: boolean; held: SynthInit[] | null; sheet: Element | null
+    lead: SynthInit | null; buttons: number
+  } | null = null
+  let last = { x: 0, y: 0 }
+  let resetting = false
+
+  const emit = (ev: SynthEvent, x: number, y: number): void => {
+    const fallback = env.fallbackTarget()
+    const camera = surface?.kind === "camera" ? surface.element : null
+    let target: Element
+    switch (ev.type) {
+      case "pointerover": case "pointerenter":
+        target = camera ?? env.elementAt(x, y) ?? fallback
+        hover = target
+        break
+      case "pointerdown": {
+        target = camera ?? env.elementAt(x, y) ?? fallback
+        const sheet = env.handover?.(target) ?? null
+        const tip = ev.button === 0
+        down = { target, x, y, tip, held: sheet && tip ? [] : null, sheet, lead: null, buttons: ev.buttons }
+        hover = target
+        break
+      }
+      case "pointermove": case "pointerup":
+        target = down && down.target.isConnected ? down.target : (camera ?? env.elementAt(x, y) ?? fallback)
+        break
+      default: // pointerout, pointerleave
+        target = camera ?? (hover && hover.isConnected ? hover : fallback)
+        break
+    }
+    if (ev.type === "pointermove" && !down) hover = target
+    const init: SynthInit = {
+      type: ev.type, clientX: x, clientY: y, button: ev.button, buttons: ev.buttons, pressure: ev.pressure,
+      ...(ev.tiltX !== undefined ? { tiltX: ev.tiltX } : {}), ...(ev.tiltY !== undefined ? { tiltY: ev.tiltY } : {}),
+      relatedTarget: null, ...env.modifiers(),
+    }
+    // The tip touched the row while a side button pressed in the air over it is still down: held from here.
+    if (ev.type === "pointermove" && down && !down.tip && down.held === null && down.sheet && down.target !== down.sheet
+      && (ev.buttons & 1) === 1 && (down.buttons & 1) === 0) {
+      down.held = []
+      down.x = x
+      down.y = y
+      const side = ev.buttons & ~1
+      down.lead = { ...init, type: "pointerdown", pressure: 0, buttons: side,
+        button: side & 2 ? 2 : side & 4 ? 1 : side & 32 ? 5 : 2 }
+    }
+    if (down && ev.type === "pointermove") down.buttons = ev.buttons
+    const held = down?.held
+    if (down && held) {
+      // (A side-button contact whose tip lifts before it moved: a tap on the row, the row's after all.)
+      if (ev.type === "pointerup" || (down.lead !== null && (ev.buttons & 1) === 0)) {
+        down.lead = null
+        // Lifted before it moved: a tap, the button's after all (its pointerdown and moves first, then this pointerup).
+        down.held = null
+        for (const one of held) env.dispatch(down.target, one)
+      } else {
+        held.push(init)
+        if (ev.type !== "pointermove" || Math.hypot(x - down.x, y - down.y) < CLICK_SLOP_PX) return
+        // Moved: the sheet's, from its first point (the pointerdown where the pen touched, then every move since).
+        down.held = null
+        if (down.sheet?.isConnected) {
+          down.target = down.sheet
+          hover = down.sheet
+          if (down.lead) env.dispatch(down.target, down.lead)
+        }
+        down.lead = null
+        for (const one of held) env.dispatch(down.target, one)
+        return
+      }
+    }
+    env.dispatch(target, init)
+    if (ev.type === "pointerup" && down) {
+      const started = down
+      down = null
+      if (!resetting && !camera && started.tip && started.target.isConnected) {
+        // Native tablet samples jitter by several pixels even during a stationary tap. A distance threshold
+        // turns that ordinary hardware noise into a cancelled toolbar click. Match the clickable at lift
+        // instead: this still rejects a drag that leaves the original control.
+        const button = env.clickable(started.target)
+        const liftedOn = env.clickable(env.elementAt(x, y) ?? env.fallbackTarget())
+        if (button && liftedOn === button) button.click()
+      }
+    }
+    if (ev.type === "pointerout" || ev.type === "pointerleave") hover = null
+  }
+
+  const reset = (): void => {
+    try {
+      resetting = true
+      for (const ev of synth.reset()) emit(ev, last.x, last.y)
+    } catch (error) { hooks.onThrow?.(error) }
+    finally { resetting = false }
+    down = null
+    hover = null
+  }
+
+  return {
+    get inRange() { return synth.inRange },
+    batch(samples) {
+      const next = env.surface ? env.surface() : null
+      // The person's Tablet orientation, and nothing else: on the camera as on the sheet (a camera picture's turn is in its key, below).
+      const turns = env.turns()
+      if (env.surface) {
+        // Another surface, another page, or the camera picture turned (its key): the contact on the old paper ends first.
+        if (next?.element !== surface?.element || next?.key !== surface?.key || next?.kind !== surface?.kind) reset()
+        surface = next
+      }
+      if (mappedTurns !== null && mappedTurns !== turns) reset()
+      mappedTurns = turns
+      const rect = env.surface ? surface?.rect ?? null : env.sheetRect()
+      // No target (the pane is hidden): the batch is dropped, but a visit that ends in it still ends.
+      let count = 0
+      for (const s of samples) {
+        try {
+          if (!rect) {
+            if (!s.inRange) { for (const ev of synth.step(s)) { emit(ev, last.x, last.y); count++ } }
+            continue
+          }
+          const u = tabletToSheet({ x: s.x, y: s.y }, turns)
+          // Inside the sheet (or the camera's tablet-shaped area), always: the right and bottom edges are exclusive, so the last pixel is
+          // just short of them. On the camera a point in the area's margin round the picture is dispatched where it is: CameraInk's rule
+          // for every pen (no stroke begins there; a stroke that strays there stops at the picture's edge).
+          const x = rect.left + Math.min(rect.width - 0.001, Math.max(0, u.x * rect.width))
+          const y = rect.top + Math.min(rect.height - 0.001, Math.max(0, u.y * rect.height))
+          last = { x, y }
+          if (s.tip) hooks.onTip?.()
+          for (const ev of synth.step(s)) { emit(ev, x, y); count++ }
+        } catch (error) { hooks.onThrow?.(error) }
+      }
+      return count
+    },
+    reset,
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The real page behind DispatchEnv
+// ---------------------------------------------------------------------------------------------
+
+function realEnv(gate: Gate, fault: { n: number }): DispatchEnv {
+  const keys = { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }
+  const track = (event: KeyboardEvent): void => {
+    keys.ctrlKey = event.ctrlKey; keys.altKey = event.altKey; keys.shiftKey = event.shiftKey; keys.metaKey = event.metaKey
+  }
+  window.addEventListener("keydown", track, true)
+  window.addEventListener("keyup", track, true)
+  window.addEventListener("blur", () => { keys.ctrlKey = keys.altKey = keys.shiftKey = keys.metaKey = false })
+  return {
+    sheetRect() {
+      return nativePenTarget()?.rect ?? null
+    },
+    surface: () => nativePenTarget(),
+    turns: currentTurns,
+    elementAt: (x, y) => document.elementFromPoint(x, y),
+    fallbackTarget: () => document.body,
+    dispatch(target, init) {
+      if (fault.n > 0) { fault.n--; throw new Error("pen feed test fault") }
+      const flat = isEnterLeave(init.type)
+      const event = new PointerEvent(init.type, {
+        pointerId: SYNTH_POINTER_ID, pointerType: "pen", isPrimary: true, width: 1, height: 1,
+        pressure: init.pressure, tiltX: init.tiltX ?? 0, tiltY: init.tiltY ?? 0,
+        clientX: init.clientX, clientY: init.clientY, screenX: window.screenX + init.clientX, screenY: window.screenY + init.clientY,
+        button: init.button, buttons: init.buttons, relatedTarget: init.relatedTarget,
+        ctrlKey: init.ctrlKey, altKey: init.altKey, shiftKey: init.shiftKey, metaKey: init.metaKey,
+        bubbles: !flat, cancelable: !flat, composed: true, view: window,
+      })
+      gate.emit(() => { target.dispatchEvent(event) })
+    },
+    clickable(target) {
+      const hit = target.closest<HTMLElement>('button, [role="button"], [role="tab"], summary, a[href]')
+      if (!hit || hit.closest('[data-tablet="surface"]')) return null
+      if (hit instanceof HTMLButtonElement && hit.disabled) return null
+      if (hit.getAttribute("aria-disabled") === "true") return null
+      return hit
+    },
+    modifiers: () => ({ ...keys }),
+    handover(target) {
+      if (!target.closest("[data-pen-handover]")) return null
+      return nativePenTarget()?.element ?? null
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The store the UI reads (status, capture), and the subscriptions
+// ---------------------------------------------------------------------------------------------
+
+export interface FeedSnapshot {
+  status: FeedStatus | null
+  /** Why the gate opened itself, or null. */
+  selfOpen: string | null
+  /** Capture is on right now (the gate is swallowing the OS pen). */
+  capturing: boolean
+}
+
+let snapshot: FeedSnapshot = { status: null, selfOpen: null, capturing: false }
+const listeners = new Set<() => void>()
+const publish = (next: Partial<FeedSnapshot>): void => {
+  snapshot = { ...snapshot, ...next }
+  for (const l of [...listeners]) { try { l() } catch { /* ignore */ } }
+}
+export const feedSnapshot = (): FeedSnapshot => snapshot
+export const subscribeFeed = (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
+export const usePenFeedStore = (): FeedSnapshot => useSyncExternalStore(subscribeFeed, feedSnapshot)
+
+/** The feed is silent this long mid-visit: let go (main ends a visit itself after 0.6 s hovering / 2 s in contact). */
+export const STALL_MS = 4000
+let lastBatchAt = 0
+let started = false
+let dispatcher: Dispatcher | null = null
+const fault = { n: 0 }
+
+/** Subscribe to the preload's pen API once. Safe to call from several places; does nothing without `window.wm.pen`. */
+export function installPenFeed(): void {
+  installNativeButtons()
+  if (started || typeof window === "undefined") return
+  const api: PenApi | undefined = window.wm?.pen
+  if (!api) return
+  started = true
+  const gate = penGate()
+  dispatcher = createDispatcher(realEnv(gate, fault), { onTip: () => gate.noteTip(), onThrow: (error) => gate.noteError(error) })
+
+  api.onSamples((batch: PenBatch) => {
+    const d = dispatcher
+    if (!d) return
+    // A batch already queued by main must not restart a contact after focus, settings or the surface released it.
+    const state = gate.state
+    if (!state.available || !state.enabled || !state.opened || !state.sheetShowing || state.released || state.selfOpen !== null || !snapshot.status?.open) {
+      d.reset()
+      gate.setState({ nativeLive: false })
+      return
+    }
+    // A real DOM pen contact that is already down is never cut: the feed waits for it to end.
+    if (!d.inRange && gate.domContact()) return
+    d.batch(batch.samples)
+    lastBatchAt = performance.now()
+    gate.setState({ nativeLive: d.inRange })
+  })
+  // A feed that stalls mid-visit (a sample listener died, the backend hung) must not hold the pen forever: the window pen takes over again.
+  setInterval(() => {
+    if (dispatcher?.inRange && performance.now() - lastBatchAt > STALL_MS) { dispatcher.reset(); gate.setState({ nativeLive: false }) }
+  }, 1000)
+  api.onStatus(acceptStatus)
+  api.onEvent((event) => {
+    if (event.kind === "released" || event.kind === "failover") { dispatcher?.reset(); gate.setState({ nativeLive: false }) }
+  })
+  gate.onChange(() => publish({ capturing: gate.captureOn() }))
+  gate.onSelfOpen((reason) => {
+    dispatcher?.reset()
+    gate.setState({ nativeLive: false })
+    publish({ selfOpen: reason, capturing: false })
+    // Tell main too: it lets go of everything and waits for the person to switch capture on again.
+    try { api.panic(`gate: ${reason}`) } catch { /* ignore */ }
+  })
+  if (window.wm.e2eWindow) {
+    ;(window as unknown as Record<string, unknown>).__wmPenFeed = {
+      /** Make the next n synthesised events throw (the self-opening test of design 15.4 #2). */
+      failSynth(n: number) { fault.n = n },
+      snapshot: () => snapshot,
+      gate: () => ({ ...gate.state, capturing: gate.captureOn() }),
+    }
+  }
+}
+
+/** Status and opening are driven by usePenFeed; these are its two entry points into the store. */
+export function acceptStatus(status: FeedStatus): void {
+  const gate = penGate()
+  gate.setState({ available: status.available, enabled: status.settings.enabled, released: status.released !== null })
+  // The pen left the sheet's feed (released, capture off): end any contact so no stroke hangs, and give the window pen back.
+  if (!status.open || !status.available || status.released !== null || !status.settings.enabled) { dispatcher?.reset(); gate.setState({ nativeLive: false }) }
+  // The sheet takes the tablet's own shape (landscape for a landscape tablet), whatever the screen's.
+  setTabletAspect(status.tablet?.aspect ?? null)
+  publish({ status, capturing: gate.captureOn() })
+}
+export function markOpened(opened: boolean): void {
+  const gate = penGate()
+  gate.setState({ opened })
+  publish({ capturing: gate.captureOn() })
+}
+export function markSheet(showing: boolean): void {
+  const gate = penGate()
+  gate.setState({ sheetShowing: showing })
+  if (!showing) { dispatcher?.reset(); gate.setState({ nativeLive: false }) }
+  publish({ capturing: gate.captureOn() })
+}
+/** Change the feed's settings (capture on / off) and let every reader see the answer at once. */
+export async function changeSettings(patch: Partial<PenFeedSettings>): Promise<PenFeedSettings | null> {
+  const api = window.wm?.pen
+  if (!api) return null
+  const settings = await api.setSettings(patch)
+  if (snapshot.status) acceptStatus({ ...snapshot.status, settings })
+  return settings
+}

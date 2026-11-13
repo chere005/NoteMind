@@ -1,0 +1,11 @@
+const { app, ipcMain } = require('electron'), fs = require('node:fs'), path = require('node:path');
+const root = path.resolve('test-results/launch-file-' + Date.now());fs.mkdirSync(root, { recursive: true });app.setPath('userData', root);delete process.env.NOTEMIND_DATA;process.env.NOTEMIND_HOME = root;app.disableHardwareAcceleration();
+const sourceRoot = process.env.NOTEMIND_TEST_APP || path.resolve('src'), file = path.join(root, 'Launch.nm');fs.writeFileSync(file, require(path.join(sourceRoot, 'notepad-format.cjs')).encode({ text: '# Opened from Finder', assets: {} }));
+const recovery=path.join(root,'note-recovery');fs.mkdirSync(recovery);fs.writeFileSync(path.join(recovery,'existing.wm'),require(path.join(sourceRoot,'notepad-format.cjs')).encode({id:'existing',text:'# Existing draft',assets:{}}));fs.writeFileSync(path.join(recovery,'existing.json'),JSON.stringify({path:null,visual:true,dirty:true}));fs.writeFileSync(path.join(recovery,'session.json'),JSON.stringify({tabs:[{id:'existing',visual:true}],active:'existing'}));
+const handle=ipcMain.handle;ipcMain.handle=function(name,fn){return handle.call(this,name,name==='notes-recover'?async(...args)=>{await new Promise(r=>setTimeout(r,250));return fn(...args)}:fn)};
+const report = { root, checks: [] };let tested = false;
+app.on('browser-window-created', (_, win) => { if (tested) return;tested = true;win.webContents.setBackgroundThrottling(false);win.webContents.once('did-finish-load', () => setTimeout(async () => {
+ try { if (!win.isVisible()) throw Error('The Finder file window remained hidden');if (!await win.webContents.executeJavaScript('doc.path===' + JSON.stringify(file))) throw Error('The Finder document did not open');if(!await win.webContents.executeJavaScript("tabs.some(tab=>tab.doc.id==='existing')"))throw Error('The existing draft was not preserved');report.checks.push('Finder startup reveals its .nm document after preserving recovered drafts');report.ok = true; } catch (error) { report.ok = false;report.error = error.stack; }
+ fs.writeFileSync('test-results/launch-file.json', JSON.stringify(report, null, 2));console.log(JSON.stringify(report, null, 2));app.exit(report.ok ? 0 : 1);
+ }, 1200)); });
+require(path.join(sourceRoot, 'main.cjs'));app.emit('open-file', { preventDefault() {} }, file);setTimeout(() => app.exit(1), 15000).unref();

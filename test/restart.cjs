@@ -1,0 +1,16 @@
+const {app}=require('electron'),fs=require('node:fs'),path=require('node:path');
+const previous=JSON.parse(fs.readFileSync(path.join(__dirname,'../test-results/review.json'),'utf8'));if(!previous.ok)throw Error('Run the review successfully before restart verification.');
+process.env.NOTEMIND_DATA=previous.profile;app.disableHardwareAcceleration();
+const expectedSheets=JSON.parse(fs.readFileSync(path.join(previous.profile,'sheets.json'),'utf8'));
+const expectedPages=JSON.parse(fs.readFileSync(path.join(previous.profile,'camera-pages.json'),'utf8'));
+const report={profile:previous.profile,checks:[]};
+const check=(value,label)=>{if(!value)throw Error(label);report.checks.push(label)};
+app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',async()=>{try{await new Promise(r=>setTimeout(r,1800));const js=code=>win.webContents.executeJavaScript(code);
+ check(await js("document.querySelectorAll('.sheet-tab:not(.live)').length-1")===expectedSheets.length,'drawing tabs survive restart');
+ check(await js("document.querySelectorAll('.sheet-tab.live').length+1")===expectedPages.length,'live and still camera tabs survive restart');
+ check(await js("document.querySelectorAll('#rich img').length")===3,'saved document and embedded images restore');
+ check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing.wm')"),'workspace attachments restore');
+ check(await js("document.querySelector('.sheet-tab.on .name').textContent")===expectedSheets.at(-1).name,'active drawing tab restores');
+ const current=JSON.parse(fs.readFileSync(path.join(previous.profile,'sheets.json'),'utf8'));check(JSON.stringify(current.map(s=>s.strokes))===JSON.stringify(expectedSheets.map(s=>s.strokes)),'restoration preserves every ink sample');
+ report.ok=true;win.close();}catch(error){report.ok=false;report.error=error.stack;win.destroy();process.exitCode=1;}finally{fs.writeFileSync(path.join(__dirname,'../test-results/restart.json'),JSON.stringify(report,null,2));}}));
+require(path.join(process.env.NOTEMIND_TEST_APP||path.resolve(__dirname,'../src'),'main.cjs'));setTimeout(()=>{if(!report.ok)app.exit(1)},15000).unref();

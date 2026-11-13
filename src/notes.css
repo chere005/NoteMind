@@ -1,0 +1,56 @@
+.toolbar{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.toolbar>button{flex:none;white-space:nowrap}.toolbar .grow{min-width:0}.notes-dialog{max-width:min(1000px,92vw);width:760px;max-height:88vh;overflow:auto}.notes-dialog label{display:block;margin:12px 0}.notes-dialog select,.notes-filter select{font:inherit;padding:7px;background:var(--wm-page);color:var(--wm-text);border:1px solid var(--wm-rule);border-radius:4px}.notes-dialog input[type=checkbox]{width:auto;margin-right:8px}.notes-dialog h2{font-weight:600}.notes-muted,.notes-message{font-size:12px;color:var(--wm-muted)}.notes-message:empty{display:none}.notes-records{max-height:50vh;overflow:auto}.notes-record{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--wm-rule);padding:8px 0}.notes-record>div,.notes-record-open{flex:1;min-width:0;text-align:left}.notes-record-open{border:0!important}.notes-record strong,.notes-record small,.attachment-row small{display:block;overflow-wrap:anywhere}.notes-record small{font-size:11px;color:var(--wm-muted);margin-top:4px}.notes-filter{display:flex;gap:8px;margin-bottom:14px}.notes-filter input{min-width:0;flex:1}.notes-filter select{max-width:155px}.notes-dialog .dialog-actions{flex-wrap:wrap}.note-find{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--wm-rule);background:var(--wm-chrome)}.note-find input{min-width:0;flex:1;background:var(--wm-page);color:var(--wm-text);border:1px solid var(--wm-rule);border-radius:4px;padding:5px 8px}.note-find button{padding:5px 7px}.note-find span{font-size:11px;white-space:nowrap}::highlight(note-find){background:#ffd24c88;color:inherit}::highlight(note-current){background:#ff963acc;color:#151515}#rich mark{background:#ffe06499;color:inherit}#rich .task-item{list-style:none}#rich input[type=checkbox]{accent-color:var(--wm-accent);margin:0 7px 0 -22px;width:15px;height:15px;vertical-align:middle}#rich .heading-folded{display:none}#rich h1,#rich h2,#rich h3,#rich h4,#rich h5,#rich h6{position:relative}#rich .heading-toggle{font-size:14px;position:absolute;left:-23px;top:4px;padding:3px;opacity:0;color:var(--wm-muted)}#rich :hover>.heading-toggle,#rich .heading-toggle:focus-visible,#rich .heading-toggle[aria-expanded=false]{opacity:1}#rich .attachment-card{display:inline-flex;vertical-align:top;flex-direction:column;width:min(300px,100%);margin:8px 0;border:1px solid var(--wm-rule);border-radius:7px;overflow:hidden;text-decoration:none;background:var(--wm-chrome);color:var(--wm-text)}#rich .attachment-card img{display:block;max-height:230px;width:100%;object-fit:contain;background:white}#rich .attachment-label{font-size:13px;padding:10px}.attachment-list{max-height:55vh;overflow:auto}.attachment-row{display:flex;gap:16px;padding:12px 0;border-bottom:1px solid var(--wm-rule)}.attachment-row>img{width:100px;height:100px;object-fit:contain;background:#8881}.attachment-row>div{flex:1;overflow-wrap:anywhere}.attachment-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.scan-pages{display:flex;gap:14px;flex-wrap:wrap;max-height:50vh;overflow:auto}.scan-page{width:180px;border:1px solid var(--wm-rule);padding:8px;border-radius:6px}.scan-page>img{width:100%;height:170px;object-fit:contain;background:#8881}.scan-page>span{display:block;margin:5px 0}.scan-page>button{padding:3px 5px;margin:2px}.versions-layout{display:flex;gap:16px;min-height:280px}.version-list{width:230px;max-height:55vh;overflow:auto;flex:none}.version-list>button{display:block;text-align:left;width:100%;margin-bottom:6px}.version-preview{max-height:55vh;overflow:auto;font-size:14px;min-height:0}.version-preview img{max-width:100%}.restore-version{display:block;margin-bottom:20px;background:var(--wm-accent)!important;color:white!important}.library-section{font-size:11px;font-weight:600;color:var(--wm-muted);padding:10px 10px 4px}.library-filter-back{display:block;padding:7px 10px!important;text-align:left;width:100%;color:var(--wm-accent)}.smart-folder-row{cursor:pointer}.smart-folder-row .name{overflow:hidden;text-overflow:ellipsis}.note-row .pin-badge{font-size:10px;margin-left:4px;color:var(--wm-muted)}
+.workspace>main>footer{min-height:24px;max-height:24px;gap:12px;align-items:center;justify-content:flex-start}.workspace>main>footer #status{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.workspace>main>footer #modeLabel{flex:none}
+.toolbar #heading{min-width:96px;text-align:left}.toolbar #insertTable{display:flex;align-items:center;justify-content:center}.toolbar #insertTable.selected{color:var(--wm-accent);background:color-mix(in srgb,var(--wm-accent) 12%,transparent)}
+#rich .notepad-table-scroll{max-width:100%;overflow-x:auto;padding:20px 0 8px 20px;margin:12px 0;scrollbar-width:thin}#rich .notepad-table-scroll table{width:max-content;min-width:100%;table-layout:auto;margin:0}#rich td,#rich th{font-weight:normal;text-align:left;vertical-align:top;min-width:120px;max-width:420px;height:38px;padding:7px 10px;overflow-wrap:anywhere;border:1px solid var(--wm-rule)}#rich td>p,#rich th>p{margin:0}#rich .table-selected{background:color-mix(in srgb,var(--wm-accent) 18%,transparent)}#rich .table-drop-row{outline:2px solid var(--wm-accent)}#rich .table-drop-column{box-shadow:inset 2px 0 var(--wm-accent)}
+.table-controls{position:fixed;inset:0;pointer-events:none;z-index:50}.table-handle{position:fixed;pointer-events:auto;touch-action:none;user-select:none;font-size:10px;line-height:1;padding:0;background:var(--wm-chrome);color:var(--wm-muted);border:1px solid var(--wm-rule);border-radius:5px;cursor:grab}.table-handle:active{cursor:grabbing}.table-handle:hover,.table-handle:focus-visible{color:var(--wm-accent);border-color:var(--wm-accent)}.table-row{width:16px;height:20px;writing-mode:vertical-rl}.table-column{width:24px;height:16px}
+
+/* Find and Replace is a card at the top right of the page: it floats, so finding never moves the note. */
+main{position:relative}
+.note-find{position:absolute;top:52px;right:24px;z-index:20;display:flex;flex-direction:column;align-items:stretch;gap:6px;width:min(480px,calc(100% - 48px));padding:8px;border:1px solid var(--wm-rule);border-radius:8px;background:var(--wm-chrome);box-shadow:0 6px 24px rgba(0,0,0,.28)}
+.note-find[hidden],.note-find .find-row[hidden]{display:none!important}
+.note-find .find-row{display:flex;align-items:center;gap:6px}
+.note-find .find-toggle[aria-pressed=true]{background:var(--wm-accent,#3b82f6);color:#fff}
+.note-find .find-toggle{font-size:11px;min-width:28px}
+
+/* Footer: word count, last save, zoom. */
+footer #wordCount,footer #savedAt{margin-left:14px;white-space:nowrap}
+footer #modeLabel{margin-left:auto}
+footer #zoomBox{background:transparent;color:inherit;border:0;font:inherit;margin-left:auto;cursor:pointer}
+
+/* Export as PDF: options beside a preview of the first page. */
+.pdf-dialog{width:min(720px,92vw)}
+.pdf-dialog .pdf-layout{display:flex;gap:20px;align-items:flex-start}
+.pdf-dialog .pdf-controls{display:flex;flex-direction:column;gap:10px;min-width:210px}
+.pdf-dialog .pdf-controls label{display:flex;flex-direction:column;gap:3px;font-size:12px}
+.pdf-dialog .pdf-controls .pdf-toggle{flex-direction:row;align-items:center;gap:6px}
+.pdf-dialog .pdf-preview{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.pdf-dialog .pdf-frame{position:relative;overflow:hidden;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.pdf-dialog .pdf-sheet{position:absolute;left:0;top:0;transform-origin:0 0;background:#fff}
+.pdf-dialog .pdf-sheet iframe{position:absolute;border:0;background:#fff}
+.pdf-dialog .pdf-folio{position:absolute;left:0;right:0;text-align:center;font:11px Arial,sans-serif;color:#666}
+.pdf-dialog .pdf-note{font-size:11px;opacity:.7;margin:0}
+
+/* Keyboard Shortcuts (F1). */
+.shortcuts-dialog{width:min(560px,92vw)}
+.shortcuts-dialog input[type=search]{width:100%;box-sizing:border-box;margin:6px 0 10px;padding:6px 8px;background:var(--wm-page);color:var(--wm-text);border:1px solid var(--wm-rule);border-radius:4px}
+.shortcuts-dialog .shortcut-list{max-height:min(60vh,520px);overflow:auto}
+.shortcuts-dialog h3{margin:12px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;opacity:.7}
+.shortcuts-dialog .shortcut-row{display:flex;justify-content:space-between;gap:16px;padding:3px 0;border-bottom:1px solid var(--wm-rule)}
+.shortcuts-dialog kbd{font:12px ui-monospace,Menlo,Consolas,monospace;white-space:nowrap}
+/* Keep the recognition actions usable when the window is narrow. */
+.ocr-actions{flex-wrap:wrap}
+.picture-editor{width:min(800px,92vw)}
+.picture-preview{height:min(50vh,440px);display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--wm-page);border:1px solid var(--wm-rule)}
+.picture-preview canvas{max-width:100%;max-height:100%;object-fit:contain;touch-action:none;cursor:crosshair}
+.picture-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
+.picture-controls label{display:flex;align-items:center;gap:5px}
+.picture-controls input[type=number]{width:76px}
+.picture-selection{position:fixed;z-index:18;box-sizing:border-box;border:2px solid #1683ff;pointer-events:none}
+.picture-selection[hidden]{display:none}
+.picture-selection-tools{position:absolute;right:0;top:-36px;display:flex;gap:2px;padding:2px;background:var(--wm-chrome);border:1px solid var(--wm-rule);border-radius:4px;pointer-events:auto}
+.picture-selection-tools button{padding:3px 7px;white-space:nowrap}
+.picture-resize-handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;padding:0;border:2px solid #fff;background:#1683ff;cursor:nwse-resize;touch-action:none;pointer-events:auto}
+
+#rich .graphics-pane{display:block;position:relative;margin:12px 0;border:1px solid var(--wm-rule);border-radius:6px;overflow:hidden;background:#fff;line-height:0;contain:layout style}#rich .graphics-pane>img{display:block;width:100%;height:auto;margin:0}#rich .graphics-pane>[data-edit-graphics]{position:absolute;right:6px;top:6px;padding:5px 9px;line-height:1.3;background:var(--wm-chrome);color:var(--wm-text);border:1px solid var(--wm-rule);opacity:0}#rich .graphics-pane:hover>[data-edit-graphics],#rich .graphics-pane:focus-within>[data-edit-graphics]{opacity:1}
+
+#rich .graphics-pane{content-visibility:auto;contain-intrinsic-size:auto 320px}

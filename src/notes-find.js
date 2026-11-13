@@ -1,0 +1,85 @@
+(() => {
+ // A card at the top right of the page: it floats, so finding never moves the note. Both modes, match case, whole word, replace.
+ const bar=document.createElement('div');bar.className='note-find';bar.hidden=true;bar.setAttribute('role','search');
+ bar.innerHTML='<div class="find-row"><input type="search" placeholder="Find in Notepad" aria-label="Find in Notepad"><span role="status"></span><button data-prev title="Previous match (Shift+F3)" aria-label="Previous match">↑</button><button data-next title="Next match (F3)" aria-label="Next match">↓</button><button data-case class="find-toggle" title="Match case" aria-label="Match case" aria-pressed="false">Aa</button><button data-word class="find-toggle" title="Whole word" aria-label="Whole word" aria-pressed="false">ab</button><button data-close title="Close find" aria-label="Close find">×</button></div><div class="find-row find-replace" hidden><input type="text" placeholder="Replace with" aria-label="Replace with"><button data-replace>Replace</button><button data-all>Replace All</button></div>';
+ $('toolbar').after(bar);
+ const [input,replacement]=bar.querySelectorAll('input'),count=bar.querySelector('[role=status]'),replaceRow=bar.querySelector('.find-replace');
+ const button=name=>bar.querySelector('[data-'+name+']');
+ const word=/[\p{L}\p{N}_]/u;
+ let options={matchCase:false,wholeWord:false},matches=[],index=-1;
+ try{options={...options,...JSON.parse(localStorage.getItem('notemind.find')||'{}')};}catch{}
+ const syncToggles=()=>{button('case').setAttribute('aria-pressed',String(options.matchCase));button('word').setAttribute('aria-pressed',String(options.wholeWord));};
+ const saveOptions=()=>{try{localStorage.setItem('notemind.find',JSON.stringify(options));}catch{}};
+ syncToggles();
+ // The [start,end) spans of the query in `text`, honouring match case and whole word.
+ function scan(text){
+  const found=[],query=input.value;if(!query)return found;
+  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase();let from=0,at;
+  while((at=hay.indexOf(needle,from))>=0){const end=at+needle.length;if(!options.wholeWord||(!(at>0&&word.test(text[at-1]))&&!(end<text.length&&word.test(text[end]))))found.push([at,end]);from=end;}
+  return found;
+ }
+ const clearHighlights=()=>{CSS.highlights?.delete('note-find');CSS.highlights?.delete('note-current');};
+ function refresh(){
+  if(bar.hidden)return;matches=[];clearHighlights();
+  if(!input.value){count.textContent='';button('prev').disabled=button('next').disabled=true;return;}
+  if(!visual)matches=scan(source.value).map(([start,end])=>({start,end}));
+  else{
+   const nodes=[],walker=document.createTreeWalker(rich,NodeFilter.SHOW_TEXT,{acceptNode:n=>n.parentElement.closest('[data-editor-control]')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});let text='',node;
+   while((node=walker.nextNode())){nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
+   for(const [at,stop] of scan(text)){const start=nodes.find(n=>n.end>at),end=nodes.find(n=>n.end>=stop);if(start&&end){const range=document.createRange();range.setStart(start.node,at-start.start);range.setEnd(end.node,stop-end.start);matches.push(range);}}
+   if(CSS.highlights)CSS.highlights.set('note-find',new Highlight(...matches));
+  }
+  index=Math.min(Math.max(index,0),matches.length-1);
+  count.textContent=matches.length?(index+1)+' of '+matches.length:'No matches';button('prev').disabled=button('next').disabled=!matches.length;
+ }
+ function show(){
+  if(!matches.length)return;const m=matches[index];count.textContent=(index+1)+' of '+matches.length;
+  if(!visual){source.setSelectionRange(m.start,m.end);const line=source.value.slice(0,m.start).split('\n').length;source.parentElement.scrollTop=(line-1)*23-source.parentElement.clientHeight/2;}
+  else{if(doc.meta?.collapsed?.length){doc.meta.collapsed=[];window.NoteMindWriting.decorate();markDirty();refresh();}CSS.highlights?.set('note-current',new Highlight(matches[index]));matches[index].startContainer.parentElement.scrollIntoView({block:'center'});}
+ }
+ function move(delta){refresh();if(!matches.length)return;index=(index+delta+matches.length)%matches.length;show();}
+ function open({replace}={}){
+  bar.style.top=($('toolbar').offsetTop+$('toolbar').offsetHeight+6)+'px';bar.hidden=false;if(replace!==undefined)replaceRow.hidden=!replace;
+  index=-1;input.focus();input.select();refresh();
+ }
+ // Escape gives the caret back where the match was.
+ function close(){bar.hidden=true;clearHighlights();(visual?rich:source).focus();if(visual&&matches[index]){const selection=getSelection();selection.removeAllRanges();selection.addRange(matches[index]);}}
+ const selectedText=()=>visual?getSelection().toString():source.value.slice(source.selectionStart,source.selectionEnd);
+ function useSelection(){const text=selectedText();if(!text||text.includes('\n'))return;if(bar.hidden)open();input.value=text;index=-1;refresh();move(0);}
+ // One match replaced; the next one comes forward.
+ function replaceCurrent(){
+  refresh();if(!matches.length)return;if(index<0)index=0;const m=matches[index],text=replacement.value;
+  if(!visual)source.setRangeText(text,m.start,m.end,'end');
+  else{const selection=getSelection();rich.focus();selection.removeAllRanges();selection.addRange(m);document.execCommand(text?'insertText':'delete',false,text);richChanged=true;}
+  markDirty();refresh();move(0);
+ }
+ // Every match, back to front so earlier spans stay valid; one step of Undo.
+ function replaceAll(){
+  refresh();if(!matches.length)return;const text=replacement.value,total=matches.length;
+  NoteMindHistory.transaction(()=>{
+   if(!visual)for(const m of [...matches].reverse())source.setRangeText(text,m.start,m.end,'end');
+   else{const selection=getSelection();rich.focus();for(const range of [...matches].reverse()){selection.removeAllRanges();selection.addRange(range);document.execCommand(text?'insertText':'delete',false,text);}richChanged=true;}
+   markDirty();
+  });
+  index=-1;refresh();$('status').textContent='Replaced '+total+(total===1?' match':' matches');
+ }
+ input.oninput=()=>{index=-1;refresh();move(0);};
+ input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();move(e.shiftKey?-1:1);}if(e.key==='Escape'){e.preventDefault();close();}};
+ replacement.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();if(e.ctrlKey||e.metaKey)replaceAll();else replaceCurrent();}if(e.key==='Escape'){e.preventDefault();close();}};
+ button('prev').onclick=()=>move(-1);button('next').onclick=()=>move(1);button('close').onclick=close;button('replace').onclick=replaceCurrent;button('all').onclick=replaceAll;
+ button('case').onclick=()=>{options.matchCase=!options.matchCase;syncToggles();saveOptions();index=-1;refresh();move(0);};
+ button('word').onclick=()=>{options.wholeWord=!options.wholeWord;syncToggles();saveOptions();index=-1;refresh();move(0);};
+ rich.addEventListener('input',refresh);source.addEventListener('input',refresh);
+ window.addEventListener('notemind-command',e=>{
+  if(e.detail==='findNote')open({replace:bar.hidden?false:undefined});
+  if(e.detail==='findReplace'){open({replace:true});(selectedText()&&!selectedText().includes('\n')?useSelection:()=>{})();}
+  if(e.detail==='findNext'){if(bar.hidden)open();move(1);}
+  if(e.detail==='findPrevious'){if(bar.hidden)open();move(-1);}
+  if(e.detail==='findSelection')useSelection();
+ });
+ document.addEventListener('keydown',e=>{
+  const mod=e.ctrlKey||e.metaKey,key=e.key.toLowerCase();
+  if(mod&&key==='f'&&!e.shiftKey){e.preventDefault();open({replace:bar.hidden?false:undefined});}
+ });
+ window.NoteMindFind={open,close,refresh,move,replaceAll,replaceCurrent,useSelection,get matches(){return matches.length;}};
+})();

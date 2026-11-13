@@ -1,0 +1,30 @@
+{
+  "name": "notemind",
+  "version": "0.16.0",
+  "private": true,
+  "description": "A simple desktop notepad for Markdown and Python.",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build": "node scripts/build.cjs",
+    "test": "node --test test/*.test.cjs",
+    "preflight": "npm test"
+  },
+  "dependencies": {
+    "docx": "^9.15.0",
+    "koffi": "^3.3.2",
+    "mammoth": "^1.13.0",
+    "markdown-it": "^15.0.3",
+    "onnxruntime-web": "^1.30.0",
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "esbuild": "^0.28.2",
+    "rcedit": "^5.0.2"
+  }
+}
