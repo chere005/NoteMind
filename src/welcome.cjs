@@ -7,6 +7,7 @@ module.exports=function install(getMain,openPath,projectService){
  const rows=(list,kind)=>Promise.all(list.map(async x=>({path:x.path,name:path.basename(x.path,path.extname(x.path)),folder:path.dirname(x.path),kind:kind||path.extname(x.path).slice(1),exists:await fs.access(x.path).then(()=>true,()=>false)})));
  ipcMain.handle('start-info',async()=>{const all=await recents.read();return {version:app.getVersion(),files:await rows(all.files),projects:await rows(all.projects,'project')};});
  ipcMain.handle('start-workspace',reveal);
+ ipcMain.handle('start-guide',()=>{getMain().webContents.send('menu:command','welcomeNote');reveal();});
  ipcMain.handle('start-open-path',(_,file)=>open(file));
  ipcMain.handle('start-forget',(_,file)=>recents.forget(file));
  ipcMain.handle('start-open',async()=>{const r=await dialog.showOpenDialog(window||getMain(),{properties:['openFile'],filters:[{name:'Documents and projects',extensions:['nm','wm','wmpr','md','txt','py','docx','pdf']}]});if(!r.canceled)await open(r.filePaths[0]);});

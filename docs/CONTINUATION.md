@@ -1,6 +1,7 @@
 # Continuation
 
-- NoteMind 0.23.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- NoteMind 0.24.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- Explore Features and Help → Welcome to NoteMind open an editable guide with a live checklist, table, drawing and two-page PDF. It lives in Documents/NoteMind and links into Default Workspace; only pristine generated guides refresh across releases. `--tour` opens it after restoring the session.
 - Graphics panes store one image preview and compact editable stroke sidecars; see GRAPHICS-PANES.md. Pen, mouse, selection transforms, native button actions and drawing-location switching have hidden application coverage.
 - Committed ink is immutable. Drawing paints new segments, eraser queries cache stroke bounds, selection drags reuse bitmaps, and dirty-state checks reuse stroke fingerprints. Image previews reuse binary URLs and cache header dimensions, including EXIF orientation, so deferred decoding cannot change the scroll range. Image-only notes retain an editable final paragraph.
 - The large-document check uses 10,000 strokes, 200,000 points and 100 large images; it verifies incremental drawing, cached dragging, compact preview markup and complete autosave.

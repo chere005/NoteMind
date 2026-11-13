@@ -131,7 +131,7 @@
   const sectionFolder=()=>roots.find(folder=>activePath&&descendant(activePath,folder))?(activePath?parentOf(activePath):roots[0]):roots[0];
   function newNotepad(){const folder=sectionFolder();if(folder)window.dispatchEvent(new CustomEvent('notemind-new-in-folder',{detail:{folder}}));else byId('new').click();}
   async function newSection(){const folder=sectionFolder();if(!folder)return;const name=await askText('New section name');if(!name)return;await window.notemind.createFolder(folder,name);expanded.add(folder);await refresh();}
-  window.NoteMindSidebar={entryActions,draftActions,focusedDelete:()=>rowActionProviders.get(document.activeElement?.closest('#sidebarTree .tree-row'))?.().find(item=>item?.danger)?.run,newNotepad,newMenu:()=>[{label:'New Notepad',run:newNotepad},{label:'New Section…',disabled:!sectionFolder(),run:newSection}],menuItems:organizationMenu};
+  window.NoteMindSidebar={keepGuide:file=>{if(workspaceId==='default')addWorkspaceFile(file);},entryActions,draftActions,focusedDelete:()=>rowActionProviders.get(document.activeElement?.closest('#sidebarTree .tree-row'))?.().find(item=>item?.danger)?.run,newNotepad,newMenu:()=>[{label:'New Notepad',run:newNotepad},{label:'New Section…',disabled:!sectionFolder(),run:newSection}],menuItems:organizationMenu};
 
   const parentOf = path => { const index = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')); if (index < 0) return ''; if (index === 2 && /^[a-z]:/i.test(path)) return path.slice(0, 3); return path.slice(0, index) || path.slice(0, 1); };
 

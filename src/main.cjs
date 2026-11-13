@@ -39,12 +39,12 @@ if (!instance||closeOnly) app.quit();
 
 const documentArg = args => args.slice(1).find(arg => !arg.startsWith('-') && /\.(nm|wm|wmpr|md|txt|py|docx|pdf|png|jpe?g|webp|gif|bmp|svg|avif)$/i.test(arg));
 
-let pendingDocument = documentArg(process.argv);
-const showWelcomeAtStart=!process.env.NOTEMIND_DATA&&!process.argv.includes('--workspace')&&!pendingDocument;
+let pendingDocument = documentArg(process.argv),guidePending=process.argv.includes('--tour');
+const showWelcomeAtStart=!process.env.NOTEMIND_DATA&&!process.argv.includes('--workspace')&&!pendingDocument&&!guidePending;
 
 app.on('open-file', (event, file) => { event.preventDefault(); if (!/\.(nm|wm|wmpr|md|txt|py|docx|pdf|png|jpe?g|webp|gif|bmp|svg|avif)$/i.test(file)) return; if (win && !win.isDestroyed() && !win.webContents.isLoading()) {win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(file));} else pendingDocument = file; });
 
-app.on('second-instance', (_, args) => { if(args.includes('--close-window')){win?.close();return;}const file = documentArg(args); if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (file) win.webContents.send('file:open-request', path.resolve(file)); } else if (file) pendingDocument = file; });
+app.on('second-instance', (_, args) => { if(args.includes('--close-window')){win?.close();return;}const file = documentArg(args); if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (file) win.webContents.send('file:open-request', path.resolve(file)); else if(args.includes('--tour')){welcome.dispose();win.webContents.send('menu:command','welcomeNote');} } else if (file) pendingDocument = file; });
 
 if (instance&&!closeOnly) app.whenReady().then(() => {
 
@@ -111,7 +111,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
     { label: 'Tools', submenu: [{ label: 'Run Python', accelerator: 'F5', click: command('run') },{label:'Stop Python',click:()=>stopPython()},{label:'Python Interpreter…',click:command('pythonSetup')},{type:'separator'},{label:'Clean Up Unused Images…',click:command('cleanAssets')}] },
 
-    {label:'Help',submenu:[{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
+    {label:'Help',submenu:[{label:'Welcome to NoteMind',click:command('welcomeNote')},{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
 
     {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')},{label:'Close Window',click:()=>win.close()}]},
 
@@ -128,7 +128,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   win.webContents.on('did-fail-load', (_, code, description) => log(`load failed: ${code} ${description}`));
 
-  win.webContents.on('did-finish-load', () => { if (pendingDocument) { win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(pendingDocument)); pendingDocument = null; } else if(showWelcomeAtStart)welcome.show(); });
+  win.webContents.on('did-finish-load', () => { if (pendingDocument) { win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(pendingDocument)); pendingDocument = null; } else if(guidePending){guidePending=false;win.show();win.focus();win.webContents.send('menu:command','welcomeNote');} else if(showWelcomeAtStart)welcome.show(); });
 
   win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
@@ -302,6 +302,13 @@ ipcMain.handle('edit-native',(_,action)=>{if(!['cut','copy','paste','selectAll']
 ipcMain.handle('spell-add',(_,word)=>{if(typeof word!=='string'||!word.trim()||word.length>100)throw Error('Invalid word');win?.webContents.session.addWordToSpellCheckerDictionary(word.trim());});
 ipcMain.handle('recent-remember',(_,file)=>{if(typeof file!=='string'||!file)throw Error('Invalid file');return projectService.recents.remember(path.resolve(file),'file');});
 ipcMain.handle('shortcuts-list',()=>require('./shortcuts.cjs').list(Menu.getApplicationMenu()));
+ipcMain.handle('welcome-note',async(_,options)=>{
+  const file=await require('./welcome-note.cjs').ensure({directory:path.join(app.getPath('documents'),'NoteMind'),stateFile:path.join(projectHome,'preferences','welcome-note.json'),version:app.getVersion(),preserve:options?.preserve===true,blocked:(await notesStore.deleted()).map(item=>item.path).filter(Boolean)});
+  const current=(await projectService.registry.list()).find(w=>w.id==='default')||{id:'default',name:'Default Workspace',folders:[],files:[]};
+  const {sameFile}=require('./workspaces.cjs'),covered=current.folders.some(folder=>{const rel=path.relative(folder,file);return !rel||!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel);});
+  if(!covered&&!(current.files||[]).some(p=>sameFile(p,file)))await projectService.registry.put({...current,files:[...(current.files||[]),file]});
+  return file;
+});
 ipcMain.handle('quick-reference',async()=>{
   const file=path.join(projectHome,'NoteMind Quick Reference.nm'),version=app.getVersion();let current=null;
   try{current=notepadFormat.decode(await fs.readFile(file)).meta?.quickReference;}catch{}

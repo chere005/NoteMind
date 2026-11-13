@@ -62,6 +62,7 @@ export function StartScreen() {
     try { await work() } finally { setBusy(false); void load() }
   }, [load])
   const openWorkspace = useCallback(() => act(() => window.notemind.start!.workspace()), [act])
+  const openGuide = useCallback(() => act(() => window.notemind.start!.guide()), [act])
   const openDialog = useCallback(() => act(() => window.notemind.start!.open()), [act])
   const newProject = useCallback(() => act(() => window.notemind.start!.newProject()), [act])
   const openRow = useCallback((row: RecentRow) => act(() => window.notemind.start!.openPath(row.path)), [act])
@@ -108,6 +109,9 @@ export function StartScreen() {
           </button>
           <button type="button" className="start-button" data-start="new-project" onClick={() => { void newProject() }}>
             New Workspace…<span className="start-key">{mac ? "⇧⌘N" : "Ctrl+Shift+N"}</span>
+          </button>
+          <button type="button" className="start-button" data-start="guide" onClick={() => { void openGuide() }}>
+            Explore Features
           </button>
         </div>
       </div>

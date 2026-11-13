@@ -1,5 +1,5 @@
 (() => {
- // Help: the searchable shortcut list (F1) and the Quick Reference, which is a real Notepad refreshed when the app is newer.
+ // Help opens editable examples, a versioned reference, and searchable shortcuts.
  async function shortcuts(){
   const entries=await window.notemind.shortcuts();
   const d=document.createElement('dialog');d.className='shell-dialog shortcuts-dialog';
@@ -18,10 +18,30 @@
   d.querySelector('[data-close]').onclick=()=>d.close();d.onclose=()=>d.remove();
   document.body.append(d);d.showModal();input.focus();
  }
+ let openingGuide=null;
+ function welcomeNote(){
+  if(openingGuide)return openingGuide;
+  openingGuide=(async()=>{
+   const N=window.NoteMindNotes;
+   if(!N.ready)await new Promise(resolve=>window.addEventListener('notes-ready',resolve,{once:true}));
+   await N.flush();
+   const file=await window.notemind.welcomeNote({preserve:tabs.some(t=>t.dirty&&/^Welcome to NoteMind(?: \d+)?\.nm$/i.test(t.doc.path?.split(/[\\/]/).pop()||''))});
+   const tab=tabs.find(t=>t.doc.path?.toLowerCase()===file.toLowerCase());
+   if(tab?.dirty)activateTab(tab);
+   else {
+    const fresh=await window.notemind.openPath(file);
+    if(tab){rememberCurrent();tab.doc=fresh;tab.dirty=!!fresh.dirty;tab.visual=true;tab.draftStamp=null;activeTab=null;activateTab(tab);}
+    else addTab({...fresh,visual:true});
+   }
+   window.NoteMindSidebar?.keepGuide(file);
+   await window.notemind.remember(file);await N.session();
+  })().finally(()=>{openingGuide=null;});
+  return openingGuide;
+ }
  async function quickReference(){
   const file=await window.notemind.quickReference();
   window.dispatchEvent(new CustomEvent('notemind-open-path',{detail:file}));
  }
- window.addEventListener('notemind-command',e=>{if(e.detail==='shortcuts')action(shortcuts);if(e.detail==='quickReference')action(quickReference);});
- window.NoteMindHelp={shortcuts,quickReference};
+ window.addEventListener('notemind-command',e=>{if(e.detail==='welcomeNote')action(welcomeNote);if(e.detail==='shortcuts')action(shortcuts);if(e.detail==='quickReference')action(quickReference);});
+ window.NoteMindHelp={shortcuts,quickReference,welcomeNote};
 })();

@@ -91,3 +91,8 @@
 .start-row.missing .start-row-name, .start-row.missing .start-row-kind { color: var(--wm-faint); }
 
 html,body,#root{height:100%;overflow:hidden}
+@media (max-height: 460px) {
+  .start-left { padding: 20px 24px; }
+  .start-icon { width: 72px; height: 72px; border-radius: 16px; }
+  .start-buttons { margin-top: 12px; gap: 6px; }
+}
