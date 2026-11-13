@@ -14,8 +14,8 @@ const sections=[
   [
    "The footer shows the word count of the words you can see, when the Notepad was last saved, and the zoom. The window follows the system light or dark appearance.",
    "File → Open Recent and Projects → Open Recent list the last twelve files and projects. The wheel over the tab row walks the tabs, middle-click closes one, and its right-click menu also renames, duplicates, moves, reveals or trashes the file. Each tab reopens scrolled to the same words.",
-   "Drag the sidebar divider to resize it. Small windows tuck the sidebar away; its icon or Search Notepads brings it back. Drag sidebar rows to reorder or move. Right-click to rename, duplicate, move, hide a section or send it to Trash. Edit has Undo File Action and Redo File Action.",
-   "The writing toolbar separates Lists, Insert and Format. Insert adds images, tables, attachments, scans and links; Format keeps advanced text and paragraph actions available in a narrow editor. The Markdown button switches between writing and source. Notepad options beside the tabs holds Save, Export, Find, history and the open-tab list. The project menu (the project name at the foot of the sidebar, and the Projects menu) manages folders and file links, hidden sections, and separate project windows. Save Workspace As creates a .wmpr project file."
+   "Drag the sidebar divider to resize it. Small windows tuck the sidebar away; its icon or Search Notepads brings it back. Drag sidebar rows to reorder or move. The sidebar’s split plus creates a Notepad or a section; the tab bar shows its plus only while the sidebar is hidden. Organize shows duplicate and two-click delete controls on saved files and drafts. Every Notepad row, including search results, has Open, Rename, Duplicate and deletion in its menu. Saved files move to Trash; unsaved drafts go to Recently Deleted. Remove from Project only removes a link and keeps the file. Right-click to rename, duplicate, move, hide a section or send it to Trash. Edit has Undo File Action and Redo File Action.",
+   "The writing toolbar separates Lists, Insert and Format. Insert adds images, tables, attachments, scans and links; Format keeps advanced text and paragraph actions available in a narrow editor. The eye is on for the rendered page and off for Markdown source. Notepad options beside the tabs holds Save, Export, Find, history and the open-tab list. The project menu (the project name at the foot of the sidebar, and the Projects menu) manages folders and file links, hidden sections, and separate project windows. Save Workspace As creates a .wmpr project file."
   ]
  ],
  [
@@ -41,8 +41,8 @@ const sections=[
   "Saving and organising",
   [
    "File → Welcome shows recent documents and projects. Markdown files store their images and attachments in a companion assets folder.",
-   "Edits autosave. New drafts recover automatically after closing or restarting. Save As chooses a file. Version History previews and restores earlier saves; Recently Deleted restores items moved to Trash.",
-   "Tags and Pin organizes the current Notepad. The project menu has sorting, tags and Smart Folders. Link to Notepad inserts a persistent link. Search includes offline text recognition in attached images and handwriting."
+   "Edits autosave. New drafts recover automatically after closing or restarting. Save As chooses a file. Version History previews and restores earlier saves; Recently Deleted restores saved files and unsaved drafts, including their latest recovered edits. File → Delete Notepad and the sidebar Delete key use the same recoverable deletion.",
+   "Tags and Pin organizes the current Notepad. Notepads options in the sidebar has sorting, tags, Smart Folders and Recently Deleted. The footer’s project menu owns Add Files and Add Folder. Link to Notepad inserts a persistent link. Search includes offline text recognition in attached images and handwriting."
   ]
  ]
 ];

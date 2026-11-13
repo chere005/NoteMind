@@ -17,11 +17,19 @@ class NotesStore {
  async readIndex() { try { return JSON.parse(await fs.readFile(path.join(this.root, 'index.json'), 'utf8')); } catch(e) { if(e.code !== 'ENOENT') throw e; return {records:{}, smartFolders:[], deleted:[], sort:'manual'}; } }
  async transaction(fn) {
   const run = async () => {
-   await fs.mkdir(this.root, {recursive:true}); const lock = path.join(this.root, '.lock'); let handle;
-   for(let n=0; n<250; n++) { try { handle = await fs.open(lock, 'wx');await handle.writeFile(JSON.stringify({pid:process.pid}));break; } catch(e) { if(e.code!=='EEXIST') throw e; const st=await fs.stat(lock).catch(()=>null);let alive=true;try{const owner=JSON.parse(await fs.readFile(lock,'utf8'));try{process.kill(owner.pid,0)}catch(error){if(error.code==='ESRCH')alive=false;}}catch{} if(st && (!alive||Date.now()-st.mtimeMs>120000)) await fs.unlink(lock).catch(()=>{}); await new Promise(r=>setTimeout(r,40)); } }
-   if(!handle) throw Error('The Notepad library is busy. Try again.');
-   try { const index = await this.readIndex(); const result = await fn(index); await atomic(path.join(this.root, 'index.json'), JSON.stringify(index)); return result; }
-   finally { await handle.close(); await fs.unlink(lock).catch(()=>{}); }
+   await fs.mkdir(this.root, {recursive:true});const lock=path.join(this.root,'.lock'),candidate=lock+'-'+randomUUID();let acquired=false;
+   // Publish a complete owner record atomically, including if the app exits during acquisition.
+   await fs.writeFile(candidate,JSON.stringify({pid:process.pid}),{flag:'wx'});
+   try{
+    for(let n=0;n<250;n++)try{await fs.link(candidate,lock);acquired=true;break;}catch(error){
+     if(error.code!=='EEXIST')throw error;const stat=await fs.stat(lock).catch(()=>null);let alive=true;
+     try{const owner=JSON.parse(await fs.readFile(lock,'utf8'));if(!Number.isInteger(owner.pid)||owner.pid<=0)throw Error('Invalid owner');try{process.kill(owner.pid,0);}catch(error){if(error.code==='ESRCH')alive=false;}}
+     catch{if(stat&&Date.now()-stat.mtimeMs>1000)alive=false;}
+     if(stat&&(!alive||Date.now()-stat.mtimeMs>120000))await fs.unlink(lock).catch(()=>{});await new Promise(resolve=>setTimeout(resolve,40));
+    }
+    if(!acquired)throw Error('The Notepad library is busy. Try again.');
+    const index=await this.readIndex(),result=await fn(index);await atomic(path.join(this.root,'index.json'),JSON.stringify(index));return result;
+   }finally{await fs.unlink(candidate).catch(()=>{});if(acquired)await fs.unlink(lock).catch(()=>{});}
   };
   const result = this.pending.catch(()=>{}).then(run); this.pending=result; return result;
  }
@@ -31,6 +39,7 @@ class NotesStore {
    let id=existing?.id || doc.id || randomUUID();
    if(!/^[\w-]{1,80}$/.test(id)) id=randomUUID();
    const other=index.records[id];
+   if(other?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before editing.');
    if(other?.path && doc.path && keyPath(other.path)!==keyPath(doc.path) && await fs.stat(other.path).catch(()=>null)) id=randomUUID();
    const previous=index.records[id] || {}, now=new Date().toISOString();
    const meta=metadata(options.meta || previous.meta || doc.meta);
@@ -58,10 +67,11 @@ class NotesStore {
  async patch(id, meta) { return this.transaction(index=>{const r=index.records[id]; if(!r)throw Error('This Notepad is no longer in the library.'); r.meta=metadata({...r.meta,...meta});return r;}); }
  async record(id) { const r=(await this.readIndex()).records[id]; if(!r || r.deleted) throw Error('This Notepad could not be found. Restore it from Recently Deleted if needed.'); return r; }
  async rename(from,to) { return this.transaction(index=>{for(const r of Object.values(index.records)){if(r.path && (keyPath(r.path)===keyPath(from)||keyPath(r.path).startsWith(keyPath(from)+path.sep))) r.path=to+r.path.slice(from.length);}}); }
- async draft(doc) { const registered=await this.register(doc,{meta:doc.meta}); await atomic(path.join(this.recoveryRoot, registered.id+'.wm'), format.encode(require('./markdown-files.cjs').canonical(registered))); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify({path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder})); return registered; }
- async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.'); let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=(await this.readIndex()).records[id]?.recoveryRoot||folder;}const parsed=format.decode(await fs.readFile(path.join(folder,id+'.wm'))); const {files,kind,...doc}=parsed; let state={};try{state=JSON.parse(await fs.readFile(path.join(folder,id+'.json'),'utf8'))}catch{} return {...doc,...state,id}; }
+ async draft(doc) { const registered=await this.register(doc,{meta:doc.meta}); await atomic(path.join(this.recoveryRoot, registered.id+'.wm'), format.encode(require('./markdown-files.cjs').canonical(registered))); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify({path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle})); return registered; }
+ async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}const parsed=format.decode(await fs.readFile(path.join(folder,id+'.wm'))); const {files,kind,...doc}=parsed; let state={};try{state=JSON.parse(await fs.readFile(path.join(folder,id+'.json'),'utf8'))}catch{} return {...doc,...state,id}; }
  async session(value) { if(value) {if(!Array.isArray(value.tabs)||value.tabs.length>500)throw Error('Too many open Notepads.');await atomic(path.join(this.recoveryRoot,'session.json'),JSON.stringify(value));return;}try{return JSON.parse(await fs.readFile(path.join(this.recoveryRoot,'session.json'),'utf8'))}catch(e){if(e.code==='ENOENT')return null;throw e;} }
- async recover() { const session=await this.session();if(!session)return null; const tabs=[];for(const t of session.tabs){try{tabs.push({...await this.loadDraft(t.id),visual:t.visual,scroll:t.scroll})}catch(e){tabs.push({recoveryError:e.message,id:t.id,path:t.path})}}return {...session,tabs}; }
+ async recover() { const session=await this.session();if(!session)return null; const index=await this.readIndex(),tabs=[];for(const t of session.tabs){if(index.records[t.id]?.deleted)continue;try{tabs.push({...await this.loadDraft(t.id),visual:t.visual,scroll:t.scroll})}catch(e){tabs.push({recoveryError:e.message,id:t.id,path:t.path})}}return {...session,tabs}; }
+ async deleteDraft(id) {return this.transaction(async index=>{const record=index.records[id];if(!record||record.deleted)throw Error('This draft is no longer available.');if(record.path)throw Error('Use Move to Trash for a saved Notepad.');const item={id:randomUUID(),kind:'draft',noteId:id,path:null,name:record.title,deletedAt:new Date().toISOString(),recoveryRoot:record.recoveryRoot||this.recoveryRoot};item.saved=path.join(this.root,'deleted',item.id);await fs.mkdir(item.saved,{recursive:true});for(const ext of ['.wm','.json'])await fs.copyFile(path.join(item.recoveryRoot,id+ext),path.join(item.saved,id+ext));index.deleted.push(item);record.deleted=item.id;return item.id;});}
  async version(doc, label='Saved') { if(!doc.id) return; doc=require('./markdown-files.cjs').canonical(doc);const bytes=format.encode(doc),contentHash=digest(Buffer.from(JSON.stringify({text:doc.text,assets:doc.assets,meta:doc.meta}))); return this.transaction(async index=>{const r=index.records[doc.id];if(!r)return;const history=r.versions || [];if(history.at(-1)?.hash===contentHash)return;const id=randomUUID(),created=new Date().toISOString();await atomic(path.join(this.root,'versions',id+'.wm'),bytes);r.versions=history.concat({id,created,label,hash:contentHash});return id;}); }
  async versions(id) { return (await this.readIndex()).records[id]?.versions || []; }
  async versionDoc(id, version) {const list=await this.versions(id);if(!list.some(v=>v.id===version))throw Error('This version is unavailable.');const {files,kind,...doc}=format.decode(await fs.readFile(path.join(this.root,'versions',version+'.wm')));return doc;}
@@ -70,7 +80,18 @@ class NotesStore {
  async captureDeleted(source) { const id=randomUUID(),saved=path.join(this.root,'deleted',id);await fs.mkdir(path.dirname(saved),{recursive:true});await fs.cp(source,saved,{recursive:true,errorOnExist:true,force:false});return {id,path:source,name:path.basename(source),deletedAt:new Date().toISOString(),saved}; }
  async finishDeleted(item) {return this.transaction(index=>{index.deleted.push(item);for(const r of Object.values(index.records))if(r.path && (keyPath(r.path)===keyPath(item.path)||keyPath(r.path).startsWith(keyPath(item.path)+path.sep)))r.deleted=item.id;});}
  async deleted() {return (await this.readIndex()).deleted.map(({saved,...r})=>r);}
- async restoreDeleted(id, alternate) {return this.transaction(async index=>{const item=index.deleted.find(x=>x.id===id);if(!item)throw Error('This deleted item is unavailable.');const target=alternate || item.path;try{await fs.lstat(target);throw Error('An item already exists at '+target);}catch(e){if(e.code!=='ENOENT')throw e;}await fs.mkdir(path.dirname(target),{recursive:true});await fs.cp(item.saved,target,{recursive:true,force:false,errorOnExist:true});index.deleted=index.deleted.filter(x=>x.id!==id);for(const r of Object.values(index.records))if(r.deleted===id){delete r.deleted;if(alternate)r.path=target+r.path.slice(item.path.length);}return target;});}
- async reconcileDeleted(restored) {return this.transaction(async index=>{for(const item of [...index.deleted])if(restored&&keyPath(item.path)===keyPath(restored)){index.deleted=index.deleted.filter(x=>x.id!==item.id);for(const r of Object.values(index.records))if(r.deleted===item.id)delete r.deleted;}});}
+ async restoreDeleted(id, alternate) {return this.transaction(async index=>{
+  const item=index.deleted.find(x=>x.id===id);if(!item)throw Error('This deleted item is unavailable.');
+  if(item.kind==='draft'){
+   if(alternate)throw Error('Restore this draft, then use Save As to choose a file.');
+   await fs.mkdir(item.recoveryRoot,{recursive:true});
+   for(const ext of ['.wm','.json'])await fs.copyFile(path.join(item.saved,item.noteId+ext),path.join(item.recoveryRoot,item.noteId+ext));
+   delete index.records[item.noteId].deleted;index.deleted=index.deleted.filter(x=>x.id!==id);return {draft:item.noteId};
+  }
+  const target=alternate || item.path;try{await fs.lstat(target);throw Error('An item already exists at '+target);}catch(e){if(e.code!=='ENOENT')throw e;}
+  await fs.mkdir(path.dirname(target),{recursive:true});await fs.cp(item.saved,target,{recursive:true,force:false,errorOnExist:true});index.deleted=index.deleted.filter(x=>x.id!==id);
+  for(const r of Object.values(index.records))if(r.deleted===id){delete r.deleted;if(alternate)r.path=target+r.path.slice(item.path.length);}return target;
+ });}
+ async reconcileDeleted(restored) {return this.transaction(async index=>{for(const item of [...index.deleted])if(item.path&&restored&&keyPath(item.path)===keyPath(restored)){index.deleted=index.deleted.filter(x=>x.id!==item.id);for(const r of Object.values(index.records))if(r.deleted===item.id)delete r.deleted;}});}
 }
 module.exports={NotesStore,titleOf,metadata,atomic,digest};

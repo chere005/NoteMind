@@ -20,10 +20,10 @@ app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',
   check(true,'edit-row Duplicate creates and opens a real copy');
   const copy=fs.readdirSync(folder).find(n=>n.endsWith('.md')&&n!=='Draft.md');
   await wait(()=>js(`!!${findRow(copy)}`));
-  await js("document.getElementById('rich').textContent+='Unsaved change';document.getElementById('rich').dispatchEvent(new Event('input',{bubbles:true}));window.confirm=m=>!m.includes('Discard unsaved');undefined");
+  await js("document.getElementById('rich').textContent+='Unsaved change';document.getElementById('rich').dispatchEvent(new Event('input',{bubbles:true}));window.confirm=()=>false;undefined");
   await js(`${findRow(copy)}.querySelector('.trash').click()`);
   check(fs.existsSync(path.join(folder,copy))&&await js(`!!${findRow(copy)}.querySelector('.trash.armed')`),'first Trash click arms the source control');
-  await js(`${findRow(copy)}.querySelector('.trash').click()`);await pause(100);check(fs.existsSync(path.join(folder,copy)),'cancelled discard protects an edited file from Trash');
+  await js(`${findRow(copy)}.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true,cancelable:true}))`);await pause(100);check(fs.existsSync(path.join(folder,copy)),'cancelling keyboard deletion protects an edited file from Trash');
   await js('window.confirm=()=>true;undefined');await js(`${findRow(copy)}.querySelector('.trash').click()`);
   await js(`${findRow(copy)}.querySelector('.trash').click()`);await wait(()=>Promise.resolve(!fs.existsSync(path.join(folder,copy))));
   check(true,'second Trash click removes the copied file');
@@ -31,7 +31,7 @@ app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',
   check(true,'file undo restores the trashed copy');
   await click('[data-sidebar=edit]');await js(`${findRow('Draft.md')}.querySelector('.row-more').click()`);await pause(100);
   await js("[...document.querySelectorAll('.float-menu button')].find(b=>b.textContent==='Rename…').click()");
-  check(await js("!!document.querySelector('dialog.modal[open]')"),'Rename opens the source-styled prompt');
+  await wait(()=>js("!!document.querySelector('dialog.modal[open]')"));check(true,'Rename opens the source-styled prompt');
   await js("const form=document.querySelector('dialog.modal form');form.querySelector('input').value='Renamed';form.requestSubmit();undefined");
   await wait(()=>Promise.resolve(fs.existsSync(path.join(folder,'Renamed.md'))));check(true,'Rename updates the file and sidebar');
   await js("const field=document.getElementById('sidebarSearch');field.value='distinctive';field.dispatchEvent(new Event('input'));undefined");

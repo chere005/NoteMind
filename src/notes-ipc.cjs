@@ -12,7 +12,8 @@ module.exports=function registerNotes({store,getWin,openPath,saveDocument,docume
  ipcMain.handle('notes-list',(_,filter)=>store.list(filter));
  ipcMain.handle('notes-settings',async(_,patch)=>{const next=await store.settings(patch);if(patch)send();return next;});
  ipcMain.handle('notes-meta',async(_,id,meta)=>{const entry=await store.patch(id,meta);send();return entry;});
- ipcMain.handle('notes-resolve',async(_,id)=>{const r=await store.record(id);return r.path ? openPath(r.path) : store.loadDraft(id);});
+ ipcMain.handle('notes-resolve',async(_,id)=>{const r=await store.record(id),draft=await store.loadDraft(id).catch(()=>null);return draft?.dirty?{...draft,path:r.path}:r.path?openPath(r.path):store.loadDraft(id);});
+ ipcMain.handle('notes-delete-draft',async(_,id)=>{const deleted=await store.deleteDraft(id);send();return deleted;});
  ipcMain.handle('notes-versions',(_,id)=>store.versions(id));
  ipcMain.handle('notes-version',(_,id,version)=>store.versionDoc(id,version));
  ipcMain.handle('notes-snapshot',(_,doc,label)=>store.version(doc,label));

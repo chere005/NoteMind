@@ -13,9 +13,28 @@ test('persistent deleted items restore safely and reject occupied targets',async
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-delete-')),store=new NotesStore(path.join(root,'store')),file=path.join(root,'one.wm');await fs.writeFile(file,'original');const doc=await store.register({path:file,text:'Original',assets:{}}),item=await store.captureDeleted(file);await fs.unlink(file);await store.finishDeleted(item);
  assert.equal((await store.list({})).length,0);const next=new NotesStore(path.join(root,'store'));assert.equal((await next.deleted()).length,1);await fs.writeFile(file,'replacement');await assert.rejects(()=>next.restoreDeleted(item.id),/already exists/);assert.equal(await fs.readFile(file,'utf8'),'replacement');const to=path.join(root,'restored.wm');await next.restoreDeleted(item.id,to);assert.equal(await fs.readFile(to,'utf8'),'original');assert.equal((await next.record(doc.id)).path,to);assert.equal((await next.deleted()).length,0);
 });
+test('deleted drafts preserve content and cannot return through recovery or stale autosave',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-deleted-draft-')),store=new NotesStore(root),assets={'assets/ink.svg':Buffer.from('<svg>ink</svg>').toString('base64')};
+ try{
+  const doc=await store.draft({text:'# Latest writing',title:'My draft',manualTitle:true,assets,meta:{tags:['work'],pinned:true},dirty:true,visual:false});
+  await store.session({tabs:[{id:doc.id,visual:false}],active:doc.id});const deleted=await store.deleteDraft(doc.id),restarted=new NotesStore(root,path.join(root,'another-window'));
+  assert.equal((await restarted.list()).length,0);assert.equal((await store.recover()).tabs.length,0);await restarted.reconcileDeleted(path.join(root,'unrelated.nm'));assert.equal((await restarted.deleted()).length,1);
+  await assert.rejects(()=>store.draft(doc),/Recently Deleted/);await assert.rejects(()=>store.loadDraft(doc.id),/Recently Deleted/);
+  assert.deepEqual(await restarted.restoreDeleted(deleted),{draft:doc.id});const restored=await restarted.loadDraft(doc.id);
+  assert.equal(restored.text,doc.text);assert.deepEqual(restored.assets,assets);assert.equal(restored.manualTitle,true);assert.equal(restored.visual,false);assert.equal(restored.meta.pinned,true);assert.equal((await restarted.deleted()).length,0);
+  const file=path.join(root,'Saved.nm');await fs.writeFile(file,format.encode(doc));const saved=await store.register({...doc,id:undefined,path:file});
+  await assert.rejects(()=>store.deleteDraft(saved.id),/Move to Trash/);
+  const item=await store.captureDeleted(file);await fs.unlink(file);await store.finishDeleted(item);await assert.rejects(()=>store.draft(saved),/Recently Deleted/);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('concurrent library instances preserve updates and copies get distinct identities',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-concurrent-')),a=new NotesStore(root),b=new NotesStore(root);await Promise.all(Array.from({length:12},(_,i)=>(i%2?a:b).register({text:'Note '+i,assets:{}})));assert.equal((await a.list({})).length,12);
  const p=path.join(root,'original.wm'),q=path.join(root,'copy.wm');await fs.writeFile(p,'one');await fs.writeFile(q,'two');const one=await a.register({path:p,text:'one',assets:{}}),two=await b.register({...one,path:q});assert.notEqual(one.id,two.id);await a.rename(p,path.join(root,'moved.wm'));assert.equal((await a.record(one.id)).path,path.join(root,'moved.wm'));
+});
+test('an interrupted empty library lock does not delay recovery',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-lock-')),store=new NotesStore(root);
+ try{const lock=path.join(root,'.lock');await fs.writeFile(lock,'');const old=new Date(Date.now()-2000);await fs.utimes(lock,old,old);await store.draft({text:'Recovered promptly',assets:{}});assert.equal((await store.list()).length,1);await assert.rejects(()=>fs.access(lock),{code:'ENOENT'});}
+ finally{await fs.rm(root,{recursive:true,force:true});}
 });
 test('writing and attachment markup round trips without editor decoration',()=>{
  const text='# Heading\n\n- [ ] Open\n- [x] Done\n    - Nested\n\n==Marked==\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n[Report](assets/report.pdf)\n\n[Linked note](notemind:abc)',assets={'assets/report.pdf':Buffer.from('PDF').toString('base64')},meta={attachments:{'assets/report.pdf':{title:'Report',pages:3}}};const html=render.render(text,assets,meta);assert.match(html,/type="checkbox"/);assert.match(html,/<mark>Marked<\/mark>/);assert.match(html,/data-attachment/);const back=render.toMarkdown(html.replace('Heading','Heading<button data-editor-control="fold">▾</button>'));assert.match(back,/-\s+\[ \]\s+Open/);assert.match(back,/-\s+\[x\]\s+Done/);assert.match(back,/==Marked==/);assert.match(back,/\[Report\]\(assets\/report.pdf\)/);assert.ok(!back.includes('▾'));assert.match(back,/notemind:abc/);const decoded=format.decode(format.encode({text,assets,meta}));assert.equal(decoded.meta.attachments['assets/report.pdf'].pages,3);

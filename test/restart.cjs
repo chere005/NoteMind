@@ -5,10 +5,10 @@ const expectedSheets=JSON.parse(fs.readFileSync(path.join(previous.profile,'shee
 const expectedPages=JSON.parse(fs.readFileSync(path.join(previous.profile,'camera-pages.json'),'utf8'));
 const report={profile:previous.profile,checks:[]};
 const check=(value,label)=>{if(!value)throw Error(label);report.checks.push(label)};
-app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',async()=>{try{await new Promise(r=>setTimeout(r,1800));const js=code=>win.webContents.executeJavaScript(code);
+app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',async()=>{try{const js=code=>win.webContents.executeJavaScript(code);for(let n=0;n<80;n++){if(await js('window.NoteMindNotes?.ready'))break;await new Promise(resolve=>setTimeout(resolve,100));}await new Promise(resolve=>setTimeout(resolve,100));
  check(await js("document.querySelectorAll('.sheet-tab:not(.live)').length-1")===expectedSheets.length,'drawing tabs survive restart');
  check(await js("document.querySelectorAll('.sheet-tab.live').length+1")===expectedPages.length,'live and still camera tabs survive restart');
- check(await js("document.querySelectorAll('#rich img').length")===3,'saved document and embedded images restore');
+ const restored=await js("({images:document.querySelectorAll('#rich img').length,panes:document.querySelectorAll('#rich .graphics-pane').length,path:doc.path,text:doc.text,status:document.getElementById('status').textContent})");report.document=restored;report.ready=await js("({ready:window.NoteMindNotes?.ready,tabs:tabs.map(tab=>({id:tab.doc.id,path:tab.doc.path}))})");check(restored.images===3,'saved document and embedded images restore');
  check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing')"),'workspace attachments restore');
  check(await js("document.querySelector('.sheet-tab.on .name').textContent")===expectedSheets.at(-1).name,'active drawing tab restores');
  const current=JSON.parse(fs.readFileSync(path.join(previous.profile,'sheets.json'),'utf8'));check(JSON.stringify(current.map(s=>s.strokes))===JSON.stringify(expectedSheets.map(s=>s.strokes)),'restoration preserves every ink sample');

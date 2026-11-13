@@ -41,6 +41,7 @@
  window.NoteMindToolbarKeys=installToolbarKeys;installToolbarKeys(document);
  window.NoteMindMenus={listItems,insertItems,formatItems,noteItems:()=>[
   {label:'Save',hint:mod+'+S',onClick:()=>$('save').click()},{label:'Save As…',hint:mod+'+Shift+S',onClick:()=>$('saveAs').click()},
+  {label:'Delete Notepad…',hint:mod+'+Backspace',danger:true,disabled:!!activeTab.placeholder,onClick:()=>command('deleteNote')},
   {label:'Export',submenu:[{label:'PDF…',onClick:()=>command('exportPDF')},{label:'Word…',onClick:()=>command('exportWord')}]},'-',
   {label:'Find in Notepad…',onClick:()=>command('findNote')},{label:'Tags and Pin…',onClick:()=>command('noteInfo')},{label:'Version History…',onClick:()=>command('versions')},{label:'Attachments…',onClick:()=>command('attachments')},
  ]};

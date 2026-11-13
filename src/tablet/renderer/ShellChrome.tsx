@@ -25,13 +25,13 @@ export function ShellChrome({source}){
   {floating&&<FloatingMenu key={floating.serial} {...floating} id="notemind-actions" onClose={close}/>}
   {portal('paneResize',<PaneDivider sidebar={sidebar}/>)}
   {portal('sidebar-buttons',<>
-   <button className="bar-btn" data-sidebar="new" title="New Notepad" aria-label="New Notepad" onClick={()=>click('new')}><Icon name="plus"/></button>
-   <button className={'bar-btn'+(editing?' tint':'')} data-sidebar="edit" title={editing?'Finish organizing Notepads':'Rename, move or delete Notepads'} aria-label={editing?'Done organizing':'Organize Notepads'} aria-pressed={editing} onClick={()=>{setEditing(!editing);window.dispatchEvent(new CustomEvent('sidebar-edit',{detail:!editing}))}}><Icon name={editing?'check':'edit'}/></button>
+   <MenuButton icon="plus" name="New Notepad" title="New Notepad" optionsLabel="New Notepad options" dataBar="sidebar-new" onMain={()=>window.NoteMindSidebar?.newNotepad()} items={()=>toMenu(window.NoteMindSidebar?.newMenu()||[])}/>
+   <button className={'bar-btn'+(editing?' tint':'')} data-sidebar="edit" title={editing?'Hide duplicate and delete controls':'Show duplicate and delete controls on Notepads'} aria-label={editing?'Done organizing':'Organize Notepads'} aria-pressed={editing} onClick={()=>{setEditing(!editing);window.dispatchEvent(new CustomEvent('sidebar-edit',{detail:!editing}))}}><Icon name={editing?'check':'edit'}/></button>
    <MenuButton icon="more" name="Notepads options" title="Notepads options" dataBar="sidebar-menu" items={()=>toMenu(window.NoteMindSidebar?.menuItems()||[])}/>
   </>)}
   {portal('tab-switches',<button className={'bar-btn'+(sidebar?' tint':'')} title={sidebar?'Hide Notepads sidebar':'Show Notepads sidebar'} aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded={sidebar} onClick={()=>click('sidebarToggle')}><Icon name="sidebar"/></button>)}
   {portal('editor-mode',<button className={'bar-btn editor-mode'+(visual?' tint':'')} title={visual?'Show Markdown source':'Show rendered page'} aria-label="Rendered view" aria-pressed={visual} onClick={()=>click(visual?'markdown':'visual')}><Icon name="eye"/></button>)}
-  {portal('tab-new',<button className="bar-btn tab-new" title="New Notepad" aria-label="New Tab" onClick={()=>click('new')}><Icon name="plus"/></button>)}
+  {portal('tab-new',<button hidden={sidebar} className="bar-btn tab-new" title="New Notepad" aria-label="New Notepad" onClick={()=>click('new')}><Icon name="plus"/></button>)}
   {portal('tab-list',<MenuButton icon="more" name="Notepad options" title="Save, find and manage the open Notepad" dataBar="notepad-menu" items={()=>[
    ...(window.NoteMindMenus?.noteItems()||[]),'-',
    {label:`Open Notepads (${count})`,submenu:Array.from(document.querySelectorAll('.document-tab>button:first-child')).map((button:HTMLButtonElement)=>({label:button.textContent||'Untitled',checked:button.getAttribute('aria-selected')==='true',onClick:()=>button.click()}))},

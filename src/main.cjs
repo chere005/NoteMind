@@ -86,6 +86,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
       {type:'separator'},
       {label:'Save',accelerator:'CmdOrCtrl+S',click:command('save')},
       {label:'Save As…',accelerator:'CmdOrCtrl+Shift+S',click:command('saveAs')},
+      {id:'delete-note',label:'Delete Notepad…',enabled:win.canDelete!==false,accelerator:'CmdOrCtrl+Backspace',click:command('deleteNote')},
       {type:'separator'},
       {label:'Import',submenu:[{label:'Markdown as Notepad…',click:command('importMarkdown')},{label:'Word or PDF…',click:command('importDocument')},{label:'Read Text from Image…',click:command('readImage')}]},
       {label:'Export',submenu:[{label:'Export as PDF…',accelerator:'CmdOrCtrl+Shift+E',click:command('exportPDF')},{label:'Word…',click:command('exportWord')},{label:'Drawing…',click:command('exportDrawing')}]},
@@ -154,7 +155,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
 app.on('window-all-closed', () => { globalShortcut.unregisterAll();pen?.dispose(); app.quit(); });
 
-ipcMain.handle('dirty', (_, value) => { win.isDirty = value; });
+ipcMain.handle('dirty', (event,value,canDelete) => {const window=BrowserWindow.fromWebContents(event.sender);if(!window)return;window.isDirty=value;if(typeof canDelete==='boolean'){window.canDelete=canDelete;if(window===win){const item=Menu.getApplicationMenu()?.getMenuItemById('delete-note');if(item)item.enabled=canDelete;}}});
 
 async function openPath(file, recover = true) {
 
