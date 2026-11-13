@@ -3,6 +3,7 @@
 import { Icon, type IconName } from "./icons"
 import { MenuButton } from "./MenuButton"
 import { PaperMenu } from "./PaperMenu"
+import { OrientationMenu } from "./OrientationSelect"
 import { BringInMenu } from "./BringInMenu"
 import type { BringTo, CaptureMode } from "./cameraSettings"
 import type { HeaderFit } from "./cameraHeaderFit"
@@ -175,7 +176,7 @@ export function TabletHeader(p: TabletProps) {
   return (
     <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Tablet sheet" data-camera-head="tablet">
       <PaperMenu />
-      {}
+      <OrientationMenu />
       <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo" /></button>
       <button type="button" className="bar-btn danger" data-tablet="clear" data-bar="clear" aria-label="Clear the Sheet" title="Clear all strokes (Undo restores them)" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash" /></button>
       {!p.showEditor && (

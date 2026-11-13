@@ -9,8 +9,9 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
  try{
   await pause(1200);
   check(await js(`document.querySelectorAll('#pen-control .pen-swatch').length===7 && !!document.querySelector('#pen-control select[aria-label="Pen width"]')`),'colours and width selector are directly on the drawing bar');
-  check(await js(`!document.querySelector('[data-bar=pen-menu]')&&!document.querySelector('[data-docked-toggle]')&&!document.querySelector('[data-tablet=orientation-menu]')`),'redundant pen, docking and orientation controls are absent');
+  check(await js(`!document.querySelector('[data-bar=pen-menu]')&&!document.querySelector('[data-docked-toggle]')&&!!document.querySelector('[data-tablet=orientation-menu]')`),'drawing controls omit redundant menus and retain tablet orientation');
   check(await js(`document.getElementById('modeLabel').hidden&&getComputedStyle(document.getElementById('rich')).maxWidth==='none'&&parseFloat(getComputedStyle(document.querySelector('.editor-wrap')).paddingLeft)<=16`),'editor uses its pane width without the mode label');
+  await click('[data-tablet=orientation-menu]');await click('[data-bar=orientation-1]');await pause(200);check(await js(`localStorage.getItem('notemind.orientation')==='1'&&document.querySelector('[data-tablet=surface]').getBoundingClientRect().height>document.querySelector('[data-tablet=surface]').getBoundingClientRect().width`),'orientation is directly accessible and turns a sheet to portrait');await click('[data-tablet=orientation-menu]');await click('[data-bar=orientation-0]');await pause(200);
   await click('[data-bar=pen]');await drag([.2,.2],[.3,.3]);await drag([.7,.7],[.8,.8],true);
   check(sheets()[0].strokes.length===2,'both mouse and pen draw strokes in Pen mode');
   await click('[data-bar=select]');await drag([.1,.1],[.4,.4]);await drag([.25,.25],[.4,.25]);

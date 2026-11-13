@@ -33,6 +33,8 @@ const PATHS = {
   eye: "<path d=\"M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z\"/><circle cx=\"8\" cy=\"8\" r=\"2\"/>",
   camera: "<path d=\"M2 5.5h3l1-1.75h4l1 1.75h3v7H2z\"/><circle cx=\"8\" cy=\"9\" r=\"2.25\"/>",
   tablet: "<rect x=\"2\" y=\"2.5\" width=\"12\" height=\"11\" rx=\"1.5\"/><path d=\"m5.5 10.5.75-2.75L10 4l2 2-3.75 3.75z\"/>",
+  window: "<rect x=\"1.75\" y=\"2.75\" width=\"12.5\" height=\"10.5\" rx=\"1.25\"/><path d=\"M1.75 5.75h12.5M9.5 5.75v7.5\"/>",
+  display: "<rect x=\"1.75\" y=\"2.5\" width=\"12.5\" height=\"8.5\" rx=\"1.25\"/><path d=\"M8 11v3M5.5 14h5\"/>",
   link: "<path d=\"M6.5 9.5 9.5 6.5\"/><path d=\"M7 4.75 8.25 3.5a2.47 2.47 0 0 1 3.5 3.5L10.5 8.25\"/><path d=\"M9 11.25 7.75 12.5a2.47 2.47 0 0 1-3.5-3.5L5.5 7.75\"/>",
   list: "<path d=\"M5.5 4h8.5M5.5 8h8.5M5.5 12h8.5\"/><circle cx=\"2.5\" cy=\"4\" r=\"1\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"2.5\" cy=\"8\" r=\"1\" fill=\"currentColor\" stroke=\"none\"/><circle cx=\"2.5\" cy=\"12\" r=\"1\" fill=\"currentColor\" stroke=\"none\"/>",
   listnum: "<path d=\"M6 4h8M6 8h8M6 12h8\"/><path d=\"M2 3.25h1.25V5.5M2 10.25a1.1 1.1 0 1 1 2 .65L2 13h2.25\" stroke-width=\"1.2\"/>",

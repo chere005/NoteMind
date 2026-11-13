@@ -51,6 +51,8 @@ export function PaneDivider({ sidebar }: Props) {
     if (!root) return
     const watcher = new ResizeObserver(apply)
     watcher.observe(root)
+    const side = root.querySelector<HTMLElement>('.sidebar')
+    if (side) watcher.observe(side)
     return () => watcher.disconnect()
   }, [apply, sidebar])
 
@@ -89,9 +91,9 @@ export function PaneDivider({ sidebar }: Props) {
 
   return (
     <div ref={self} className={`pane-divider${dragging ? " dragging" : ""}`}
-         role="separator" aria-orientation="vertical" aria-label="Resize the notes and the video"
+         role="separator" aria-orientation="vertical" aria-label="Resize editor and capture pane"
          tabIndex={0}
-         title="Drag to resize — double-click: the video at full size (again: back)"
+         title="Drag to resize · Double-click to expand or restore"
          onPointerDown={(event) => {
            if (event.button !== 0) return
            // The mouse must not take the keyboard from the notes.

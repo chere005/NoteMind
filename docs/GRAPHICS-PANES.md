@@ -12,6 +12,8 @@ The drawing bar has Pen, Eraser and Select tools, colour swatches and a width dr
 
 Readers reject unsupported versions, invalid numeric data, mismatched pressure arrays and excessive point counts. Saving, autosave, Notepad undo, archive checksums and Markdown sidecars preserve both the preview and the editable data.
 
-Drawing location chooses In this window or Wacom screen. Only an extended Wacom display can own a separate pane; a mirrored screen draws directly in the application window. The location is remembered and switching retains sheets, strokes and selections.
+The drawing-location icon toggles In this window or Wacom screen. The Wacom pane covers the entire extended display, including the menu and Dock area. Only an extended Wacom display can own a separate pane; a mirrored screen draws directly in the application window. The location is remembered and switching retains sheets, strokes and selections.
 
 Committed strokes and their points are immutable. New samples paint incrementally; selection drags reuse bitmap layers and transform vector coordinates once on release. Stroke bounds and dirty-state fingerprints are cached. The editor keeps binary image URLs outside its markup and defers offscreen image decoding.
+
+Use the orientation icon beside Paper to turn a normal sheet between landscape, portrait and their reversed orientations. Imported pictures retain their original aspect ratio while pen mapping follows the selected orientation.

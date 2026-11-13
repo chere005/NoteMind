@@ -37,7 +37,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   check(notepad.decode(fs.readFileSync(file)).text.startsWith('# NoteMind Quick Reference'),'An out-of-date note is rewritten');
   const before=await js(()=>tabs.length);
   await js(()=>window.dispatchEvent(new CustomEvent('notemind-command',{detail:'quickReference'})));await pause(900);
-  check(await js(b=>tabs.length===b+1&&activeTab.doc.path&&activeTab.doc.path.endsWith('NoteMind Quick Reference.nm'),before),'Help > Quick Reference opens it in a tab');
+  check(await js(b=>tabs.length===b&&activeTab.doc.path&&activeTab.doc.path.endsWith('NoteMind Quick Reference.nm'),before),'Help > Quick Reference replaces the pristine startup tab');
   fs.writeFileSync(path.join(root,'help.png'),(await w.webContents.capturePage()).toPNG());
   report.ok=true;
  }catch(error){report.ok=false;report.error=error.stack;report.state=await js(()=>document.querySelector('dialog')?.innerText||document.getElementById('status').textContent).catch(()=>null);}

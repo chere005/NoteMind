@@ -24,11 +24,11 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
  }
  function decision(details){
   const d=display();if(details.frameName!==FRAME||details.url!=='about:blank'||!d||closed||pad&&!pad.isDestroyed())return {action:'deny'};
-  return {action:'allow',outlivesOpener:false,overrideBrowserWindowOptions:{...d.bounds,show:false,frame:false,skipTaskbar:true,backgroundColor:dark()?'#1e1e20':'#f4f3ef',webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false}}};
+  return {action:'allow',outlivesOpener:false,overrideBrowserWindowOptions:{...d.bounds,show:false,frame:false,fullscreenable:false,resizable:false,movable:false,minimizable:false,maximizable:false,enableLargerThanScreen:true,hasShadow:false,roundedCorners:false,acceptFirstMouse:true,skipTaskbar:true,title:'NoteMind Drawing',backgroundColor:dark()?'#1e1e20':'#f4f3ef',webPreferences:{contextIsolation:true,sandbox:true,nodeIntegration:false}}};
  }
  function attach(window){
   if(closed||!display()||pad&&!pad.isDestroyed()){window.close();return false;}
-  pad=window;ready=false;owner.webContents?.setBackgroundThrottling(false);window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',e=>e.preventDefault());
+  pad=window;ready=false;window.setAlwaysOnTop(true,'status');owner.webContents?.setBackgroundThrottling(false);window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',e=>e.preventDefault());
   window.on('closed',()=>{if(pad===window){stopMirror();owner.webContents?.setBackgroundThrottling(true);pad=null;ready=false;publish();}});window.on('focus',()=>{onFocus();scheduleRefresh()});window.on('blur',scheduleRefresh);publish();return true;
  }
  function markReady(){if(!pad||pad.isDestroyed())return;ready=true;refresh();}

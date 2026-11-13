@@ -26,7 +26,7 @@ app.on('browser-window-created',(_,win)=>{if(!tested)win.setContentSize(1266,627
   check(await js("!!document.querySelector('#pen-control .pen-swatches') && !!document.querySelector('#pen-control .pen-width-select')"),'drawing bar exposes colours and the width selector');
   await screenshot('initial-tablet');report.chrome=await js("Array.from(document.querySelectorAll('.docked-toggle,.docked-toggle input,.sheet-tabs,.camera-head,.sidebar-bar,#pen-control,#tab-switches,#video-options,[data-tablet=surface]')).map(el=>({selector:el.className,html:el.outerHTML.slice(0,180),rect:el.getBoundingClientRect().toJSON(),display:getComputedStyle(el).display,visibility:getComputedStyle(el).visibility,appearance:getComputedStyle(el).appearance}))");
   await command('quickReference');await new Promise(r=>setTimeout(r,900));check(await js("tabs.some(t=>t.doc.path&&/Quick Reference\\.nm$/.test(t.doc.path))"),'quick reference opens');await js("closeTab(activeTab)");
-  check(await js("!document.querySelector('[data-tablet=orientation-menu]')"),'drawing bar omits the redundant orientation control');
+  check(await js("!!document.querySelector('[data-tablet=orientation-menu]')"),'drawing bar exposes tablet orientation');
   await click('[data-tablet=paper]');await click('[data-bar=paper-lines]');await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
   check(await js("document.querySelector('[data-tablet=surface]').dataset.paper==='lines'"),'paper choices work');
   await command('pen:toggleErase');check(await js("document.querySelector('.tablet-pane>.camera-foot .line').textContent.includes('Erase tool')"),'pen menu selects the sheet eraser');await command('pen:toggleErase');
@@ -47,7 +47,7 @@ app.on('browser-window-created',(_,win)=>{if(!tested)win.setContentSize(1266,627
   const paneFile=path.join(profile,'Drawing.wm');dialog.showSaveDialog=async()=>({canceled:false,filePath:paneFile});dialog.showOpenDialog=async()=>({canceled:false,filePaths:[paneFile]});
   await click('[data-tablet="pane-save"]');check(fs.existsSync(paneFile),'drawing saves as a Notepad');
   const opened=await js('window.notemind.openPane()');check(opened.sheet.strokes.length===3,'drawing Notepad preserves editable ink');
-  await click('[data-tablet="pane-menu"]');await menu('This project');await pause(200);check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing.wm')"),'workspace keeps drawing files');
+  await click('[data-tablet="pane-menu"]');await menu('This project');await pause(200);check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing')"),'workspace keeps drawing files');
   await command('source:camera');await pause(1400);check(await js("document.querySelector('video').videoWidth > 0"),'camera starts');await screenshot('initial-camera');
   check(await js("document.querySelector('[data-camera-zoom=square]').getBoundingClientRect().width>0"),'original camera zoom control remains visible');
   await command('cameraAspect:1');await pause(1200);

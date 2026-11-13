@@ -17,7 +17,7 @@ export function OrientationMenu() {
   const value = useOrientation()
   const now = ORIENTATIONS.find((one) => one.value === value)?.label ?? ""
   return (
-    <MenuButton className="menu" data={{ tablet: "orientation-menu" }} title={`${TITLE} Now: ${now}.`}
+    <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`${TITLE} Now: ${now}.`}
                 items={ORIENTATIONS.map((one) => ({
                   label: one.label, checked: one.value === value, dataBar: `orientation-${one.value}`,
                   onClick: () => setOrientation(one.value),
@@ -40,4 +40,3 @@ export function OrientationSelect({ className = "icon-button", compact = false }
     </select>
   )
 }
-

@@ -9,7 +9,7 @@ app.on('browser-window-created',(_,win)=>win.webContents.once('did-finish-load',
  check(await js("document.querySelectorAll('.sheet-tab:not(.live)').length-1")===expectedSheets.length,'drawing tabs survive restart');
  check(await js("document.querySelectorAll('.sheet-tab.live').length+1")===expectedPages.length,'live and still camera tabs survive restart');
  check(await js("document.querySelectorAll('#rich img').length")===3,'saved document and embedded images restore');
- check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing.wm')"),'workspace attachments restore');
+ check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing')"),'workspace attachments restore');
  check(await js("document.querySelector('.sheet-tab.on .name').textContent")===expectedSheets.at(-1).name,'active drawing tab restores');
  const current=JSON.parse(fs.readFileSync(path.join(previous.profile,'sheets.json'),'utf8'));check(JSON.stringify(current.map(s=>s.strokes))===JSON.stringify(expectedSheets.map(s=>s.strokes)),'restoration preserves every ink sample');
  report.ok=true;win.close();}catch(error){report.ok=false;report.error=error.stack;win.destroy();process.exitCode=1;}finally{fs.writeFileSync(path.join(__dirname,'../test-results/restart.json'),JSON.stringify(report,null,2));}}));

@@ -8,7 +8,7 @@
 .pen-bar .pen-swatch.custom{background:conic-gradient(#f2542d,#f5b700,#2fbf71,#2d7dd2,#8e44ad,#f2542d)}
 .pen-bar .pen-swatch.on{outline:2px solid var(--wm-text);outline-offset:2px}
 .pen-bar .pen-width-select{height:26px;padding:0 4px;color:var(--wm-text);background:var(--wm-page);border:1px solid var(--wm-rule);border-radius:4px;font:inherit}
-.drawing-location{height:26px;max-width:160px;padding:0 4px;background:var(--wm-page);color:var(--wm-text);border:1px solid var(--wm-rule);border-radius:4px;font:inherit}.pen-bar .drawing-location{margin-left:auto}.pad-placeholder>.drawing-location{flex:none;margin:6px}
+.drawing-location{flex:none;width:28px;height:28px;padding:4px}.pen-bar .drawing-location{margin-left:auto}.pad-placeholder>.drawing-location{flex:none;margin:6px}
 .pad-placeholder{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--wm-muted);background:var(--wm-page)}
 
 .pad-mirror{min-height:0;flex:1;width:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}.pad-mirror img{max-width:100%;max-height:100%;object-fit:contain;touch-action:none;user-select:none}.pad-placeholder>button{flex:none;margin:6px}

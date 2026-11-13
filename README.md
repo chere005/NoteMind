@@ -1,6 +1,6 @@
 # NoteMind
 
-A desktop Notepad application with a visual/Markdown editor, a folder and project sidebar, and integrated drawing and camera panes.
+A desktop Notepad application with a visual/Markdown editor, a folder and project sidebar, and integrated drawing and camera panes. The sidebar can be resized and adapts to small windows; More keeps writing actions available when the editor is narrow.
 
 ## Run
 
@@ -23,7 +23,7 @@ The portable Windows application is `dist/NoteMind/NoteMind.exe`. On Apple Silic
 - Pinned Notepads, tags, saved smart filters, title/date sorting, links between Notepads, persistent Recently Deleted, and version preview/restoration.
 - Select an embedded picture for resize and rotate controls, or use its context menu to crop it. Edits make a new picture, so other uses of the original stay unchanged and the edit can be undone.
 - Embedded file attachments, inline PDF previews, an attachment browser, and multipage scans assembled from kept camera pages or pictures. Image and handwriting text is indexed offline for search.
-- An extended Wacom display can show the drawing pane while its interactive mirror remains in the main window. Input Devices → Toggle Pen Display returns the pane to the main window. Independent native capture may require Input Monitoring permission on macOS.
+- An extended Wacom display can show the drawing pane while its interactive mirror remains in the main window. The drawing-location icon switches between this window and the whole extended Wacom display. The orientation icon is beside Paper in the sheet header. Independent native capture may require Input Monitoring permission on macOS.
 - The native tablet subsystem, pressure, palm rejection and device mapping. Pen, Eraser, Select, colour swatches and the width dropdown are directly on the drawing bar. The lower side button erases strokes and double-taps Undo; the upper selects and double-taps Redo. Mouse and pen can both draw or move selected ink. Clear Sheet has its own button.
 - Persistent drawing sheets, paper types/spacing/colours, image backgrounds, editable graphics pane round trips, drawing files, project and document attachments, SVG/PNG exports, and copying selected drawings. Incoming graphics always land in a docked pane. See [the graphics pane format](docs/GRAPHICS-PANES.md).
 - Camera devices per tab, live and still tabs, editable annotations, hold, keep page, rotation, aspect cropping, selection movement/resizing, page corners and perspective correction, zoom, transparent writing captures, image captures, and rescanning drawing backgrounds. Captures from a live source clear the captured ink with one-step undo; Raw keeps the ink.
@@ -44,7 +44,7 @@ Drawing sheets, camera pages, project membership, and window layout persist loca
 
 ## Checks
 
-`npm test` covers archives, checksums, Word round trips, Markdown image sidecars, file history, projects and the `.wmpr` format, image processing, Python, selections, tab buffers, and storage validation. Electron tests in `test/review.cjs`, `test/restart.cjs`, `test/sidebar.cjs`, `test/document-pane.cjs`, `test/document-integration.cjs`, and `test/welcome.cjs`, `test/editor-toolbar.cjs`, `test/tables-styles.cjs`, `test/notes-features.cjs`, `test/notes-recovery.cjs`, `test/keys-format.cjs`, `test/projects.cjs`, `test/find-replace.cjs`, `test/clipboard.cjs`, `test/footer.cjs`, `test/structure.cjs`, `test/tabs-recents.cjs`, `test/pdf-export.cjs` and `test/help.cjs` exercise the application. `test/restart.cjs` reads the profile `test/review.cjs` leaves, so run them in that order; `test/pen-smoke.cjs` is a plain Node script. The document integration check also opens the exported DOCX in LibreOffice. `node test/portable.cjs` checks the packaged executable, native tablet bridge, independent workspace windows, and shutdown.
+`npm test` covers archives, checksums, Word round trips, Markdown image sidecars, file history, projects and the `.wmpr` format, image processing, Python, selections, tab buffers, and storage validation. Electron tests in `test/review.cjs`, `test/restart.cjs`, `test/sidebar.cjs`, `test/document-pane.cjs`, `test/document-integration.cjs`, and `test/welcome.cjs`, `test/editor-toolbar.cjs`, `test/workspace-ux.cjs`, `test/tables-styles.cjs`, `test/notes-features.cjs`, `test/notes-recovery.cjs`, `test/keys-format.cjs`, `test/projects.cjs`, `test/find-replace.cjs`, `test/clipboard.cjs`, `test/footer.cjs`, `test/structure.cjs`, `test/tabs-recents.cjs`, `test/pdf-export.cjs` and `test/help.cjs` exercise the application. `test/restart.cjs` reads the profile `test/review.cjs` leaves, so run them in that order; `test/pen-smoke.cjs` is a plain Node script. The document integration check also opens the exported DOCX in LibreOffice. `node test/portable.cjs` checks the packaged executable, native tablet bridge, independent workspace windows, and shutdown.
 
 `node test/validate-round.cjs source` and `node test/validate-round.cjs packaged` run the two complete validation rounds.
 

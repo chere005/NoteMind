@@ -21,13 +21,16 @@ app.on('browser-window-created', (_, w) => { if (tested) return;tested = true;w.
     const redraws=window.__strokeCalls;pointer('pointerup',.24,.2);await next();
     document.querySelector('[data-bar=pen]').click();await next();window.__strokeCalls=0;pointer('pointerdown',.95,.95);pointer('pointermove',.97,.97);pointer('pointerup',.97,.97);await next();
     const appendPaints=window.__strokeCalls;CanvasRenderingContext2D.prototype.stroke=original;
-    const start=performance.now(),opened=await window.notemind.openPath(${JSON.stringify(images)});addTab(opened);await next();
-    return {strokes:10000,points:200000,selectionVectorRedraws:redraws,newStrokePaintCalls:appendPaints,selectionHandlerP95:times.sort((a,b)=>a-b)[Math.floor(times.length*.95)],imageCount:document.querySelectorAll('#rich img').length,imageOpenMs:performance.now()-start,editorMarkupBytes:rich.innerHTML.length,allImagesUseBlobs:[...rich.querySelectorAll('img')].every(img=>img.src.startsWith('blob:')&&img.loading==='lazy')};
+    const start=performance.now(),opened=await window.notemind.openPath(${JSON.stringify(images)});addTab(opened);await next();const imageOpenMs=performance.now()-start;
+    const paragraph=document.createElement('p');rich.append(paragraph);const typing=[];for(let i=0;i<20;i++){const editStart=performance.now();paragraph.append(document.createTextNode('word '));rich.dispatchEvent(new Event('input',{bubbles:true}));typing.push(performance.now()-editStart);await next()}
+    return {imageTypingP95:typing.sort((a,b)=>a-b)[Math.floor(typing.length*.95)],strokes:10000,points:200000,selectionVectorRedraws:redraws,newStrokePaintCalls:appendPaints,selectionHandlerP95:times.sort((a,b)=>a-b)[Math.floor(times.length*.95)],imageCount:document.querySelectorAll('#rich img').length,imageOpenMs,editorMarkupBytes:rich.innerHTML.length,allImagesUseBlobs:[...rich.querySelectorAll('img')].every(img=>img.src.startsWith('blob:')&&img.loading==='lazy')};
   })()`);
+  check(report.metrics.imageTypingP95 < 100, 'typing in a note with 100 large images avoids long main-thread stalls');
   check(report.metrics.selectionVectorRedraws === 0, 'moving dense selections reuses two bitmaps without repainting vector paths');
   check(report.metrics.newStrokePaintCalls <= 3, 'adding ink to 10,000 existing strokes paints only the new stroke');
   check(report.metrics.imageCount === 100 && report.metrics.allImagesUseBlobs && report.metrics.editorMarkupBytes < 100000, '100 large pictures render as compact cached previews with deferred decoding');
   await pause(700);check(JSON.parse(fs.readFileSync(path.join(root, 'sheets.json')))[0].strokes.length === 10001, 'the dense drawing remains complete after editing and autosave');
+  const saved=format.decode(fs.readFileSync(images));check(Object.keys(saved.assets).length===100&&saved.text.includes('word word word'), 'autosave preserves all 100 images together with the edited text');
   fs.writeFileSync(path.join(root, 'large-drawing.png'), (await w.webContents.capturePage()).toPNG());report.ok = true;
  } catch (error) { report.ok = false;report.error = error.stack; }
  fs.writeFileSync('test-results/large-drawing.json', JSON.stringify(report, null, 2));console.log(JSON.stringify(report, null, 2));app.exit(report.ok ? 0 : 1);

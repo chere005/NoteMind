@@ -8,7 +8,7 @@
  zoom.value='100';
  const count=text=>(text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu)||[]).length;
  // Visible words only: folded sections and Markdown markers do not count.
- function visibleText(){if(visual){const copy=rich.cloneNode(true);copy.querySelectorAll('[data-editor-control],.heading-folded').forEach(n=>n.remove());return copy.textContent;}const box=document.createElement('div');box.innerHTML=NoteMindDocument.render(source.value);return box.textContent;}
+ function visibleText(){if(visual){const copy=rich.cloneNode(true);copy.querySelectorAll('.missing-image,[data-editor-control],.heading-folded').forEach(n=>n.remove());return copy.textContent;}const box=document.createElement('div');box.innerHTML=NoteMindDocument.render(source.value);box.querySelectorAll('.missing-image,[data-editor-control]').forEach(n=>n.remove());return box.textContent;}
  let signature='';
  function update(force){
   const next=(visual?'v'+rich.textContent.length+':'+rich.childElementCount+':'+rich.querySelectorAll('.heading-folded').length:'m'+source.value.length)+':'+(activeTab?.id||'');

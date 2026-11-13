@@ -1,0 +1,43 @@
+const {app}=require('electron'),fs=require('node:fs'),path=require('node:path');
+const root=path.resolve('test-results/workspace-ux-'+Date.now());fs.mkdirSync(root,{recursive:true});process.env.NOTEMIND_DATA=root;app.disableHardwareAcceleration();
+const folder=path.join(root,'Notes');fs.mkdirSync(folder);fs.mkdirSync(path.join(root,'workspaces'));fs.writeFileSync(path.join(root,'workspaces/index.json'),JSON.stringify([{id:'default',name:'Default Workspace',folders:[folder],files:[]}]));
+const report={root,checks:[]},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));let tested=false;
+app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webContents.setBackgroundThrottling(false);w.webContents.once('did-finish-load',async()=>{
+ const js=(fn,...args)=>w.webContents.executeJavaScript('('+fn.toString()+')('+args.map(value=>JSON.stringify(value)).join(',')+')');
+ const check=(ok,label)=>{if(!ok)throw Error(label);report.checks.push(label);};
+ const command=async detail=>{await js(detail=>window.dispatchEvent(new CustomEvent('notemind-command',{detail})),detail);await pause(120);};
+ try{
+  await pause(1200);w.setContentSize(1440,900);await pause(150);
+  await js(file=>addTab({path:file,text:'# Field notes\n\nA useful paragraph.',assets:{}}),path.join(folder,'Field notes.nm'));
+  check(await js(()=>tabs.length===1&&document.querySelector('#documentTabs .name').textContent==='Field notes'&&document.activeElement===rich),'opening a native note reuses the pristine tab and focuses writing');
+  check(await js(()=>!!document.querySelector('#sidebarTree .add-row')),'sidebar receives the initial document state');
+  check(await js(()=>{rich.append(document.createTextNode(' First edit'));rich.dispatchEvent(new Event('input',{bubbles:true}));const tab=document.querySelector('#documentTabs .name'),row=document.querySelector('#sidebarTree .add-row');rich.append(document.createTextNode(' Second edit'));rich.dispatchEvent(new Event('input',{bubbles:true}));return tab===document.querySelector('#documentTabs .name')&&row===document.querySelector('#sidebarTree .add-row');}),'continued typing keeps tabs and sidebar nodes stable');
+  await js(folder=>{for(let i=0;i<15;i++)addTab({path:folder+'/Reference '+i+'.nm',text:'Reference '+i,assets:{}});},folder);await pause(150);
+  check(await js(()=>{const tab=document.querySelector('#documentTabs .selected').getBoundingClientRect(),strip=document.getElementById('documentTabs').getBoundingClientRect();return tab.left>=strip.left-1&&tab.right<=strip.right+1;}),'the active tab stays visible when many notes are open');
+  await js(()=>{activateTab(tabs[0]);});check(await js(()=>currentText().includes('Second edit')),'switching tabs preserves unsaved writing');
+  w.setContentSize(800,600);await pause(250);
+  check(await js(()=>document.getElementById('sidebar').hidden&&!document.getElementById('sidebarResize').getClientRects().length),'small windows automatically give writing room');
+  check(await js(()=>{const main=document.querySelector('main').getBoundingClientRect(),more=document.getElementById('writingTools').getBoundingClientRect();return more.width>0&&more.right<=main.right&&more.left>=main.left&&document.getElementById('toolbar').scrollWidth<=main.width+1;}),'the writing toolbar fits a small editor and keeps More visible');
+  check(await js(()=>{const bar=document.getElementById('pen-control'),r=bar.getBoundingClientRect();return r.height<=70&&[...bar.querySelectorAll('button,select')].every(el=>{const b=el.getBoundingClientRect();return !b.width||(b.left>=r.left&&b.right<=r.right&&b.bottom<=r.bottom);});}),'all pen tools, swatches, width and location fit two rows');
+  check(await js(()=>!!document.querySelector('[data-tablet=orientation-menu]')&&!!document.querySelector('[data-drawing-location]')),'orientation and the drawing location icon are directly available');
+  await js(()=>document.getElementById('writingTools').click());await pause(80);
+  check(await js(()=>['Underline','Strikethrough','Inline Code','Insert Image…','Insert Table','Checklist'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.textContent.trim()===label))),'More retains access to formatting and insertion when toolbar controls are hidden');
+  await js(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(80);
+  w.setContentSize(1440,900);await pause(150);
+  check(await js(()=>!document.getElementById('sidebar').hidden),'the adaptive sidebar returns when the window grows');
+  await js(()=>{const handle=document.getElementById('sidebarResize');handle.focus();for(let i=0;i<6;i++)handle.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));handle.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));});await pause(100);
+  check(await js(()=>Math.round(document.getElementById('sidebar').getBoundingClientRect().width)===300&&JSON.parse(localStorage.getItem('notemind.layout')).sidebar===300),'sidebar keyboard resizing is applied and remembered');
+  await js(()=>document.getElementById('sidebarToggle').click());await command('toggleEditor');await command('toggleEditor');
+  check(await js(()=>document.getElementById('sidebar').hidden),'capture-only round trips respect a manually hidden sidebar');
+  await command('searchNotepads');check(await js(()=>!document.getElementById('sidebar').hidden&&document.activeElement.id==='sidebarSearch'),'search reveals the sidebar and focuses its field');
+  await command('toggleEditor');check(await js(()=>document.querySelector('main').hidden&&document.getElementById('sidebar').hidden),'capture-only mode removes both writing and sidebar');
+  await command('toggleEditor');check(await js(()=>!document.querySelector('main').hidden&&!document.getElementById('sidebar').hidden),'returning from capture restores the visible sidebar');
+  await js(()=>{document.querySelector('[data-command=bold]').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));});
+  check(await js(()=>document.activeElement.id==='writingTools'),'toolbar arrow navigation reaches the final visible control');
+  await js(()=>{addTab({path:null,text:'# Heading\n\nCount **these** words.\n\n![Missing picture](assets/missing.png)',assets:{}});window.NoteMindFooter.update(true);});const visualWords=await js(()=>document.getElementById('wordCount').textContent);
+  await js(()=>{switchMode(false);window.NoteMindFooter.update(true);});check(await js(()=>document.getElementById('wordCount').textContent)===visualWords,'word counts agree between visual and Markdown modes');
+  fs.writeFileSync(path.join(root,'workspace.png'),(await w.webContents.capturePage()).toPNG());report.ok=true;
+ }catch(error){report.ok=false;report.error=error.stack;report.layout=await js(()=>['#documentTabs','#documentTabs .selected','main','#toolbar','#pen-control','#sidebar'].map(s=>{const el=document.querySelector(s),r=el.getBoundingClientRect();return {s,x:r.x,right:r.right,width:r.width,height:r.height,scrollLeft:el.scrollLeft,scrollWidth:el.scrollWidth};}));fs.writeFileSync(path.join(root,'failed.png'),(await w.webContents.capturePage()).toPNG());}
+ fs.writeFileSync('test-results/workspace-ux.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);
+});});
+require(path.join(process.env.NOTEMIND_TEST_APP||path.resolve('src'),'main.cjs'));setTimeout(()=>app.exit(1),45000).unref();

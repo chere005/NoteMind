@@ -89,7 +89,7 @@ function App(){
 
  const orientation=useOrientation();const activePaper=usePaper();
 
- useEffect(()=>{const sheet=sheets[active];if(!sheet||sheet.page.target||sheet.file||sheet.page.strokes.length||sheet.page.backdrop)return;page.current.setAspect(orientation%2?1/(tabletAspect()||screenAspect()):(tabletAspect()||screenAspect()));refresh();},[orientation,feed.status?.tablet?.aspect,active]);
+ useEffect(()=>{const sheet=sheets[active];if(!sheet||sheet.page.target||sheet.file||sheet.page.backdrop)return;page.current.setAspect(orientation%2?1/(tabletAspect()||screenAspect()):(tabletAspect()||screenAspect()));refresh();},[orientation,feed.status?.tablet?.aspect,active]);
 
  useEffect(()=>{if(sheets[active]?.paper)setPaper(sheets[active].paper);},[active,loaded]);
 
