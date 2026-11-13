@@ -2,7 +2,7 @@ import React,{useState,useRef,useEffect} from 'react';
 import {Icon} from './icons';
 export function SheetTab({name,selected,live=false,dirty=false,guarded=false,onSelect,onRename,onClose,onDragStart,onDrop}){
  const tab=useRef<HTMLDivElement>(null);
- useEffect(()=>{if(!selected)return;const container=tab.current?.closest('.sheet-scroll');if(!container)return;const reveal=()=>{const r=tab.current.getBoundingClientRect(),view=container.getBoundingClientRect();if(r.left<view.left)container.scrollLeft-=view.left-r.left;else if(r.right>view.right)container.scrollLeft+=r.right-view.right};const observer=new ResizeObserver(reveal);observer.observe(container);reveal();return()=>observer.disconnect()},[selected,name]);
+ useEffect(()=>{if(!selected)return;const container=tab.current?.closest('.sheet-scroll');if(!container)return;const reveal=()=>{const element=tab.current;if(!element?.isConnected||!container.isConnected)return;const r=element.getBoundingClientRect(),view=container.getBoundingClientRect();if(r.left<view.left)container.scrollLeft-=view.left-r.left;else if(r.right>view.right)container.scrollLeft+=r.right-view.right};const observer=new ResizeObserver(reveal);observer.observe(container);reveal();return()=>observer.disconnect()},[selected,name]);
  const [asking,setAsking]=useState(false);useEffect(()=>{if(!asking)return;const timer=setTimeout(()=>setAsking(false),3000);return()=>clearTimeout(timer)},[asking]);const close=()=>{if(guarded&&!asking){setAsking(true);return;}setAsking(false);onClose?.()};
  const [editing,setEditing]=useState(false),[draft,setDraft]=useState(name);const field=useRef<HTMLInputElement>(null),cancelled=useRef(false);
  useEffect(()=>{if(editing){field.current?.focus();field.current?.select()}},[editing]);

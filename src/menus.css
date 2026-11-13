@@ -37,7 +37,6 @@
 
 .sheet-scroll>.sheet-tab.on{min-width:min(84px,100%);max-width:min(180px,100%);flex-shrink:0}
 @container editor (max-width:410px){#toolbar #insertMenu{width:36px;min-width:36px;gap:1px}#toolbar #insertMenu .menu-chevron{display:inline}}
-.sheet-tabs [data-source-tab]{display:none}
 .camera-empty-label{font-size:11px;color:var(--cam-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .float-menu button:focus:not(:disabled){background:var(--wm-accent-fill,var(--wm-accent));color:#fff;outline:none}
 .float-menu button:focus .float-mark,.float-menu button:focus .hint{color:rgba(255,255,255,.85)}
