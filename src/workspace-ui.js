@@ -26,7 +26,7 @@
  toolbar.prepend(textGroup,list,insert,more);toolbar.append(grow,mode);
  for(const button of toolbar.querySelectorAll('button'))if(!button.hasAttribute('aria-label'))button.setAttribute('aria-label',button.title||button.textContent.trim());
  function updateState(){for(const [selector,key]of [['[data-command=bold]','bold'],['[data-command=italic]','italic'],['[data-format=fmtUnderline]','underline']])toolbar.querySelector(selector)?.setAttribute('aria-pressed',String(!!(visual&&rich.contains(getSelection()?.anchorNode)&&document.queryCommandState(key))));}
- document.addEventListener('selectionchange',updateState);rich.addEventListener('input',updateState);window.addEventListener('notemind-document',updateState);
+ document.addEventListener('selectionchange',updateState);rich.addEventListener('input',updateState);window.addEventListener('notemind-document',updateState);new MutationObserver(updateState).observe(rich,{attributes:true,attributeFilter:['hidden']});
  // The same keyboard rules apply in the main window and on the pen display.
  function installToolbarKeys(doc){const key=event=>{
   if(event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||event.isComposing)return;

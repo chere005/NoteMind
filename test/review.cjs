@@ -45,7 +45,7 @@ app.on('browser-window-created',(_,win)=>{if(!tested)win.setContentSize(1266,627
   await stroke();await click('[data-tablet="pane-menu"]');await menu('Save to Original');
   check(firstImage!==await js("document.querySelector('#rich img').getAttribute('data-asset')"),'repeated Save to Original updates the same image');
   const paneFile=path.join(profile,'Drawing.wm');dialog.showSaveDialog=async()=>({canceled:false,filePath:paneFile});dialog.showOpenDialog=async()=>({canceled:false,filePaths:[paneFile]});
-  await click('[data-tablet="pane-save"]');check(fs.existsSync(paneFile),'drawing saves as a Notepad');
+  await click('[data-tablet=pane-menu]');await click('[data-bar=pane-save-as]');check(fs.existsSync(paneFile),'drawing saves as a Notepad');
   const opened=await js('window.notemind.openPane()');check(opened.sheet.strokes.length===3,'drawing Notepad preserves editable ink');
   await click('[data-tablet="pane-menu"]');await menu('This project');await pause(200);check(await js("document.querySelector('#sidebarTree').textContent.includes('Drawing')"),'workspace keeps drawing files');
   await command('source:camera');await pause(1400);check(await js("document.querySelector('video').videoWidth > 0"),'camera starts');await screenshot('initial-camera');
