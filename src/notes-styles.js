@@ -25,7 +25,7 @@
   function update(){const key=current();button.textContent=(styles.find(([id])=>id===key)?.[1]||'Mixed Styles')+' ▾';button.dataset.style=key;}
   function clean(line){return line.replace(/^ {0,3}(?:#{1,6}\s+|>\s?)/,'').replace(/^(\s*)(?:[-*+] |\d+[.)] )(?:\[[ xX]\] )?/,'$1');}
   function applySource(style) {
-    const scope=sourceScope(),lines=scope.code?scope.text.split('\n'):scope.text.split('\n').map(clean);let text;
+    const scope=sourceScope();if(style==='pre'&&scope.code){update();return;}const lines=scope.code?scope.text.split('\n'):scope.text.split('\n').map(clean);let text;
     if(style==='pre'){const longest=Math.max(2,...(lines.join('\n').match(/`+/g)||[]).map(m=>m.length)),fence='`'.repeat(longest+1);text=fence+'\n'+lines.join('\n')+'\n'+fence;}
     else text=lines.map((line,i)=>style==='p'?line:/^h[1-6]$/.test(style)?'#'.repeat(Number(style[1]))+' '+line:style==='blockquote'?'> '+line:style==='ul'?'- '+line:style==='ol'?(i+1)+'. '+line:'- ['+(!scope.code&&/^\s*[-*+] \[[xX]\] /.test(scope.text.split('\n')[i])?'x':' ')+'] '+line).join('\n');
     source.focus();source.setRangeText(text,scope.start,scope.end,'select');markDirty();update();
@@ -38,6 +38,8 @@
     if(inTable())return;
     rich.querySelectorAll('[data-editor-control=fold]').forEach(n=>n.remove());
     const sel=getSelection(),range=sel.getRangeAt(0);
+    const existing=element()?.closest('pre');if(style==='pre'&&existing?.contains(range.startContainer)&&existing.contains(range.endContainer)){NoteMindCode.decorate();update();return;}
+    rich.querySelectorAll('[data-editor-control=code-language]').forEach(n=>n.remove());
     if(style!=='pre')for(const pre of rich.querySelectorAll('pre'))if(range.intersectsNode(pre)||pre.contains(element()))for(const code of pre.querySelectorAll('code'))code.replaceWith(...code.childNodes);
     const blocks=range.collapsed?[]:[...rich.querySelectorAll('p,h1,h2,h3,h4,h5,h6,pre')].filter(n=>range.intersectsNode(n)&&!n.closest('li,td,th'));
     // The browser keeps list nesting and partial paragraph selections intact.

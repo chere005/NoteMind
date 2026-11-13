@@ -16,7 +16,7 @@ cp.execFileSync(process.execPath, ['scripts/build-documents.cjs'], { stdio: 'inh
 cp.execFileSync(process.execPath, ['scripts/build-tablet.cjs'], { stdio: 'inherit' });
 cp.execFileSync(require('electron'), ['scripts/build-icon.cjs'], { stdio: 'inherit',windowsHide:true });
 fs.mkdirSync('dist', { recursive: true });
-for (const file of ['main.cjs', 'features.cjs', 'workspaces.cjs', 'file-actions.cjs', 'ui.js', 'preload.cjs', 'renderer.js', 'graphics-pane.js', 'image-previews.js', 'workspace-ui.js', 'shell.js', 'sidebar-order.js', 'python.cjs', 'zip.cjs','notes-core.js','notes-history.js','notes-writing.js','notes-tables.js','notes-styles.js','notes-format.js','notes-clipboard.js','picture-geometry.js','notes-picture.js','notes-footer.js','notes-pdf.js','notes-help.js','shortcuts.cjs','quick-reference.cjs','welcome-note.cjs','pdf-options.cjs','print-images.cjs','pad-display.cjs','pad-controller.cjs','pad-ownership.cjs','notes-structure.js','notes-tabs.js','keys.cjs','projectfile.cjs','projects.cjs','recents.cjs','notes-find.js','notes-library.js','notes-attachments.js','notes-store.cjs','notes-ipc.cjs']) {
+for (const file of ['main.cjs', 'features.cjs', 'workspaces.cjs', 'file-actions.cjs', 'ui.js', 'preload.cjs', 'renderer.js', 'graphics-pane.js', 'image-previews.js', 'workspace-ui.js', 'shell.js', 'sidebar-order.js', 'python.cjs', 'zip.cjs','notes-core.js','notes-history.js','notes-writing.js','notes-code.js','syntax-highlighter.cjs','notes-tables.js','notes-styles.js','notes-format.js','notes-clipboard.js','picture-geometry.js','notes-picture.js','notes-footer.js','notes-pdf.js','notes-help.js','shortcuts.cjs','quick-reference.cjs','welcome-note.cjs','pdf-options.cjs','print-images.cjs','pad-display.cjs','pad-controller.cjs','pad-ownership.cjs','notes-structure.js','notes-tabs.js','keys.cjs','projectfile.cjs','projects.cjs','recents.cjs','notes-find.js','notes-library.js','notes-attachments.js','notes-store.cjs','notes-ipc.cjs']) {
   cp.execFileSync(process.execPath, ['--check', `src/${file}`], { stdio: 'inherit' });
 }
 fs.cpSync('src', 'dist', { recursive: true });
@@ -33,7 +33,7 @@ if (fs.existsSync(runtime)) {
   fs.copyFileSync('THIRD-PARTY-NOTICES.txt', `${appDir}/THIRD-PARTY-NOTICES.txt`);
   for (const name of ['koffi', '@koromix']) if (fs.existsSync(`node_modules/${name}`) && !fs.existsSync(`${appDir}/node_modules/${name}`)) fs.cpSync(`node_modules/${name}`, `${appDir}/node_modules/${name}`, { recursive: true });
   const dependencies=new Set();function copyDependency(name,from=process.cwd()){if(name.startsWith("@types/")||require("node:module").isBuiltin(name))return;const {root:folder,pkg}=require('./package-root.cjs')(name,from);if(dependencies.has(pkg.name))return;dependencies.add(pkg.name);fs.cpSync(folder,`${appDir}/node_modules/${pkg.name}`,{recursive:true});for(const child of Object.keys(pkg.dependencies||{}))copyDependency(child,folder);}
-  for(const name of ['docx','mammoth','markdown-it','turndown','turndown-plugin-gfm','image-size'])copyDependency(name);
+  for(const name of ['docx','mammoth','markdown-it','turndown','turndown-plugin-gfm','image-size','highlight.js'])copyDependency(name);
   if (process.platform === 'win32' && !fs.existsSync('dist/NoteMind/NoteMind.exe')) fs.copyFileSync('dist/NoteMind/electron.exe', 'dist/NoteMind/NoteMind.exe');
   if(process.platform==='win32')cp.execFileSync(process.execPath,['scripts/stamp-icon.cjs'],{stdio:'inherit',windowsHide:true});
   if(process.platform==='darwin')cp.execFileSync(process.execPath,['scripts/package-mac.cjs'],{stdio:'inherit'});

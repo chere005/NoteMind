@@ -66,7 +66,7 @@
   if(e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
   const selection=getSelection();if(!selection.rangeCount)return;const range=selection.getRangeAt(0),element=range.startContainer.nodeType===1?range.startContainer:range.startContainer.parentElement;
   if(!element?.closest('pre'))return;
-  const text=range.startContainer.nodeType===3?range.startContainer.data:'',offset=range.startOffset,next=text[offset],previous=text[offset-1];
+  const code=element.closest('pre > code');let text=range.startContainer.nodeType===3?range.startContainer.data:'',offset=range.startOffset;if(code){const prefix=document.createRange();prefix.selectNodeContents(code);prefix.setEnd(range.startContainer,range.startOffset);text=code.textContent;offset=prefix.toString().length;}const next=text[offset],previous=text[offset-1];
   if(closers.has(e.key)&&e.key===next&&range.collapsed){e.preventDefault();selection.modify('move','forward','character');return;}
   if(pairs[e.key]){
    if('"\'`'.includes(e.key)&&range.collapsed&&/[\p{L}\p{N}_]/u.test(previous||''))return;

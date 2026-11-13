@@ -2,8 +2,9 @@ const MarkdownIt=require('markdown-it');
 const Turndown=require('turndown');
 const {gfm}=require('turndown-plugin-gfm');
 const {imageSize}=require('image-size');
+const syntax=require('./syntax-highlighter.cjs');
 function imageDimensions(bytes){try{const size=imageSize(bytes),rotated=size.orientation>=5&&size.orientation<=8,width=rotated?size.height:size.width,height=rotated?size.width:size.height;return Number.isFinite(width)&&Number.isFinite(height)&&width>0&&height>0&&width<=1000000&&height<=1000000?{width,height}:null;}catch{return null;}}
-const md=new MarkdownIt({html:false,linkify:true,breaks:false,typographer:false});
+const md=new MarkdownIt({html:false,linkify:true,breaks:false,typographer:false,highlight:(text,language)=>syntax.highlight(text,language)});
 // Markdown tables use a safe, attribute-free line break for multiline entries.
 md.inline.ruler.before('emphasis','table_break',(state,silent)=>{const match=state.src.slice(state.pos).match(/^<br\s*\/?\s*>/i);if(!match)return false;if(!silent)state.push('hardbreak','br',0);state.pos+=match[0].length;return true;});
 md.inline.ruler.before('emphasis','highlight',(state,silent)=>{const start=state.pos;if(state.src.slice(start,start+2)!=='==')return false;const end=state.src.indexOf('==',start+2);if(end<start+3||state.src.slice(start+2,end).includes('\n'))return false;if(!silent){state.push('mark_open','mark',1);const token=state.push('text','',0);token.content=state.src.slice(start+2,end);state.push('mark_close','mark',-1);}state.pos=end+2;return true;});
@@ -26,4 +27,4 @@ md.renderer.rules.link_open=(tokens,i,opts,env,self)=>{const t=tokens[i],href=t.
 md.renderer.rules.link_close=(tokens,i,opts,env,self)=>{let depth=1,open;for(let j=i-1;j>=0;j--){if(tokens[j].type==='link_close')depth++;if(tokens[j].type==='link_open'&&!--depth){open=tokens[j];break;}}return (open?.attrGet('data-attachment')?'</span>':'')+'</a>';};
 function render(text,assets={},meta={},imageUrl,imageSize){return md.render(text,{assets,meta,imageUrl,imageSize});}
 function toMarkdown(html){return td.turndown(html);}
-module.exports={render,toMarkdown,md,mime,imageDimensions};
+module.exports={render,toMarkdown,md,mime,imageDimensions,syntax};

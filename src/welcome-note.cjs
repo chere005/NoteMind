@@ -51,7 +51,7 @@ function document(){
   'Click a cell and type. Tab moves through the table; its menu adds or removes rows and columns.','',
   '### Code stays readable','',
   '```python','ideas = ["write", "draw", "connect"]','for idea in ideas:','    print(idea)','```','',
-  'This block demonstrates code formatting. Python runs from a separate saved `.py` file, using Tools → Run Python.','',
+  'This block demonstrates Python syntax highlighting. Choose its language button to try another language, or use Plain Text. Tab indents, Return continues indentation, and Command/Ctrl+Return leaves the block. Python runs from a separate saved `.py` file, using Tools → Run Python.','',
   '## Try an editable drawing','',
   '![Editable pen strokes]('+ink+')','',
   'Choose **Edit in Wacom** on this drawing to open its real pen strokes in the capture pane. Try Pen, Eraser, or Select. Select ink and drag it; use Undo to take a change back. **Save to Original** updates this drawing.','',

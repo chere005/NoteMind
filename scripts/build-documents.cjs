@@ -7,5 +7,5 @@ const fs=require('node:fs');
  await esbuild.build({entryPoints:['src/ocr/worker.ts'],bundle:true,platform:'node',format:'esm',outfile:'src/helpers/text-ocr/worker.mjs',banner:{js:'import {createRequire} from "node:module"; const require=createRequire(import.meta.url);'},minify:true});
  await esbuild.build({entryPoints:['src/tablet/renderer/paperWorker.ts'],bundle:true,platform:'browser',format:'iife',outfile:'src/paper-worker.js',minify:true});
  await esbuild.build({entryPoints:['src/start-entry.tsx'],bundle:true,platform:'browser',format:'iife',jsx:'automatic',outfile:'src/welcome.js',minify:true});
- if(fs.existsSync('src/document-renderer.cjs'))await esbuild.build({entryPoints:['src/document-renderer.cjs'],bundle:true,platform:'browser',format:'iife',globalName:'NoteMindDocument',outfile:'src/document-renderer.js',minify:true});
+ if(fs.existsSync('src/document-renderer.cjs'))await esbuild.build({entryPoints:['src/document-renderer.cjs'],bundle:true,platform:'browser',format:'iife',globalName:'NoteMindDocument',supported:{'template-literal':false},outfile:'src/document-renderer.js',minify:true});
 })().catch(e=>{console.error(e);process.exit(1)});

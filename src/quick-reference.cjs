@@ -6,6 +6,7 @@ const sections=[
   [
    "Choose Explore Features on the welcome screen or Help → Welcome to NoteMind for an editable guide with a working checklist, table, drawing, and attached PDF. Your changes to the guide are kept.",
    "Paste keeps plain text; copied web pages that have no plain text become Markdown, and a copied picture is added to the Notepad. Drop pictures on the page to insert them, or drop a Notepad, text file, Word or PDF file to open it. Right-click for Cut, Copy, Paste, Select All and spelling suggestions.",
+   "Code blocks use syntax highlighting in light and dark appearance. Choose their language button, or add a language after the opening Markdown fence (for example ```rust). The selection is kept when colours update. Tab inserts four spaces, Return continues indentation, and Command/Ctrl+Return leaves the block. Plain Text disables colouring. The supported groups are C, C++, Rust, CMake, Python, Verilog, HTML, CSS, TypeScript, JavaScript, Bash/Zsh, JSON, YAML, TOML/INI, SQL, Markdown, Makefile, Dockerfile, diff/patch, Go, Java, C#, Swift and PHP; common aliases, JSX and TSX work too.",
    "In a code block, ( [ { \" ' and ` close themselves and typing the closer steps over it. In the Markdown pane a quote continues on Return and Backspace in indentation removes one level.",
    "Notepad → Writing Tools has checklists, nested lists, highlights and editable tables. Tab indents a list or moves through a table; Enter continues a task. Heading arrows collapse or expand sections. The Markdown toolbar stays visible."
   ]

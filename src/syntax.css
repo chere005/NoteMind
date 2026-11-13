@@ -1,0 +1,14 @@
+:root,.syntax-light{--syntax-keyword:#9b1c31;--syntax-string:#0a5a30;--syntax-number:#1753a0;--syntax-title:#6b3aa1;--syntax-comment:#656c76;--syntax-meta:#80511a;--syntax-added:#146c2e;--syntax-removed:#b42332}
+@media(prefers-color-scheme:dark){:root{--syntax-keyword:#ff9caa;--syntax-string:#a1dca9;--syntax-number:#97c7ff;--syntax-title:#d9b8ff;--syntax-comment:#a0a7b4;--syntax-meta:#e8c58a;--syntax-added:#94d8a0;--syntax-removed:#ffa3a3}}
+pre code{font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;tab-size:4;white-space:pre-wrap;overflow-wrap:normal}
+pre code .hljs-keyword,pre code .hljs-selector-tag,pre code .hljs-literal,pre code .hljs-doctag{color:var(--syntax-keyword)}
+pre code .hljs-string,pre code .hljs-regexp,pre code .hljs-attribute,pre code .hljs-template-tag{color:var(--syntax-string)}
+pre code .hljs-number,pre code .hljs-symbol,pre code .hljs-bullet,pre code .hljs-link{color:var(--syntax-number)}
+pre code .hljs-title,pre code .hljs-type,pre code .hljs-built_in,pre code .hljs-section,pre code .hljs-selector-class,pre code .hljs-selector-id{color:var(--syntax-title)}
+pre code .hljs-comment,pre code .hljs-quote{color:var(--syntax-comment);font-style:italic}
+pre code .hljs-meta,pre code .hljs-tag,pre code .hljs-name,pre code .hljs-attr{color:var(--syntax-meta)}
+pre code .hljs-addition{color:var(--syntax-added)}pre code .hljs-deletion{color:var(--syntax-removed)}
+pre code .hljs-emphasis{font-style:italic}pre code .hljs-strong{font-weight:700}
+#rich pre.code-block{position:relative;padding-top:34px;border-radius:6px}
+.code-language{position:absolute;top:4px;right:6px;font:11px/1.5 system-ui,sans-serif;color:var(--wm-muted);padding:2px 6px;border-radius:4px;user-select:none;white-space:nowrap}
+.code-language:hover,.code-language:focus-visible{color:var(--wm-text);background:var(--wm-rule)}
