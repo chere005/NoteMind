@@ -8,6 +8,11 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
  const command=async detail=>{await js(detail=>window.dispatchEvent(new CustomEvent('notemind-command',{detail})),detail);await pause(120);};
  try{
   await pause(1200);w.setContentSize(1440,900);await pause(150);
+  check(await js(()=>{const host=document.getElementById('paneResize'),controls=[host,...host.querySelectorAll('[tabindex]')].filter(el=>el.tabIndex>=0&&el.getClientRects().length);return controls.length===1&&controls[0].getAttribute('role')==='separator'&&!host.hasAttribute('role');}),'the capture divider exposes one keyboard stop and one separator');
+  const divider=await js(()=>document.getElementById('pane').getBoundingClientRect().width);
+  await js(()=>{const handle=document.querySelector('#paneResize [role=separator]');handle.focus();handle.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true}));});await pause(80);
+  check(await js(()=>document.getElementById('pane').getBoundingClientRect().width)>divider,'the single divider handle still resizes the pane with arrow keys');
+  await js(()=>document.querySelector('#paneResize [role=separator]').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true})));await pause(80);
   await js(file=>addTab({path:file,text:'# Field notes\n\nA useful paragraph.',assets:{}}),path.join(folder,'Field notes.nm'));
   check(await js(()=>tabs.length===1&&document.querySelector('#documentTabs .name').textContent==='Field notes'&&document.activeElement===rich),'opening a native note reuses the pristine tab and focuses writing');
   check(await js(()=>!!document.querySelector('#sidebarTree .add-row')),'sidebar receives the initial document state');
