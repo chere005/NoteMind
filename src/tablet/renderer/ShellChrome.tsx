@@ -30,7 +30,7 @@ export function ShellChrome({source}){
    <MenuButton icon="more" name="Notepads options" title="Notepads options" dataBar="sidebar-menu" items={()=>toMenu(window.NoteMindSidebar?.menuItems()||[])}/>
   </>)}
   {portal('tab-switches',<button className={'bar-btn'+(sidebar?' tint':'')} title={sidebar?'Hide Notepads sidebar':'Show Notepads sidebar'} aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded={sidebar} onClick={()=>click('sidebarToggle')}><Icon name="sidebar"/></button>)}
-  {portal('editor-mode',<button className={'bar-btn editor-mode'+(!visual?' tint':'')} title={visual?'Edit Markdown source':'Return to the rendered page'} aria-label="Toggle Markdown" aria-pressed={!visual} onClick={()=>click(visual?'markdown':'visual')}><Icon name="eye"/></button>)}
+  {portal('editor-mode',<button className={'bar-btn editor-mode'+(visual?' tint':'')} title={visual?'Show Markdown source':'Show rendered page'} aria-label="Rendered view" aria-pressed={visual} onClick={()=>click(visual?'markdown':'visual')}><Icon name="eye"/></button>)}
   {portal('tab-new',<button className="bar-btn tab-new" title="New Notepad" aria-label="New Tab" onClick={()=>click('new')}><Icon name="plus"/></button>)}
   {portal('tab-list',<MenuButton icon="more" name="Notepad options" title="Save, find and manage the open Notepad" dataBar="notepad-menu" items={()=>[
    ...(window.NoteMindMenus?.noteItems()||[]),'-',

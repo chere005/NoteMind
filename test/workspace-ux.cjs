@@ -42,7 +42,7 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   await command('toggleEditor');check(await js(()=>document.querySelector('main').hidden&&document.getElementById('sidebar').hidden),'capture-only mode removes both writing and sidebar');
   await command('toggleEditor');check(await js(()=>!document.querySelector('main').hidden&&!document.getElementById('sidebar').hidden),'returning from capture restores the visible sidebar');
   await js(()=>{document.querySelector('[data-command=bold]').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}));});
-  check(await js(()=>document.activeElement.getAttribute('aria-label')==='Toggle Markdown'),'toolbar arrow navigation reaches the Markdown toggle');
+  check(await js(()=>document.activeElement.getAttribute('aria-label')==='Rendered view'),'toolbar arrow navigation reaches the Markdown toggle');
   await js(()=>{addTab({path:null,text:'# Heading\n\nCount **these** words.\n\n![Missing picture](assets/missing.png)',assets:{}});window.NoteMindFooter.update(true);});const visualWords=await js(()=>document.getElementById('wordCount').textContent);
   await js(()=>{switchMode(false);window.NoteMindFooter.update(true);});check(await js(()=>document.getElementById('wordCount').textContent)===visualWords,'word counts agree between visual and Markdown modes');
   fs.writeFileSync(path.join(root,'workspace.png'),(await w.webContents.capturePage()).toPNG());report.ok=true;
