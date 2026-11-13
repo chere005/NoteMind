@@ -35,12 +35,13 @@ export type MenuItem =
     danger?: boolean
   }
 
-type CloseReason="dismiss"|"action"|"outside"|"switch"|"toggle"
+type CloseReason="dismiss"|"action"|"outside"|"switch"
 interface Props {
   x: number; y: number; items: MenuItem[]
   above?: boolean; right?: boolean; leftX?: number
   onClose(reason?:CloseReason): void
   trigger?:HTMLElement
+  triggerKey?:string
   id?: string; dataBar?: string; label?: string
   ownerDocument?: Document
   returnTo?: HTMLElement | null
@@ -48,15 +49,17 @@ interface Props {
 }
 
 // Menus belong to their triggering window, including the separate pen display.
-export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,label="Actions",ownerDocument:doc=document,returnTo,trigger,initialFocus="none"}:Props) {
+export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,label="Actions",ownerDocument:doc=document,returnTo,trigger,triggerKey,initialFocus="none"}:Props) {
   const token=useId(),restore=useRef(true),closing=useRef(false),back=useRef(returnTo??doc.activeElement),window=doc.defaultView!
   const dismiss=(focus=true,reason:CloseReason="dismiss")=>{if(closing.current)return;closing.current=true;restore.current=focus;onClose(reason)}
   useLayoutEffect(()=>{
     const opening=(event:CustomEvent)=>{if(event.detail!==token)dismiss(false,"switch")}
     doc.dispatchEvent(new window.CustomEvent("notemind-menu-opening",{detail:token}))
     doc.addEventListener("notemind-menu-opening",opening as EventListener)
-    const away=(event:PointerEvent)=>{const target=event.target as Element;if(target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,trigger?.contains(target)?"toggle":"outside")}
-    const focusAway=(event:FocusEvent)=>{const target=event.target as Element;if(target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
+    // The opening button handles its own toggle on click, after the complete pointer press.
+    const onTrigger=(target:Element)=>trigger?.matches('button,[role="button"]')&&trigger.contains(target)||!!triggerKey&&target?.closest?.('button,[role="button"]')?.getAttribute('data-menu-trigger')===triggerKey
+    const away=(event:PointerEvent)=>{const target=event.target as Element;if(!onTrigger(target)&&target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
+    const focusAway=(event:FocusEvent)=>{const target=event.target as Element;if(!onTrigger(target)&&target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
     const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();dismiss()}}
     const resized=()=>dismiss(false,"outside")
     const commanded=()=>dismiss(false,"outside")
@@ -65,7 +68,7 @@ export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,lab
   },[])
   useEffect(()=>()=>{
     if(!restore.current||window.closed)return
-    window.setTimeout(()=>{const previous=back.current as HTMLElement,active=doc.activeElement as HTMLElement;if(doc.querySelector('dialog[open],.float-menu'))return;if(active&&active!==doc.body&&active.isConnected&&!active.closest('.float-menu'))return;if(previous?.isConnected&&previous.getClientRects().length)previous.focus({preventScroll:true})},0)
+    window.setTimeout(()=>{let previous=back.current as HTMLElement;const active=doc.activeElement as HTMLElement;if(doc.querySelector('dialog[open],.float-menu'))return;if(active&&active!==doc.body&&active.isConnected&&!active.closest('.float-menu'))return;if(!previous?.isConnected&&triggerKey)previous=[...doc.querySelectorAll<HTMLElement>('[data-menu-trigger]')].find(button=>button.getAttribute('data-menu-trigger')===triggerKey);if(previous?.isConnected&&previous.getClientRects().length)previous.focus({preventScroll:true})},0)
   },[])
   const tab=(event:React.KeyboardEvent)=>{
     event.preventDefault();restore.current=false

@@ -66,22 +66,14 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
   const sequence=useRef(0),menuId=useId(),focusTarget=useRef<HTMLElement|null>(null)
   const split = shapeOf(onMain) === "split"
   const button = useRef<HTMLButtonElement>(null)
+  const caret = useRef<HTMLButtonElement>(null)
   const shape = useRef<HTMLSpanElement>(null)
   // The menu is built when it is opened and kept: a render of the page behind it (a clock, a save) must not rebuild its
   // rows, which would take the keyboard from the row the person had moved to.
   const [at, setAt] = useState<{ x: number; y: number; left: number; items: MenuItem[]; serial:number; initialFocus: "first"|"last"|"none" } | null>(null)
   const hold = useRef<number | null>(null)
   const held = useRef(false)
-  // The press that puts the menu away (the menu hears it first, on the window) must not also open it again as the click:
-  // by the time the button hears its own pointerdown the menu is already gone (React has rendered between the two
-  // listeners), so the press is matched to the closing by TIME — both inside one pointerdown.
-  const closedAt = useRef(-1e9)
-  const downAt = useRef(1e9)
-  const closedByThisPress = () => {
-    const same = Math.abs(closedAt.current - downAt.current) < 80
-    downAt.current = 1e9   // (a press is matched once: a click with no press of its own, a script's, never is)
-    return same
-  }
+  const isOpen = useRef(false)
 
   const list = typeof items === "function" ? items : () => items
   // A split's menu hangs under the WHOLE shape and is right-aligned with it (the pen's way); a menu button's under itself.
@@ -89,12 +81,14 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
     onOpen?.()
     const box = (split ? shape.current : button.current)?.getBoundingClientRect()
     if (!box) return
+    isOpen.current=true
     focusTarget.current=button.current?.ownerDocument.activeElement as HTMLElement
     setAt({ serial:++sequence.current,initialFocus,x: split ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })
   }
   // A bar's menu is a chrome action: when it goes (Escape, a click elsewhere, a pick) the keyboard is the notes' again
   // (a field a menu item opened keeps it).
-  const close = () => { closedAt.current = performance.now(); setAt(null) }
+  const close = () => { isOpen.current=false;setAt(null) }
+  const toggle = () => { if(isOpen.current)close();else open() }
   useEffect(() => () => { if (hold.current !== null) window.clearTimeout(hold.current) }, [])
 
   const classes = ["bar-btn", label !== undefined ? "label" : "", on ? "on" : "", tint ? "tint" : "", primary ? "primary" : "", className ?? ""]
@@ -109,7 +103,6 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
             aria-pressed={split && (on!==undefined||tint!==undefined) ? !!(on || tint) : undefined}
             onMouseDown={event=>{if(event.button===0)event.preventDefault()}}
             onPointerDown={(event) => {
-              downAt.current = performance.now()
               if (!split || event.button !== 0) return
               held.current = false
               hold.current = window.setTimeout(() => { held.current = true; open() }, HOLD_MS)
@@ -127,8 +120,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
               if (held.current) { held.current = false; return }
               if (!split) {
                 // The second press on a menu button is the way to put its menu away.
-                if (closedByThisPress()) return
-                open()
+                toggle()
               } else onMain?.()
             }}>
       {icon && <Icon name={icon} />}
@@ -144,12 +136,11 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
         <span ref={shape} className={`bar-split${on ? " on" : ""}${tint ? " tint" : ""}${primary ? " primary" : ""}${disabled ? " disabled" : ""}`}>
           {main}
           {/* The arrow: a button of its own, full height, beside the main one — the corner of a 28px button was twelve pixels. */}
-          <button type="button" className="bar-btn caret" disabled={disabled} data-bar={caretBarFor(dataBar, caretDataBar)}
+          <button ref={caret} type="button" className="bar-btn caret" disabled={disabled} data-bar={caretBarFor(dataBar, caretDataBar)}
                   {...dataAttributes(caretData)}
                   aria-label={arrowName} title={caretTitle ?? arrowName}
                   aria-controls={at?menuId:undefined} aria-haspopup="menu" aria-expanded={at !== null}
                   onMouseDown={event=>{if(event.button===0)event.preventDefault()}}
-                  onPointerDown={() => { downAt.current = performance.now() }}
                   // (A right-click on the arrow is the menu too, not the bar's Customize toolbar…)
                   onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
                   onKeyDown={(event) => {
@@ -157,14 +148,14 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
                     if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
                   }}
                   onClick={() => {
-                    if (disabled || closedByThisPress()) return
-                    open()
+                    if (disabled) return
+                    toggle()
                   }}>
             <Icon name="chev" size={10} className="chev" />
           </button>
         </span>
       ) : main}
-      {at && <FloatingMenu key={at.serial} x={at.x} y={at.y} items={live ? list() : at.items} right={split} leftX={at.left} dataBar={menuBar} id={menuId} label={name||title} ownerDocument={button.current?.ownerDocument} returnTo={focusTarget.current} initialFocus={at.initialFocus} onClose={close} />}
+      {at && <FloatingMenu key={at.serial} x={at.x} y={at.y} items={live ? list() : at.items} right={split} leftX={at.left} dataBar={menuBar} id={menuId} label={name||title} ownerDocument={button.current?.ownerDocument} returnTo={focusTarget.current} trigger={split?caret.current:button.current} initialFocus={at.initialFocus} onClose={close} />}
     </>
   )
 }

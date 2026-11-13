@@ -8,21 +8,26 @@ const toMenu=items=>items.map(item=>item==='-'?item:{...item,...(item.submenu?{s
 const click=id=>document.getElementById(id)?.click();
 export function ShellChrome({source}){
  const [floating,setFloating]=useState(null),[visible,setVisible]=useState(!document.getElementById('pane').hidden);
- const dismissed=useRef({trigger:null,time:0}),serial=useRef(0);
- const close=reason=>{dismissed.current={trigger:reason==='toggle'?floating?.trigger:null,time:performance.now()};setFloating(null)};
+ const active=useRef(null),serial=useRef(0);
+ const close=id=>{if(id!==undefined&&active.current?.serial!==id)return;active.current=null;setFloating(null)};
  useEffect(()=>{
   const original=window.notemindMenu;
-  const show=(items,x,y,options={})=>{if(options.trigger&&dismissed.current.trigger===options.trigger&&performance.now()-dismissed.current.time<100)return;setFloating({serial:++serial.current,x,y,...options,returnTo:document.activeElement,items:toMenu(items)})};
+  const show=(items,x,y,options={})=>{const triggerKey=options.trigger?.getAttribute('data-menu-trigger');if(options.trigger&&(active.current?.trigger===options.trigger||triggerKey&&active.current?.triggerKey===triggerKey)){close();return;}const next={serial:++serial.current,x,y,...options,triggerKey,returnTo:document.activeElement,items:toMenu(items)};active.current=next;setFloating(next)};
   window.notemindMenu=show;window.notemindFloatingMenu=show;
   const observer=new MutationObserver(()=>setVisible(!document.getElementById('pane').hidden));observer.observe(document.getElementById('pane'),{attributes:true,attributeFilter:['hidden']});
   return()=>{window.notemindMenu=original;delete window.notemindFloatingMenu;observer.disconnect()};
  },[]);
- useEffect(()=>{const trigger=floating?.trigger;if(!trigger)return;trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','true');trigger.setAttribute('aria-controls','notemind-actions');return()=>{trigger.setAttribute('aria-expanded','false');trigger.removeAttribute('aria-controls')}},[floating]);
+ useEffect(()=>{
+  const trigger=floating?.trigger;if(!trigger)return;const root=trigger.closest('#sidebarTree'),key=floating.triggerKey;let marked=[];
+  const sync=()=>{marked=key&&root?[...root.querySelectorAll('[data-menu-trigger]')].filter(button=>button.getAttribute('data-menu-trigger')===key):[trigger];for(const button of marked){button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','true');button.setAttribute('aria-controls','notemind-actions')}};
+  sync();const observer=key&&root?new MutationObserver(sync):null;observer?.observe(root,{childList:true,subtree:true});
+  return()=>{observer?.disconnect();for(const button of marked){button.setAttribute('aria-expanded','false');button.removeAttribute('aria-controls')}};
+ },[floating]);
  const [sidebar,setSidebar]=useState(!document.getElementById('sidebar').hidden),[visual,setVisual]=useState(!document.getElementById('rich').hidden),[editing,setEditing]=useState(false),[count,setCount]=useState(1);
  useEffect(()=>{const update=()=>{setCount(document.querySelectorAll('.document-tab').length);setVisual(!document.getElementById('rich').hidden);setSidebar(!document.getElementById('sidebar').hidden)};const observer=new MutationObserver(update);observer.observe(document.getElementById('documentTabs'),{childList:true});observer.observe(document.getElementById('rich'),{attributes:true,attributeFilter:['hidden']});observer.observe(document.getElementById('sidebar'),{attributes:true,attributeFilter:['hidden']});return()=>observer.disconnect()},[]);
  const portal=(id,node)=>document.getElementById(id)?createPortal(node,document.getElementById(id)):null;
  return <>
-  {floating&&<FloatingMenu key={floating.serial} {...floating} id="notemind-actions" onClose={close}/>}
+  {floating&&<FloatingMenu key={floating.serial} {...floating} id="notemind-actions" onClose={()=>close(floating.serial)}/>}
   {portal('paneResize',<PaneDivider sidebar={sidebar}/>)}
   {portal('sidebar-buttons',<>
    <MenuButton icon="plus" name="New Notepad" title="New Notepad" optionsLabel="New Notepad options" dataBar="sidebar-new" onMain={()=>window.NoteMindSidebar?.newNotepad()} items={()=>toMenu(window.NoteMindSidebar?.newMenu()||[])}/>
