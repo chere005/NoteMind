@@ -1,6 +1,6 @@
 {
   "name": "notemind",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "private": true,
   "description": "A simple desktop notepad for Markdown and Python.",
   "main": "src/main.cjs",
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "docx": "^9.15.0",
+    "image-size": "2.1.0",
     "koffi": "^3.3.2",
     "mammoth": "^1.13.0",
     "markdown-it": "^15.0.3",

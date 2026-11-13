@@ -8,4 +8,4 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  await js(()=>NoteMindHistory.step());await wait(100);const undo=await js(()=>[...rich.querySelectorAll('img')].map(x=>x.dataset.asset));if(undo.some(x=>x!=='assets/a.png'))throw Error('Undo did not restore the original picture');
  await js(()=>NoteMindHistory.step(true));await wait(100);const redo=await js(()=>[...rich.querySelectorAll('img')].map(x=>x.dataset.asset));if(redo[0]===redo[1])throw Error('Redo did not restore the edit');
  console.log('Picture selection: independent edit, undo and redo passed');w.destroy();app.exit(0);
- }catch(e){console.error(e);w.destroy();app.exit(1);}finally{fs.rmSync(root,{recursive:true,force:true});}});});require('../src/main.cjs');setTimeout(()=>app.exit(1),30000).unref();
+ }catch(e){console.error(e);w.destroy();app.exit(1);}finally{fs.rmSync(root,{recursive:true,force:true});}});});require(path.join(process.env.NOTEMIND_TEST_APP||path.resolve(__dirname,'../src'),'main.cjs'));setTimeout(()=>app.exit(1),30000).unref();

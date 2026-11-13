@@ -55,7 +55,7 @@ function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').r
 
 function assetUrl(name) { const data = doc.assets[name]; if (!data) return ''; const ext = name.split('.').pop().toLowerCase(); const mime = ({ svg:'image/svg+xml', png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', bmp:'image/bmp', avif:'image/avif' })[ext]; return mime ? `data:${mime};base64,${data}` : ''; }
 
-function render(text) { NoteMindImagePreviews.retain(doc.assets);return NoteMindDocument.render(text,doc.assets,doc.meta,NoteMindImagePreviews.url); }
+function render(text) { NoteMindImagePreviews.retain(doc.assets);return NoteMindDocument.render(text,doc.assets,doc.meta,NoteMindImagePreviews.url,NoteMindImagePreviews.size); }
 function visualAccess(){rich.contentEditable='true';$('toolbar').querySelectorAll('button').forEach(b=>b.disabled=false);return true;}
 function currentText(){return !visual?source.value:richChanged?NoteMindDocument.toMarkdown(rich.innerHTML):doc.text;}
 function switchMode(toVisual) { if (visual === toVisual) return; doc.text = currentText(); visual = toVisual; rich.hidden = !visual; source.hidden = visual; $('toolbar').hidden = false; $('visual').classList.toggle('selected', visual); $('markdown').classList.toggle('selected', !visual); $('modeLabel').textContent = visual ? 'Visual editor' : 'Markdown editor'; if (visual) { rich.innerHTML = render(doc.text); richChanged = false; visualAccess(); } else { source.value = doc.text; $('status').textContent = 'Ready'; } activeTab.visual=visual; window.NoteMindNotes?.changedView();(visual?rich:source).focus({preventScroll:true}); }

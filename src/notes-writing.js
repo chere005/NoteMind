@@ -1,6 +1,9 @@
 (() => {
  const N=window.NoteMindNotes;
  const selectionElement=()=>{const node=getSelection()?.anchorNode;return node?.nodeType===1?node:node?.parentElement;};
+ function ensureEnd(){const last=rich.lastElementChild;if(!last||!(last.matches('table,.graphics-pane,.attachment-card,img[data-asset]')||last.querySelector('.graphics-pane,.attachment-card,img[data-asset]')))return;const line=document.createElement('p');line.dataset.editorTail='';line.append(document.createElement('br'));rich.append(line);}
+ new MutationObserver(ensureEnd).observe(rich,{childList:true});
+ rich.parentElement.addEventListener('pointerdown',event=>{const wrap=rich.parentElement;if(!visual||event.button!==0||event.target!==wrap)return;const last=rich.lastElementChild,rect=wrap.getBoundingClientRect();if(!last||event.clientY<last.getBoundingClientRect().top||event.clientX>=rect.right-16)return;event.preventDefault();rich.focus({preventScroll:true});const range=document.createRange();range.selectNodeContents(last);range.collapse(false);getSelection().removeAllRanges();getSelection().addRange(range);});
  function insertMarkdown(text){if(visual){restoreCaret();document.execCommand('insertHTML',false,render(text));richChanged=true;}else source.setRangeText(text,source.selectionStart,source.selectionEnd,'end');markDirty();decorate();}
  function sourceLines(fn){const a=source.selectionStart,b=source.selectionEnd,v=source.value,start=v.lastIndexOf('\n',a-1)+1,endIndex=v.indexOf('\n',b),end=endIndex<0?v.length:endIndex;source.setRangeText(v.slice(start,end).split('\n').map(fn).join('\n'),start,end,'select');markDirty();}
  function format(command){
@@ -20,7 +23,7 @@
  function collapseAll(value){doc.meta ||= {};doc.meta.collapsed=value?[...rich.querySelectorAll('h1,h2,h3,h4,h5,h6')].map(h=>h.dataset.headingKey):[];markDirty();decorate();}
  function decorate(){
   window.NoteMindTables?.decorate();window.NoteMindStyles?.update();
-  if(!visual)return;const collapsed=new Set(doc.meta?.collapsed||[]);for(const el of rich.children)el.classList.remove('heading-folded');
+  if(!visual)return;ensureEnd();const collapsed=new Set(doc.meta?.collapsed||[]);for(const el of rich.children)el.classList.remove('heading-folded');
   window.headingSeen=new Map();let folds=[];rich.querySelectorAll(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6').forEach((h,i)=>{h.querySelectorAll('[data-editor-control]').forEach(b=>b.remove());const seen=(window.headingSeen||=new Map());h.dataset.headingKey=h.textContent+'#'+(seen.get(h.textContent)||0);seen.set(h.textContent,(seen.get(h.textContent)||0)+1);h.dataset.legacyKey=i+':'+h.textContent;});
   for(const el of rich.children){const level=/^H[1-6]$/.test(el.tagName)?Number(el.tagName[1]):0;if(level)folds=folds.filter(f=>f<level);if(folds.length)el.classList.add('heading-folded');if(level){const key=el.dataset.headingKey,legacy=el.dataset.legacyKey,closed=collapsed.has(key)||collapsed.has(legacy),b=document.createElement('button');b.type='button';b.className='heading-toggle';b.dataset.editorControl='fold';b.contentEditable='false';b.setAttribute('aria-label',(closed?'Expand ':'Collapse ')+el.textContent);b.setAttribute('aria-expanded',String(!closed));b.textContent=closed?'▸':'▾';b.onmousedown=e=>e.preventDefault();b.onclick=e=>{e.preventDefault();doc.meta ||= {};const values=new Set(doc.meta.collapsed||[]);if(closed){values.delete(key);values.delete(legacy);}else values.add(key);doc.meta.collapsed=[...values];markDirty();decorate();};el.append(b);if(closed)folds.push(level);}}
  }

@@ -32,8 +32,8 @@ if (fs.existsSync(runtime)) {
   fs.copyFileSync('LICENSE', `${appDir}/LICENSE`);
   fs.copyFileSync('THIRD-PARTY-NOTICES.txt', `${appDir}/THIRD-PARTY-NOTICES.txt`);
   for (const name of ['koffi', '@koromix']) if (fs.existsSync(`node_modules/${name}`) && !fs.existsSync(`${appDir}/node_modules/${name}`)) fs.cpSync(`node_modules/${name}`, `${appDir}/node_modules/${name}`, { recursive: true });
-  const dependencies=new Set();function copyDependency(name,from=process.cwd()){if(name.startsWith("@types/")||require("node:module").isBuiltin(name))return;let folder=require('path').dirname(require.resolve(name,{paths:[from]}));while(!fs.existsSync(require('path').join(folder,'package.json')))folder=require('path').dirname(folder);const packageFile=require('path').join(folder,'package.json');const pkg=JSON.parse(fs.readFileSync(packageFile));if(dependencies.has(pkg.name))return;dependencies.add(pkg.name);fs.cpSync(folder,`${appDir}/node_modules/${pkg.name}`,{recursive:true});for(const child of Object.keys(pkg.dependencies||{}))copyDependency(child,folder);}
-  for(const name of ['docx','mammoth','markdown-it','turndown','turndown-plugin-gfm'])copyDependency(name);
+  const dependencies=new Set();function copyDependency(name,from=process.cwd()){if(name.startsWith("@types/")||require("node:module").isBuiltin(name))return;const {root:folder,pkg}=require('./package-root.cjs')(name,from);if(dependencies.has(pkg.name))return;dependencies.add(pkg.name);fs.cpSync(folder,`${appDir}/node_modules/${pkg.name}`,{recursive:true});for(const child of Object.keys(pkg.dependencies||{}))copyDependency(child,folder);}
+  for(const name of ['docx','mammoth','markdown-it','turndown','turndown-plugin-gfm','image-size'])copyDependency(name);
   if (process.platform === 'win32' && !fs.existsSync('dist/NoteMind/NoteMind.exe')) fs.copyFileSync('dist/NoteMind/electron.exe', 'dist/NoteMind/NoteMind.exe');
   if(process.platform==='win32')cp.execFileSync(process.execPath,['scripts/stamp-icon.cjs'],{stdio:'inherit',windowsHide:true});
   if(process.platform==='darwin')cp.execFileSync(process.execPath,['scripts/package-mac.cjs'],{stdio:'inherit'});
