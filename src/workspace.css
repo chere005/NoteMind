@@ -1,12 +1,13 @@
 /* Workspace layout and the controls that adapt to the space actually available. */
 main{container-type:inline-size;container-name:editor}
 .sidebar{width:var(--sidebar-w,240px)!important;min-width:180px;max-width:360px;flex:0 0 auto}
+.workspace:has(#pane:not([hidden])) .sidebar{max-width:min(360px,calc(100vw - 600px))}
 #sidebarResize{display:block!important;flex:0 0 5px;width:5px;background:var(--wm-sidebar);border:0}
 #sidebarResize[hidden]{display:none!important}
 #sidebarResize:hover,#sidebarResize:focus-visible{background:var(--wm-accent)}
 .sidebar-footer #projectMenu{max-width:none;flex:1;min-width:0;padding:0 4px}
 .sidebar-footer .note-count{padding:2px 6px;border-radius:5px;background:var(--bar-fill);font-size:11px}
-#documentTabs .document-tab.selected{flex-shrink:0}
+#documentTabs .document-tab.selected{flex-shrink:0;min-width:min(84px,100%);max-width:min(190px,100%)}
 #toolbar{overflow:hidden;gap:3px}
 #toolbar #writingTools{flex:none}
 #rich>:first-child{margin-top:0}

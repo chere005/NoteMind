@@ -30,7 +30,7 @@ app.on('browser-window-created', (_, w) => { if (tested) return;tested = true;w.
   check(report.metrics.newStrokePaintCalls <= 3, 'adding ink to 10,000 existing strokes paints only the new stroke');
   check(report.metrics.imageCount === 100 && report.metrics.allImagesUseBlobs && report.metrics.editorMarkupBytes < 100000, '100 large pictures render as compact cached previews with deferred decoding');
   await pause(700);check(JSON.parse(fs.readFileSync(path.join(root, 'sheets.json')))[0].strokes.length === 10001, 'the dense drawing remains complete after editing and autosave');
-  const saved=format.decode(fs.readFileSync(images));check(Object.keys(saved.assets).length===100&&saved.text.includes('word word word'), 'autosave preserves all 100 images together with the edited text');
+  await js('window.NoteMindNotes.flush()');const saved=format.decode(fs.readFileSync(images));check(Object.keys(saved.assets).length===100&&saved.text.includes('word word word'), 'autosave preserves all 100 images together with the edited text');
   fs.writeFileSync(path.join(root, 'large-drawing.png'), (await w.webContents.capturePage()).toPNG());report.ok = true;
  } catch (error) { report.ok = false;report.error = error.stack; }
  fs.writeFileSync('test-results/large-drawing.json', JSON.stringify(report, null, 2));console.log(JSON.stringify(report, null, 2));app.exit(report.ok ? 0 : 1);

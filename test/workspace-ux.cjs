@@ -23,7 +23,11 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   await js(()=>document.getElementById('writingTools').click());await pause(80);
   check(await js(()=>['Underline','Strikethrough','Inline Code','Insert Image…','Insert Table','Checklist'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.textContent.trim()===label))),'More retains access to formatting and insertion when toolbar controls are hidden');
   await js(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(80);
-  w.setContentSize(1440,900);await pause(150);
+  await js(()=>{document.getElementById('sidebarToggle').click();document.querySelector('.workspace').style.setProperty('--sidebar-w','360px');});await pause(150);
+  check(await js(()=>{const main=document.querySelector('main').getBoundingClientRect(),more=document.getElementById('writingTools').getBoundingClientRect();return main.width>=300&&more.right<=main.right&&more.width>0;}),'a remembered wide sidebar cannot squeeze controls out of a small window');
+  await js(()=>document.getElementById('sidebarToggle').click());w.setContentSize(1440,900);await pause(150);
+  await js(()=>document.getElementById('sidebarToggle').click());
+  await js(()=>document.querySelector('.workspace').style.setProperty('--sidebar-w','240px'));
   check(await js(()=>!document.getElementById('sidebar').hidden),'the adaptive sidebar returns when the window grows');
   await js(()=>{const handle=document.getElementById('sidebarResize');handle.focus();for(let i=0;i<6;i++)handle.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));handle.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowRight',bubbles:true}));});await pause(100);
   check(await js(()=>Math.round(document.getElementById('sidebar').getBoundingClientRect().width)===300&&JSON.parse(localStorage.getItem('notemind.layout')).sidebar===300),'sidebar keyboard resizing is applied and remembered');

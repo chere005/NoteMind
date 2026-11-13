@@ -289,7 +289,7 @@
 
   }
 
-  resize(byId('sidebarResize'), sidebar, 1, 180, () => Math.min(360,innerWidth-520));
+  resize(byId('sidebarResize'), sidebar, 1, 180, () => Math.min(360,innerWidth-(pane.hidden?300:600)));
 
   for (const root of roots) expanded.add(root);
 
