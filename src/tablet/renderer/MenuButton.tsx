@@ -15,6 +15,7 @@ interface Props {
   name?: string
   items: MenuItem[] | (() => MenuItem[])
   /** The button's own click. With it the button is a SPLIT (a ▾ segment beside it opens the menu); without it a click opens the menu. */
+  onOpen?: () => void
   onMain?: () => void
   /** Lit: on (accent fill) or softly (tint). */
   on?: boolean
@@ -61,7 +62,7 @@ const HOLD_MS = 500
 const dataAttributes = (data: Record<string, string> | undefined) =>
   Object.fromEntries(Object.entries(data ?? {}).map(([key, value]) => [`data-${key}`, value]))
 
-export function MenuButton({ icon, label, title, name, items, onMain, on, tint, disabled, mainOff, chevron, primary, caretTitle, optionsLabel, caretDataBar, caretData, live, className, dataBar, menuBar, data, style, children }: Props) {
+export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on, tint, disabled, mainOff, chevron, primary, caretTitle, optionsLabel, caretDataBar, caretData, live, className, dataBar, menuBar, data, style, children }: Props) {
   const sequence=useRef(0),menuId=useId(),focusTarget=useRef<HTMLElement|null>(null)
   const split = shapeOf(onMain) === "split"
   const button = useRef<HTMLButtonElement>(null)
@@ -85,6 +86,7 @@ export function MenuButton({ icon, label, title, name, items, onMain, on, tint, 
   const list = typeof items === "function" ? items : () => items
   // A split's menu hangs under the WHOLE shape and is right-aligned with it (the pen's way); a menu button's under itself.
   const open = (initialFocus: "first"|"last"|"none" = "none") => {
+    onOpen?.()
     const box = (split ? shape.current : button.current)?.getBoundingClientRect()
     if (!box) return
     focusTarget.current=button.current?.ownerDocument.activeElement as HTMLElement

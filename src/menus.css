@@ -44,3 +44,4 @@
 .float-menu button[aria-expanded=true]:not(:focus):not(:hover){background:var(--bar-fill)}
 .float-menu button[data-active=true]:not(:disabled){background:var(--wm-accent-fill,var(--wm-accent));color:#fff;outline:none}
 .float-menu button[data-active=true] :is(.hint,.float-mark){color:rgba(255,255,255,.85)}
+@container editor (max-width:410px){#toolbar #writingTools{width:64px;min-width:64px;padding:0 5px;gap:3px}#toolbar #writingTools>.wm-icon{display:none}#toolbar #writingTools .bar-label-text,#toolbar #writingTools .menu-chevron{display:inline}}

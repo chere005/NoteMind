@@ -67,9 +67,9 @@ export function CameraHeader(p:CameraProps) {
    <button type="button" className="bar-btn" data-camera-turn="left" aria-label="Rotate camera left" title="Rotate camera left" disabled={!p.pictured} onClick={()=>p.turn(-90)}><Icon name="rotl"/></button>
    <button type="button" className="bar-btn" data-camera-turn="right" aria-label="Rotate camera right" title="Rotate camera right" disabled={!p.pictured} onClick={()=>p.turn(90)}><Icon name="rotate"/></button>
   </>}
-  <MenuButton icon="zoom" name="Camera zoom" title="Drag a box to zoom" on={p.zoomed||p.zooming} disabled={!p.pictured&&!p.zoomed}
+  <MenuButton icon="zoom" name="Camera zoom" title={p.zoomed?`Showing ${p.zoomPercent}% of image · Drag a box to zoom further`:p.zooming?"Drag a box on the image · Escape cancels":"Drag a box to zoom"} on={p.zoomed||p.zooming} disabled={!p.pictured&&!p.zoomed}
     data={{"camera-zoom":"square"}} caretData={{"camera-zoom":"menu"}} caretDataBar="zoom-menu" onMain={p.onZoom}
-    items={[{label:'Zoom to a Box',onClick:p.onZoom,dataBar:'zoom-box'},{label:'Zoom to Page',disabled:!p.pictured,onClick:p.onZoomToPage,dataBar:'zoom-page'},{label:'Show Whole Image',disabled:!p.zoomed,onClick:p.onOriginalSize,dataBar:'zoom-original'}]}/>
+    items={[{header:p.zoomed?`Showing ${p.zoomPercent}% of image`:'Whole image'},{label:'Zoom to a Box',onClick:p.onZoom,dataBar:'zoom-box'},{label:'Zoom to Page',disabled:!p.pictured,onClick:p.onZoomToPage,dataBar:'zoom-page'},{label:'Show Whole Image',disabled:!p.zoomed,onClick:p.onOriginalSize,dataBar:'zoom-original'}]}/>
   <button type="button" className={'bar-btn'+(p.holding?' tint':'')} data-camera="hold" aria-pressed={p.holding} aria-label={p.holding?'Resume camera':'Hold image'} title={p.holdTitle} disabled={p.holdOff} onClick={p.onHold}><Icon name="pause"/></button>
   <button type="button" className={'bar-btn'+(p.findPage?' tint':'')} data-bar="find-page" aria-pressed={p.findPage} aria-label="Find Page" title="Find and straighten the page; drag its corners to adjust" disabled={!p.pictured&&!p.findPage} onClick={p.onFindPage}><Icon name="straighten"/></button>
   {p.keep&&<button type="button" className="bar-btn" data-camera="keep" aria-label="Keep Page" title={p.keep.off??'Keep this camera image as a new page'} disabled={p.keep.off!==null} onClick={p.keep.onKeep}><Icon name="keeppage"/></button>}
