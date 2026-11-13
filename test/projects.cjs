@@ -6,7 +6,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  const js=(fn,...args)=>w.webContents.executeJavaScript('('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+')');
  const check=(ok,name)=>{if(!ok)throw Error(name);report.checks.push(name);};
  const defaultFile=path.join(root,'Default Workspace.wmpr'),read=file=>fs.existsSync(file)?fs.readFileSync(file,'utf8'):'';
- const menuLabels=async()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.textContent.replace(/\s*▸\s*$/,'').trim()));
+ const menuLabels=async()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.getAttribute('data-menu-label')||b.textContent.replace(/\s*[▸›]\s*$/,'').trim()));
  const closeMenu=async()=>{await js(()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(60);};
  const rowNames=()=>js(()=>[...document.querySelectorAll('#tree .tree-row,#tree [data-path],#tree button')].map(x=>x.textContent.trim()));
  try{

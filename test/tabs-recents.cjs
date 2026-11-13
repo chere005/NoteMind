@@ -7,7 +7,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  const check=(ok,name)=>{if(!ok)throw Error(name);report.checks.push(name);};
  const topMenu=label=>Menu.getApplicationMenu().items.find(i=>i.label===label);
  const recent=label=>topMenu(label).submenu.items.find(i=>i.label==='Open Recent').submenu.items;
- const menuLabels=()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.textContent.replace(/\s*▸\s*$/,'').trim()));
+ const menuLabels=()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.getAttribute('data-menu-label')||b.textContent.replace(/\s*[▸›]\s*$/,'').trim()));
  try{
   await pause(1100);
   check(recent('File')[0].label==='No Recent Items'&&recent('Projects')[0].label==='No Recent Items','Open Recent starts empty in File and Projects');

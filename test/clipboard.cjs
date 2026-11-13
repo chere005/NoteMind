@@ -6,7 +6,7 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  const js=(fn,...args)=>w.webContents.executeJavaScript('('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+')');
  const check=(ok,name)=>{if(!ok)throw Error(name);report.checks.push(name);};
  const set=async(text,visualMode)=>{await js((text,visualMode)=>{addTab({path:null,text,assets:{},meta:{}});if(visual!==visualMode)switchMode(visualMode);const target=visualMode?rich:source;target.focus();if(visualMode){const r=document.createRange();r.selectNodeContents(rich);r.collapse(false);getSelection().removeAllRanges();getSelection().addRange(r);}else source.setSelectionRange(source.value.length,source.value.length);},text,visualMode);await pause(60);};
- const menuLabels=()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.textContent.replace(/\s*▸\s*$/,'').trim()));
+ const menuLabels=()=>js(()=>[...document.querySelectorAll('[role=menu] button,[role=menuitem]')].map(b=>b.getAttribute('data-menu-label')||b.textContent.replace(/\s*[▸›]\s*$/,'').trim()));
  try{
   await pause(1000);
   await set('',true);
