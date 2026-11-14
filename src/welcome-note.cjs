@@ -55,7 +55,7 @@ function document(){
   '## Try an editable drawing','',
   '![Editable pen strokes]('+ink+')','',
   'Choose **Edit in Wacom** on this drawing to open its real pen strokes in the capture pane. Try Pen, Eraser, or Select. Select ink and drag it; use Undo to take a change back. **Save to Original** updates this drawing.','',
-  'Paper and orientation have their own controls. The screen icon switches **In this window** and **Wacom screen** when a pen display is available. Edited pictures fill the available area at their original aspect ratio; saved drawings retain their page shape.','',
+  'Paper and orientation have their own controls. The screen icon switches **In this window** and **Wacom screen** when a pen display is available. The duplicate pane in the main window works with the mouse: draw, select, move, resize, and erase there while the pen stays near the Wacom. Edited pictures fill the available area at their original aspect ratio; saved drawings retain their page shape.','',
   '## Keep a reference beside your writing','',
   '[Example reference — two-page PDF]('+pdf+')','',
   'Click the attached PDF to open it beside this page. Try page navigation, zoom, or search. Select a region to bring text or a picture into your notes. The original attachment stays inside this Notepad.','',

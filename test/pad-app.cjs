@@ -21,7 +21,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(await child.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('Display menu Escape did not close the popup');
  if(await w.webContents.executeJavaScript(`window.__menuEscape`))throw Error('Display menu Escape leaked into the editor');
  let mirrored=false;for(let i=0;i<50;i++){await wait(100);mirrored=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-mirror img')`);if(mirrored)break;}if(!mirrored)throw Error('Main window did not receive the display mirror');
- await child.webContents.executeJavaScript(`Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});window.__mirrorEvents=[];window.__mirrorClicks=0;const probe=document.createElement('button');probe.id='mirror-probe';probe.style.cssText='position:fixed;left:45%;top:45%;width:10%;height:10%;z-index:99999';probe.onclick=()=>window.__mirrorClicks++;document.body.append(probe);for(const type of ['pointerdown','pointerup'])document.addEventListener(type,e=>{if(e.pointerId===4243)window.__mirrorEvents.push(e.type)},true);void 0`);
+ await child.webContents.executeJavaScript(`window.__mirrorEvents=[];window.__mirrorClicks=0;const probe=document.createElement('button');probe.id='mirror-probe';probe.style.cssText='position:fixed;left:45%;top:45%;width:10%;height:10%;z-index:99999';probe.onclick=()=>window.__mirrorClicks++;document.body.append(probe);for(const type of ['pointerdown','pointerup'])document.addEventListener(type,e=>{if(e.pointerId===4243)window.__mirrorEvents.push(e.type)},true);void 0`);
  const mirrorClick=()=>w.webContents.executeJavaScript(`(()=>{const image=document.querySelector('.pad-mirror img'),r=image.getBoundingClientRect();image.setPointerCapture=()=>{};for(const type of ['pointerdown','pointerup'])image.dispatchEvent(new PointerEvent(type,{pointerType:'mouse',pointerId:9,button:0,buttons:type==='pointerdown'?1:0,clientX:r.left+r.width/2,clientY:r.top+r.height/2,bubbles:true,cancelable:true}))})();void 0`);
  await mirrorClick();await wait(100);if(await child.webContents.executeJavaScript('window.__mirrorEvents.join()')!=='pointerdown,pointerup')throw Error('Mirror click did not reach the display');if(await child.webContents.executeJavaScript('window.__mirrorClicks')!==1)throw Error('Mirror click did not activate the display control');
  const capture=await w.webContents.executeJavaScript(`window.notemind.captureDocument({x:0,y:0,width:20,height:20},true)`);if(!Buffer.from(capture,'base64').subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('Display capture was not a PNG');
@@ -34,6 +34,29 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  w.webContents.send('pad:pen-status',{state:'active',reason:null});w.webContents.send('pad:pen-samples',[sample(samplePoints[0],true,1),sample(samplePoints[1],true,2),sample(samplePoints[1],false,3)]);await wait(300);
  const afterNative=await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=surface] canvas.ink').toDataURL()`);if(afterNative===after)throw Error('Native display samples did not draw');
  w.webContents.send('pad:pen-samples',[sample(samplePoints[0],true,4),sample(samplePoints[0],false,5)]);await wait(40);await mirrorClick();await wait(100);if(await child.webContents.executeJavaScript('window.__mirrorEvents.length')!==4)throw Error('Mirror input was blocked while native pen capture was active');if(await child.webContents.executeJavaScript('window.__mirrorClicks')!==2)throw Error('Mirror control was blocked during pen capture');await child.webContents.executeJavaScript(`document.getElementById('mirror-probe').remove();void 0`);
+ const mirrorPoint=async(selector,x=.5,y=.5)=>{
+  const point=await child.webContents.executeJavaScript(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:(r.left+r.width*${x})/innerWidth,y:(r.top+r.height*${y})/innerHeight}})()`);
+  return w.webContents.executeJavaScript(`(()=>{const r=document.querySelector('.pad-mirror img').getBoundingClientRect();return {x:Math.round(r.left+r.width*${point.x}),y:Math.round(r.top+r.height*${point.y})}})()`);
+ };
+ let hoverTime=10;
+ const mouse=async(type,point,down=false)=>{w.webContents.sendInputEvent({type,...point,button:'left',clickCount:1,modifiers:down?['leftButtonDown']:[]});await wait(30);w.webContents.send('pad:pen-samples',[sample(samplePoints[0],false,hoverTime++)]);await wait(30)};
+ const mouseClick=async selector=>{const point=await mirrorPoint(selector);await mouse('mouseMove',point);await mouse('mouseDown',point,true);await mouse('mouseUp',point);await wait(60)};
+ const mouseDrag=async(from,to)=>{await mouse('mouseMove',from);await mouse('mouseDown',from,true);await mouse('mouseMove',to,true);await mouse('mouseUp',to);await wait(650)};
+ const strokes=()=>JSON.parse(fs.readFileSync(path.join(root,'sheets.json')))[0].strokes;
+ await mouseClick('[data-tablet=clear]');await mouseClick('[data-bar=pen]');
+ await mouseDrag(await mirrorPoint('[data-tablet=surface]',.2,.3),await mirrorPoint('[data-tablet=surface]',.3,.4));
+ if(strokes().length!==1||strokes()[0].points.length<2||Math.abs(strokes()[0].points[0].x-.2)>.01||Math.abs(strokes()[0].points[0].y-.3)>.01)throw Error('Real mouse drawing in the sidebar mirror did not reach the pad at the same position');
+ await mouseClick('[data-bar=select]');
+ await mouseDrag(await mirrorPoint('[data-tablet=surface]',.1,.2),await mirrorPoint('[data-tablet=surface]',.4,.5));
+ if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-tablet=box]')`))throw Error('The sidebar mouse could not select drawing content');
+ await mouseDrag(await mirrorPoint('[data-tablet=surface]',.25,.35),await mirrorPoint('[data-tablet=surface]',.4,.35));
+ if(Math.abs(strokes()[0].points[0].x-.35)>.015||Math.abs(strokes()[0].points[0].y-.3)>.015)throw Error('Dragging a sidebar selection did not move its ink');
+ const selectedWidth=await child.webContents.executeJavaScript(`parseFloat(document.querySelector('[data-tablet=box]').style.width)`);
+ await mouseDrag(await mirrorPoint('[data-tablet=box] [data-handle=se]'),await mirrorPoint('[data-tablet=surface]',.7,.65));
+ if(await child.webContents.executeJavaScript(`parseFloat(document.querySelector('[data-tablet=box]').style.width)`)<=selectedWidth+10)throw Error('The sidebar mouse could not resize selected ink');
+ await mouseClick('[data-bar=eraser]');await mouseDrag(await mirrorPoint('[data-tablet=surface]',.4,.35),await mirrorPoint('[data-tablet=surface]',.55,.5));
+ if(strokes().length)throw Error('The sidebar mouse could not erase the selected drawing');
+ await mouseClick('[data-tablet=undo]');await wait(650);if(strokes().length!==1)throw Error('The mirrored Undo control did not restore the drawing');
  w.webContents.send('pad:pen-status',{state:'needs-input-monitoring',reason:'Enable Input Monitoring'});await wait(100);if(!await w.webContents.executeJavaScript(`document.querySelector('.pad-status')?.textContent.includes('Input Monitoring')`))throw Error('Capture status was not shown');
 
  await child.webContents.executeJavaScript(`(()=>{const button=document.querySelector('button[data-drawing-location=wacom]');if(button?.getAttribute('aria-pressed')!=='true')throw Error('The Wacom toggle is not pressed');button.click()})();void 0`);for(let i=0;i<30;i++){await wait(100);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
@@ -55,6 +78,6 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await w.webContents.executeJavaScript(`window.__keyErrors=[];window.addEventListener('error',e=>window.__keyErrors.push(e.message));void 0`);
  await display.webContents.executeJavaScript(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true,cancelable:true}));void 0`);
  if((await w.webContents.executeJavaScript('window.__keyErrors')).length)throw Error('A drawing key forwarded from the display threw');
- console.log('Pen display: stale ownership recovers; icon toggle works from either window; edited pictures fill the display at their original aspect');w.destroy();electron.app.exit(0);
+ console.log('Pen display: stale ownership recovers; sidebar mouse draws, selects, moves, resizes, erases and undoes during pen hover; both toggle locations and picture fitting pass');w.destroy();electron.app.exit(0);
  }catch(e){console.error(e);w.destroy();electron.app.exit(1);}finally{fs.rmSync(root,{recursive:true,force:true});}});});
 require(path.join(process.env.NOTEMIND_TEST_APP||path.resolve(__dirname,'../src'),'main.cjs'));setTimeout(()=>electron.app.exit(1),30000).unref();

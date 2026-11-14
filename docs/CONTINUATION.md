@@ -1,6 +1,7 @@
 # Continuation
 
-- NoteMind 0.26.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- NoteMind 0.27.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- Mouse gestures in the sidebar mirror keep their initiating pointer, so native pen hover and lift cannot move or end them. The same ownership rule protects tablet strokes, camera ink, camera selections and document selections. Hidden checks exercise real mirror mouse drawing, selecting, moving, resizing, erasing and Undo with interleaved native pen hover.
 - The Wacom switch recovers ownership left by an exited process or a previous boot. Edited pictures fit their own aspect ratio, and saved drawings retain the full supported 1:10–10:1 range. Hidden pad checks cover both toggle locations, stale ownership, full-size editing and forwarded drawing keys.
 - Explore Features and Help → Welcome to NoteMind open an editable guide with a live checklist, table, drawing and two-page PDF. It lives in Documents/NoteMind and links into Default Workspace; only pristine generated guides refresh across releases. `--tour` opens it after restoring the session.
 - Code blocks highlight the selected 24 language groups, including common aliases and JSX/TSX. Their language menu persists the Markdown fence; live colour updates keep the selection and skip IME composition. Cached explicit grammars avoid detection; code over 64K characters stays plain to bound synchronous work.

@@ -93,8 +93,8 @@ interface Props {
 const ERASE_RADIUS = 8
 
 type Gesture =
-  | { kind: "draw"; stroke: InkStroke; drawn: number; page: TabletPage }
-  | { kind: "erase"; marked: boolean; page: TabletPage }
+  | { kind: "draw"; pointerId: number; stroke: InkStroke; drawn: number; page: TabletPage }
+  | { kind: "erase"; pointerId: number; marked: boolean; page: TabletPage }
 
 export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   { targetKey, turns, page, view, on, colour, width, onEdited, onDrawing, zooming, onPenSelect, onPenCorner }, handle,
@@ -235,6 +235,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     }
     const pen = event.pointerType === "pen"
     if (pen) touching.current = inContact(event.nativeEvent)
+    if (gesture.current && gesture.current.pointerId !== event.pointerId) return
     // ZOOM ARMED: the pen drags the zoom box as it did before the pane had ink - nothing here is this layer's, no press is a stroke.
     if (latest.current.zooming) return
     const action = pressAction(event.nativeEvent, sheetPressSettings())
@@ -255,7 +256,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     if (action === "draw" && !onPicture(point, latest.current.view)) return
     try { canvas.current?.setPointerCapture(event.pointerId) } catch { /* the pointer is gone */ }
     if (action === "erase") {
-      const g: Gesture = { kind: "erase", marked: false, page: p }
+      const g: Gesture = { kind: "erase", pointerId: event.pointerId, marked: false, page: p }
       gesture.current = g
       latest.current.onDrawing(true)
       eraseAt(g, point)
@@ -263,7 +264,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     }
     const pressure = event.pressure > 0 ? event.pressure : 0.5
     gesture.current = {
-      kind: "draw", drawn: 0, page: p,
+      kind: "draw", pointerId: event.pointerId, drawn: 0, page: p,
       stroke: {
         colorHex: latest.current.colour,
         width: inkWidth(latest.current.width, latest.current.view),
@@ -278,9 +279,10 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   const move = (event: React.PointerEvent) => {
     lastAt.current = { x: event.clientX, y: event.clientY }
     const g = gesture.current
+    const was = touching.current
+    if (event.pointerType === "pen") touching.current = inContact(event.nativeEvent)
+    if (g && g.pointerId !== event.pointerId) return
     if (event.pointerType === "pen") {
-      const was = touching.current
-      touching.current = inContact(event.nativeEvent)
       // A side button held in the air, then the pen touches: its hold begins here (this touch is a pointermove).
       if (!g && holdBegins(was, event.nativeEvent)) { down(event); return }
       if (g && penLifted(event.nativeEvent)) { up(event); return }
@@ -298,9 +300,9 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   }
 
   const up = (event: React.PointerEvent) => {
-    touching.current = false
+    if (event.pointerType === "pen") touching.current = false
     const g = gesture.current
-    if (!g) return
+    if (!g || g.pointerId !== event.pointerId) return
     event.stopPropagation()
     try { if (canvas.current?.hasPointerCapture(event.pointerId)) canvas.current.releasePointerCapture(event.pointerId) } catch { /* gone */ }
     finish()

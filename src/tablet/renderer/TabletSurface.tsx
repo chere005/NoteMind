@@ -66,7 +66,7 @@ const MIN_BOX_PX = 8
 const DOUBLE_MS = 450
 const HANDLES: BoxHandle[] = ["nw", "ne", "sw", "se"]
 
-type Gesture =
+type Gesture = { pointerId: number } & (
   // A stroke and an erase belong to the sheet they began on (a key can open another tab while the pen is down).
   // `out`: on a sheet bound to a drawing region, the pen left the region: the stroke was made up to its edge, and a new one
   // begins where it comes back in (nothing is drawn outside the region, nothing is pinned to its border).
@@ -77,6 +77,7 @@ type Gesture =
     startPx: Point; start: Point; origin: Rect | null; handle: BoxHandle | null; dragged: boolean; page: TabletPage; strokes: InkStroke[]
     next?: Rect; preview?: { width: number; height: number; paper: string; fixed: HTMLCanvasElement; ink: HTMLCanvasElement }
   }
+)
 
 const CURSORS: Record<Exclude<BoxHit, null>, string> = {
   nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", inside: "move",
@@ -349,6 +350,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
     const pen = event.pointerType === "pen"
     if (pen) touching.current = inContact(event)
+    if (gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0) return
     event.preventDefault()
     let action = pressAction(event, sheetPressSettings())
@@ -362,20 +364,20 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // A bound sheet: the shaded margin round the region takes no stroke.
     if (action === "draw" && !inside) return
     if (action === "erase") {
-      const g: Gesture = { kind: "erase", marked: false, page: latest.current.page }
+      const g: Gesture = { kind: "erase", pointerId: event.pointerId, marked: false, page: latest.current.page }
       gesture.current = g
       eraseAt(g, latest.current.regionBox ? raw : point)
     } else if (action === "select") {
       const current = latest.current.box
       const hit = current ? hitBox(current, point, size.current) : null
-      const base = { kind: "box" as const, startPx: px, start: point, dragged: false, page: latest.current.page, strokes: latest.current.page.strokes }
+      const base = { kind: "box" as const, pointerId: event.pointerId, startPx: px, start: point, dragged: false, page: latest.current.page, strokes: latest.current.page.strokes }
       if (current && hit === "inside") gesture.current = { ...base, mode: "move", origin: current, handle: null }
       else if (current && hit && hit !== "inside") gesture.current = { ...base, mode: "resize", origin: current, handle: hit }
       else gesture.current = { ...base, mode: "new", origin: null, handle: null }
     } else {
       const pressure = event.pressure > 0 ? event.pressure : 0.5
       gesture.current = {
-        kind: "draw", drawn: 0, pen, page: latest.current.page,
+        kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,
         stroke: {
           colorHex: latest.current.colour,
           width: latest.current.width * SHEET_REF / Math.max(1, size.current.width),
@@ -389,9 +391,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   const move = (event: PointerEvent) => {
     const g = gesture.current
+    const was = touching.current
+    if (event.pointerType === "pen") touching.current = inContact(event)
+    // The pen may keep hovering while the mouse works through the sidebar mirror.
+    // Only the pointer that began a gesture may move or finish it.
+    if (g && g.pointerId !== event.pointerId) return
     if (event.pointerType === "pen") {
-      const was = touching.current
-      touching.current = inContact(event)
       // A side button held in the air, then the pen touches: its hold begins here (this touch is a pointermove).
       if (!g && holdBegins(was, event)) { down(event); return }
       // A pen gesture lasts while the pen touches: lifting it with a side button still held ends it.
@@ -451,8 +456,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const up = (event: PointerEvent) => {
-    if (event.type === "pointerup" || event.type === "pointercancel") touching.current = false
+    if (event.pointerType === "pen" && (event.type === "pointerup" || event.type === "pointercancel")) touching.current = false
     const g = gesture.current
+    if (g && g.pointerId !== event.pointerId) return
     // The last samples are painted now, not left to a frame that will find no stroke.
     if (g?.kind === "draw") paint()
     gesture.current = null
