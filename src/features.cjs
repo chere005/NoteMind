@@ -7,7 +7,7 @@ module.exports = function installFeatures(window, projectService) {
  const win = () => window();
  ipcMain.on('window-close',()=>win()?.close());
  const {home,root,registry,recents}=projectService;
- const preferenceKeys=['orientation','pen','view'];
+ const preferenceKeys=['orientation','pen','view','padChromeOrientation'];
  let folderWatches=[],folderKey='',folderTimer;
  ipcMain.handle('watch-folders',(_,folders)=>{if(!Array.isArray(folders)||folders.some(f=>typeof f!=='string'))throw Error('Invalid folders');const key=folders.join('\n');if(key===folderKey)return;folderKey=key;folderWatches.forEach(w=>w.close());folderWatches=[];for(const folder of folders){try{const watcher=require('node:fs').watch(folder,{recursive:true},()=>{clearTimeout(folderTimer);folderTimer=setTimeout(()=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('folders-changed');},150);});watcher.on('error',()=>{});folderWatches.push(watcher);}catch{}}});
  app.on('will-quit',()=>{folderWatches.forEach(w=>w.close());clearTimeout(folderTimer);});

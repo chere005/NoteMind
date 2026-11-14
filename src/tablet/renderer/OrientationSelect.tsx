@@ -9,19 +9,23 @@
 import { ORIENTATIONS, parseOrientation } from "../shared/orientation"
 import { Icon } from "./icons"
 import { MenuButton } from "./MenuButton"
-import { setOrientation, useOrientation } from "./orientation"
+import { setOrientation, useOrientation, setPadChromeOrientation, usePadChromeOrientation } from "./orientation"
 
 const TITLE = "Tablet orientation: how the tablet is turned on your desk, as in Wacom Tablet Properties. The sheet takes this shape, and with Pen capture the pen is turned to match."
 
 export function OrientationMenu() {
   const value = useOrientation()
+  const rotateBars = usePadChromeOrientation()
   const now = ORIENTATIONS.find((one) => one.value === value)?.label ?? ""
   return (
-    <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`Tablet orientation: ${now}`}
-                items={ORIENTATIONS.map((one) => ({
+    <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`Tablet orientation: ${now}`} live
+                items={[...ORIENTATIONS.map((one) => ({
                   label: one.label, checked: one.value === value, dataBar: `orientation-${one.value}`,
                   onClick: () => setOrientation(one.value),
-                }))}>
+                })), "-", {
+                  label: "Rotate menu bars with page", checked: rotateBars, keepOpen: true,
+                  dataBar: "orientation-rotate-bars", onClick: () => setPadChromeOrientation(!rotateBars),
+                }]}>
       <Icon name="orientation" />
     </MenuButton>
   )

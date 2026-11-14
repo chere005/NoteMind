@@ -27,6 +27,7 @@ import { backdropImage, backdropRect, paintBackdrop } from "./tabletBackdrop"
 import { doubleClickBox } from "./doubleClickBox"
 import { colourOfPaper, inkOn, paintPaper, usePaper } from "./tabletPaper"
 import { BoxActions, type BoxButtons } from "./BoxActions"
+import { elementPoint, elementSize } from "./padCoordinates"
 import graphics from "../../graphics-pane.js"
 import "./tablet.css"
 
@@ -182,7 +183,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (!element) return
     const view = element.ownerDocument.defaultView ?? window
     const measure = () => {
-      const rect = element.getBoundingClientRect()
+      const rect = elementSize(element)
       // The sheet has the screen's shape; the pane it sits in need not, so it is
       // fitted inside it (letterboxed) and never stretched.
       const box = fitRect({ width: rect.width, height: rect.height }, latest.current.page.aspect)
@@ -195,7 +196,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // The sheet's shape follows the tablet's orientation.
     const unlisten = latest.current.page.onChange(() => {
       if (committingStroke.current) return
-      const r = element.getBoundingClientRect()
+      const r = elementSize(element)
       const next = fitRect({ width: r.width, height: r.height }, latest.current.page.aspect)
       if (Math.abs(next.width - size.current.width) > 0.5 || Math.abs(next.height - size.current.height) > 0.5) measure()
       else schedule(true)
@@ -317,8 +318,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   /** `unit`: on the sheet (on a bound sheet, at the region's edge); `raw`: where it really is; `inside`: in the region (always, on a plain sheet). */
   const at = (event: { clientX: number; clientY: number }): { px: Point; unit: Point; raw: Point; inside: boolean } => {
-    const rect = wrap.current!.getBoundingClientRect()
-    const x = event.clientX - rect.left, y = event.clientY - rect.top
+    const rect = elementPoint(wrap.current!, event)
+    const x = rect.x, y = rect.y
     // A stroke that strays past the edge (the pen is captured) stops at the sheet's edge.
     const clamp = (value: number, from = 0, to = 1) => Math.min(to, Math.max(from, value))
     // On a sheet bound to a region, at the region's edge.

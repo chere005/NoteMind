@@ -4,6 +4,7 @@ import { chordGlyphs } from "../shared/chord"
 import { hostPlatform } from "./hostPlatform"
 import { Icon, type IconName } from "./icons"
 import { menuLeft } from "./splitButton"
+import { menuRect, menuRoot, menuSize } from "./padCoordinates"
 
 export type MenuItem =
   | "-"
@@ -76,7 +77,7 @@ export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,lab
     const at=controls.indexOf(back.current as HTMLElement),next=controls[at+(event.shiftKey?-1:1)]
     onClose("dismiss");window.setTimeout(()=>next?.focus({preventScroll:true}),0)
   }
-  return createPortal(<MenuLevel items={items} doc={doc} token={token} id={id||token} dataBar={dataBar} label={label} point={{x,y,above,right,leftX}} initialFocus={initialFocus} onClose={reason=>dismiss(true,reason)} onTab={tab}/>,doc.body)
+  return createPortal(<MenuLevel items={items} doc={doc} token={token} id={id||token} dataBar={dataBar} label={label} point={{x,y,above,right,leftX}} initialFocus={initialFocus} onClose={reason=>dismiss(true,reason)} onTab={tab}/>,menuRoot(doc))
 }
 
 interface LevelProps {
@@ -87,18 +88,19 @@ interface LevelProps {
 }
 function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="none",onClose,onTab,onBack}:LevelProps) {
   const box=useRef<HTMLDivElement>(null),[at,setAt]=useState({x:point?.x||0,y:point?.y||0}),[open,setOpen]=useState<{index:number;anchor:HTMLElement;keyboard:boolean}|null>(null),typed=useRef({text:'',time:0}),[activeIndex,setActiveIndex]=useState<number|null>(null)
+  const viewport=menuSize(doc)
   const buttons=()=>[...box.current.querySelectorAll<HTMLElement>(':scope > .float-row > button:not(:disabled),:scope > .float-custom button:not(:disabled),:scope > .float-custom select:not(:disabled),:scope > .float-custom input:not(:disabled)')]
   const focus=(element:HTMLElement)=>{if(!element)return;setActiveIndex(element.hasAttribute('data-menu-index')?Number(element.getAttribute('data-menu-index')):null);element.focus()}
   useLayoutEffect(()=>{
-    const element=box.current,win=doc.defaultView!,width=element.offsetWidth,height=element.offsetHeight
+    const element=box.current,width=element.offsetWidth,height=element.offsetHeight
     let left,top
-    if(anchor){const r=anchor.getBoundingClientRect();left=r.right+2+width<=win.innerWidth-4?r.right+2:Math.max(4,r.left-width-2);top=Math.max(4,Math.min(r.top-5,win.innerHeight-height-4))}
-    else{left=menuLeft(width,point.x,!!point.right,point.leftX,win.innerWidth);top=point.above?Math.max(4,point.y-height):Math.max(4,Math.min(point.y,win.innerHeight-height-4))}
+    if(anchor){const r=menuRect(anchor);left=r.right+2+width<=viewport.width-4?r.right+2:Math.max(4,r.left-width-2);top=Math.max(4,Math.min(r.top-5,viewport.height-height-4))}
+    else{left=menuLeft(width,point.x,!!point.right,point.leftX,viewport.width);top=point.above?Math.max(4,point.y-height):Math.max(4,Math.min(point.y,viewport.height-height-4))}
     setAt({x:left,y:top})
-  },[items,anchor,point?.x,point?.y])
+  },[items,anchor,point?.x,point?.y,viewport.width,viewport.height])
   useLayoutEffect(()=>{if(anchor&&initialFocus==="none")return;const list=buttons();focus(initialFocus==='first'?list[0]:initialFocus==='last'?list.at(-1):box.current)},[])
   const ticks=items.some(item=>typeof item==='object'&&'label' in item&&item.checked!==undefined)
-  return <div ref={box} className={'float-menu'+(anchor?' sub':'')} role="menu" aria-label={label} id={id} data-bar={dataBar} data-menu-owner={token} tabIndex={-1} style={{left:at.x,top:at.y}} onScroll={()=>setOpen(null)} onContextMenu={event=>{event.preventDefault();event.stopPropagation()}}
+  return <div ref={box} className={'float-menu'+(anchor?' sub':'')} role="menu" aria-label={label} id={id} data-bar={dataBar} data-menu-owner={token} tabIndex={-1} style={{left:at.x,top:at.y,maxWidth:Math.max(0,Math.min(360,viewport.width-8)),maxHeight:Math.max(0,viewport.height-8)}} onScroll={()=>setOpen(null)} onContextMenu={event=>{event.preventDefault();event.stopPropagation()}}
     onKeyDown={event=>{
       if(event.isComposing)return
       const list=buttons(),index=list.indexOf(doc.activeElement as HTMLElement)
@@ -123,7 +125,7 @@ function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="
           <span className="float-label" style={item.labelStyle}>{item.label}</span>
           {item.toggle!==undefined?<span className={'float-switch'+(item.toggle?' on':'')} aria-hidden="true"/>:nested?<span className="hint" aria-hidden="true">›</span>:item.hint?<span className="hint">{chordGlyphs(item.hint,hostPlatform())}</span>:null}
         </button>
-        {nested&&expanded&&createPortal(<MenuLevel key={index} items={nested} doc={doc} token={token} id={childId} label={item.label} anchor={open.anchor} initialFocus={open.keyboard?'first':'none'} onClose={onClose} onTab={onTab} onBack={()=>{const parent=open.anchor;setOpen(null);parent.focus({preventScroll:true})}}/>,doc.body)}
+        {nested&&expanded&&createPortal(<MenuLevel key={index} items={nested} doc={doc} token={token} id={childId} label={item.label} anchor={open.anchor} initialFocus={open.keyboard?'first':'none'} onClose={onClose} onTab={onTab} onBack={()=>{const parent=open.anchor;setOpen(null);parent.focus({preventScroll:true})}}/>,menuRoot(doc))}
       </div>
     })}
   </div>

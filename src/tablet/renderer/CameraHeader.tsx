@@ -7,6 +7,9 @@ import { OrientationMenu } from "./OrientationSelect"
 import { BringInMenu } from "./BringInMenu"
 import type { BringTo, CaptureMode } from "./cameraSettings"
 import type { HeaderFit } from "./cameraHeaderFit"
+import {headerFit} from './cameraHeaderFit'
+import {useLayoutEffect,useState} from 'react'
+import {elementSize} from './padCoordinates'
 
 
 export const TAKES: { mode: CaptureMode; label: string; icon: IconName; title: string }[] = [
@@ -59,9 +62,12 @@ function EditorButton({onClick}:{onClick?:()=>void}) {
  return <button type="button" className="bar-btn" data-pane="notes" aria-label="Show editor" title="Show the editor beside the capture pane" onClick={onClick}><Icon name="sidebar"/></button>
 }
 export function CameraHeader(p:CameraProps) {
- if(p.empty)return <div className="bar-row camera-bar camera-head empty" role="toolbar" aria-label="Camera" data-camera-head="camera">{!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}<span className="camera-empty-label">Choose a camera from the source menu</span></div>
+ const [element,setElement]=useState<HTMLDivElement|null>(null),[width,setWidth]=useState(0)
+ useLayoutEffect(()=>{if(!element)return;const measure=()=>setWidth(elementSize(element).width);const observer=new ResizeObserver(measure);observer.observe(element);measure();return()=>observer.disconnect()},[element])
+ if(width)p={...p,fit:headerFit({width,zoomed:p.zoomed,backToNotes:!p.showEditor})}
+ if(p.empty)return <div ref={setElement} className="bar-row camera-bar camera-head empty" role="toolbar" aria-label="Camera" data-camera-head="camera">{!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}<span className="camera-empty-label">Choose a camera from the source menu</span></div>
  const current=TAKES.find(item=>item.mode===p.mode)||TAKES[0]
- return <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Camera" data-camera-head="camera">
+ return <div ref={setElement} className="bar-row camera-bar camera-head" role="toolbar" aria-label="Camera" data-camera-head="camera">
   {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
   {p.fit.turns&&<>
    <button type="button" className="bar-btn" data-camera-turn="left" aria-label="Rotate camera left" title="Rotate camera left" disabled={!p.pictured} onClick={()=>p.turn(-90)}><Icon name="rotl"/></button>

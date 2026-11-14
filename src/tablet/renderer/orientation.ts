@@ -65,6 +65,53 @@ export function setTabletAspect(aspect: number | null): void {
 export const useOrientation = (): Orientation =>
   useSyncExternalStore(subscribeOrientation, orientation)
 
+/** Keep the Wacom's menu bars with the page when the display is physically turned. */
+export const PAD_CHROME_ORIENTATION_KEY = "notemind.padChromeOrientation"
+function loadPadChromeOrientation(): boolean {
+  try { return localStorage.getItem(PAD_CHROME_ORIENTATION_KEY) === "true" } catch { return false }
+}
+let rotatePadChrome = loadPadChromeOrientation()
+let padChromeVersion = 0
+const padChromeListeners = new Set<() => void>()
+export const padChromeOrientation = (): boolean => rotatePadChrome
+function publishPadChromeOrientation(next: boolean): void {
+  padChromeVersion++
+  if (next === rotatePadChrome) return
+  rotatePadChrome = next
+  padChromeListeners.forEach(listener => listener())
+}
+export function setPadChromeOrientation(next: boolean): void {
+  const value = next === true
+  try { localStorage.setItem(PAD_CHROME_ORIENTATION_KEY, String(value)) } catch { /* the choice lasts the session */ }
+  publishPadChromeOrientation(value)
+  window.notemind.preferenceSet('padChromeOrientation', value).catch(() => {})
+}
+export const subscribePadChromeOrientation = (listener: () => void): (() => void) => {
+  padChromeListeners.add(listener)
+  return () => { padChromeListeners.delete(listener) }
+}
+export const usePadChromeOrientation = (): boolean =>
+  useSyncExternalStore(subscribePadChromeOrientation, padChromeOrientation)
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", event => {
+    if (event.key !== PAD_CHROME_ORIENTATION_KEY && event.key !== null) return
+    try { if (event.storageArea !== null && event.storageArea !== localStorage) return } catch { return }
+    publishPadChromeOrientation(event.key === null ? loadPadChromeOrientation() : event.newValue === "true")
+  })
+}
+
 const receiveOrientation=value=>{if(value==null)return;const next=parseOrientation(value);localStorage.setItem(ORIENTATION_KEY,String(next));publish(next)};
 window.notemind.preferenceGet('orientation').then(receiveOrientation).catch(()=>{});
 window.notemind.onPreference(({key,value})=>{if(key==='orientation')receiveOrientation(value)});
+
+const receivePadChromeOrientation = value => {
+  if (typeof value !== "boolean") return
+  try { localStorage.setItem(PAD_CHROME_ORIENTATION_KEY, String(value)) } catch { /* session choice still applies */ }
+  publishPadChromeOrientation(value)
+}
+const initialPadChromeVersion = padChromeVersion
+window.notemind.preferenceGet('padChromeOrientation').then(value => {
+  if (padChromeVersion === initialPadChromeVersion) receivePadChromeOrientation(value)
+}).catch(() => {})
+window.notemind.onPreference(({key,value}) => { if (key === 'padChromeOrientation') receivePadChromeOrientation(value) })

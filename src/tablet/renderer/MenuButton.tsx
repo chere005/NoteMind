@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import { FloatingMenu, type MenuItem } from "./FloatingMenu"
 import { Icon, type IconName } from "./icons"
 import { caretBarFor, optionsName, shapeOf } from "./splitButton"
+import { menuRect } from "./padCoordinates"
 
 interface Props {
   icon?: IconName
@@ -79,8 +80,9 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
   // A split's menu hangs under the WHOLE shape and is right-aligned with it (the pen's way); a menu button's under itself.
   const open = (initialFocus: "first"|"last"|"none" = "none") => {
     onOpen?.()
-    const box = (split ? shape.current : button.current)?.getBoundingClientRect()
-    if (!box) return
+    const element = split ? shape.current : button.current
+    if (!element) return
+    const box = menuRect(element)
     isOpen.current=true
     focusTarget.current=button.current?.ownerDocument.activeElement as HTMLElement
     setAt({ serial:++sequence.current,initialFocus,x: split ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })

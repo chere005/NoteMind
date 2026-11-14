@@ -11,7 +11,8 @@
  */
 
 import { useEffect, useSyncExternalStore } from "react"
-import { buttonsOf, slotOf, type HoldAction, type Slot } from "./penButtons"
+import { nativeLive, nativeSideMask, onNativeButtons } from "./nativeButtons"
+import { buttonsOf, pressButtons, slotOf, type HoldAction, type Slot } from "./penButtons"
 import { penSettings } from "./penSettings"
 
 export interface PenLive {
@@ -50,10 +51,12 @@ const notify = () => { shown = live; shownPressure = live; listeners.forEach((li
 
 function sample(event: PointerEvent): void {
   if (event.pointerType !== "pen") return
-  const tip = (event.buttons & 1) !== 0
-  const lower = (event.buttons & 2) !== 0
-  const upper = (event.buttons & 4) !== 0
-  const eraser = (event.buttons & 32) !== 0 || event.button === 5 && event.type === "pointerdown"
+  // (a pen display's own buttons laid over the pointer's: penButtons.ts withNative)
+  const buttons = pressButtons(event)
+  const tip = (buttons & 1) !== 0
+  const lower = (buttons & 2) !== 0
+  const upper = (buttons & 4) !== 0
+  const eraser = (buttons & 32) !== 0 || event.button === 5 && event.type === "pointerdown"
   const alt = event.altKey
   const changed = tip !== live.tip || lower !== live.lower || upper !== live.upper
     || eraser !== live.eraser || alt !== live.alt || !live.pen
@@ -67,22 +70,55 @@ function sample(event: PointerEvent): void {
   live = { tip, lower, upper, eraser, alt, pressure: tip || eraser ? event.pressure : 0, seen, pen: true, drawing }
   if (changed || grew || drawing !== shown.drawing) notify()
   else if (pressureWatchers > 0 && frame === null) {
-    frame = requestAnimationFrame(() => { frame = null; shownPressure = live; pressureListeners.forEach((listener) => listener()) })
+    // (the pressure meter is the pen sheet's, in the notes window's top bar: its frames are that window's)
+    frame = requestAnimationFrame(() => { frame = null; shownPressure = live; pressureListeners.forEach((listener) => listener()) })   // realm: notes
   }
 }
 
-let installed = false
-export function watchLive(): void {
-  if (installed || typeof window === "undefined") return
-  installed = true
-  for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) {
-    window.addEventListener(type, (event) => sample(event as PointerEvent), true)
-  }
-  document.addEventListener("pointerleave", (event) => {
-    if (event.pointerType !== "pen" || !live.pen) return
+/**
+ * A pen display's side button pressed or let go while the pen holds still sends no pointer event: the display's own report moves
+ * the buttons here (the cursor and the Pen chip name what the button held would do at once, not at the next move).
+ */
+let followed = false
+function followNative(): void {
+  if (followed) return
+  followed = true
+  onNativeButtons(() => {
+    if (!live.pen || !nativeLive()) return
+    const mask = nativeSideMask()
+    const lower = (mask & 2) !== 0
+    const upper = (mask & 4) !== 0
+    if (lower === live.lower && upper === live.upper) return
+    live = {
+      ...live, lower, upper, seen: { ...live.seen, lower: live.seen.lower || lower, upper: live.seen.upper || upper },
+    }
+    notify()
+  })
+}
+
+const watched = new WeakMap<object, () => void>()
+/** What the pen is doing is read on `win` (this page's own window unless it is given the pad's); once per window. Returns the way to stop. */
+export function watchLive(win: Window = window): () => void {
+  if (typeof window === "undefined") return () => {}
+  const had = watched.get(win)
+  if (had) return had
+  followNative()
+  const hear = (event: Event) => sample(event as PointerEvent)
+  const types = ["pointerdown", "pointermove", "pointerup", "pointercancel"]
+  for (const type of types) win.addEventListener(type, hear, true)
+  const left = (event: Event) => {
+    if ((event as PointerEvent).pointerType !== "pen" || !live.pen) return
     live = { ...live, tip: false, lower: false, upper: false, eraser: false, pressure: 0, drawing: false }
     notify()
-  }, true)
+  }
+  win.document.addEventListener("pointerleave", left, true)
+  const stop = (): void => {
+    for (const type of types) win.removeEventListener(type, hear, true)
+    win.document.removeEventListener("pointerleave", left, true)
+    watched.delete(win)
+  }
+  watched.set(win, stop)
+  return stop
 }
 
 export function subscribeLive(listener: () => void): () => void {
@@ -121,4 +157,3 @@ export function usePenLive(options: { pressure?: boolean } = {}): PenLive {
   )
 }
 
-

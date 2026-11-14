@@ -76,13 +76,13 @@
   "+" is a bar button (bars.css) outside the part that scrolls. (This file loads before bars.css and tabs.css, so a rule here
   that has to beat one of theirs names two classes.)
 */
-.camera > .sheet-tabs {
+.camera > .sheet-tabs, .camera > .pane-chrome-slot > .sheet-tabs {
   flex: none; padding: 0 6px; background: var(--cam-strip, #26272b);
   /* The hairline under the row: it passes behind the tab in front, whose opaque fill covers it. */
   box-shadow: inset 0 -1px 0 var(--cam-hair, rgba(255, 255, 255, 0.09));
   -webkit-app-region: drag;
 }
-.camera > .sheet-tabs > * { -webkit-app-region: no-drag; }
+.camera > .sheet-tabs > *, .camera > .pane-chrome-slot > .sheet-tabs > * { -webkit-app-region: no-drag; }
 .sheet-tabs { display: flex; align-items: stretch; gap: 0; height: var(--bar-h, 36px); box-sizing: border-box; font-size: 12px; }
 .sheet-scroll {
   position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch;

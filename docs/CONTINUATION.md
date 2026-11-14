@@ -1,6 +1,7 @@
 # Continuation
 
-- NoteMind 0.27.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- NoteMind 0.28.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- The right pane renders live fixed-size tab, pen, source and footer controls around a cropped mirror of the single page controller. Blank pages use A5 proportions. Orientation can remember rotating tablet chrome with the page; pad input and menus use logical coordinates, and the mirror stays upright. The tablet close button closes its window. The near-tip button erases/Undo and the farther button selects/Redo; older factory maps migrate while custom mappings stay intact.
 - Mouse gestures in the sidebar mirror keep their initiating pointer, so native pen hover and lift cannot move or end them. The same ownership rule protects tablet strokes, camera ink, camera selections and document selections. Hidden checks exercise real mirror mouse drawing, selecting, moving, resizing, erasing and Undo with interleaved native pen hover.
 - The Wacom switch recovers ownership left by an exited process or a previous boot. Edited pictures fit their own aspect ratio, and saved drawings retain the full supported 1:10–10:1 range. Hidden pad checks cover both toggle locations, stale ownership, full-size editing and forwarded drawing keys.
 - Explore Features and Help → Welcome to NoteMind open an editable guide with a live checklist, table, drawing and two-page PDF. It lives in Documents/NoteMind and links into Default Workspace; only pristine generated guides refresh across releases. `--tour` opens it after restoring the session.

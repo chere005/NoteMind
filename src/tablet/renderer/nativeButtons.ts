@@ -11,8 +11,8 @@
  * While the display's pen is the pen in play (`nativeLive`):
  *   - the pen's side buttons are the display's, not the pointer events': a Right / Middle Click the driver sends for a button is
  *     dropped from what the pointer says (penButtons.ts `withNative`) and the display's own state is read instead;
- *   - the lower physical button erases strokes and double-taps Undo; the upper selects and double-taps Redo.
- *     Native reports and pointer events use the same physical lower/upper slots.
+ *   - the nearer-tip physical button is the app's first button: hold erases and double-tap undoes. It uses the middle-click
+ *     slot. The farther button is the second: hold selects and double-tap redoes, in the right-click slot.
  *   - what the driver sends for the buttons is not heard (penActions.ts `installNativeGuard`): a right-click menu, a middle click, the
  *     scroll wheel of Pan/Scroll, while a button is down and for SIDE_TAIL_MS after it came up.
  *
@@ -27,8 +27,8 @@ export const SIDE_TAIL_MS = 300
 /** The display's pen counts as the pen in play this long after it leaves range (its last pointer events are still on their way). */
 export const RANGE_TAIL_MS = 300
 
-/** The DOM `buttons` bits: the tip, the lower button (right click) and the upper button (middle click). */
-export const MASK = { tip: 1, lower: 2, upper: 4 } as const
+/** The pointer bits: tip, second button (right click), first button (middle click). */
+export const MASK = { tip: 1, second: 2, first: 4 } as const
 
 let state: PenButtonsState = { ...NO_BUTTONS }
 let sideUpAt = -Infinity
@@ -58,9 +58,9 @@ export const nativeLive = (now = performance.now()): boolean => state.present &&
 /** A side button of the display's pen is down, or was within SIDE_TAIL_MS: what the Wacom driver sends for it is not heard. */
 export const nativeSideBusy = (now = performance.now()): boolean => state.lower || state.upper || now - sideUpAt < SIDE_TAIL_MS
 
-/** Physical side buttons use the same slots as standard pen events. */
+/** The report's lower physical switch is the first button; upper is the second. */
 export const nativeSideMask = (s: Pick<PenButtonsState, "lower" | "upper"> = state): number =>
-  (s.lower ? MASK.lower : 0) | (s.upper ? MASK.upper : 0)
+  (s.lower ? MASK.first : 0) | (s.upper ? MASK.second : 0)
 
 /** The state as it was before the first report (tests). */
 export function resetNativeButtons(): void {

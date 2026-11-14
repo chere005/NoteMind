@@ -113,6 +113,8 @@ export interface DeviceInfo {
   rawX: [number, number] | null
   rawY: [number, number] | null
   pressureMax: number | null
+  /** The backend normalizes the pen's physical switches into first/second button slots. */
+  sideButtonMapping?: "physical"
   /** What the driver CLAIMS. */
   claims: { pressure: boolean; tilt: boolean; lower: boolean; upper: boolean; eraser: boolean }
 }
@@ -247,7 +249,7 @@ export interface SheetReport { rect: Box; turns: 0 | 1 | 2 | 3 }
 // ---------------------------------------------------------------------------------------------
 
 /** The tablet Wintab found. `aspect` is long side over short side (>= 1): the sheet takes the tablet's own shape. */
-export interface TabletInfo { name: string; aspect: number; pressureMax: number | null }
+export interface TabletInfo { name: string; aspect: number; pressureMax: number | null; sideButtonMapping?: "physical" }
 
 /**
  * The system mapping (Wintab CXO_SYSTEM over the sheet): off (not tried: no sheet, no pen in range, a turned sheet), trying (verifying),

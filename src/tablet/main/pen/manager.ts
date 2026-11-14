@@ -149,7 +149,7 @@ export function createFeedManager(deps: ManagerDeps): FeedManagerEx {
     const d = name ? devices.get(name) : undefined
     if (!d) return null
     const ext = deviceExtents(d)
-    return { name: d.name, aspect: tabletAspect(ext.width, ext.height), pressureMax: d.pressureMax }
+    return { name: d.name, aspect: tabletAspect(ext.width, ext.height), pressureMax: d.pressureMax, sideButtonMapping: d.sideButtonMapping }
   }
 
   const frameForStatus = (): FrameRecord | null => {

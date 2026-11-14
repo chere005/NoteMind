@@ -29,9 +29,9 @@ main{container-type:inline-size;container-name:editor}
  #toolbar #heading{min-width:88px}
 }
 @container drawing (max-width:380px){
- #pen-control.pen-bar{display:grid;grid-template-columns:repeat(3,28px) minmax(50px,1fr) 28px;gap:4px 5px}
- .pen-bar .pen-swatches{grid-row:2;grid-column:1/-1;justify-content:space-between;padding:0}
- .pen-bar .pen-swatch{width:22px;min-width:22px;height:22px}
- .pen-bar .pen-width-select{grid-row:1;grid-column:4;min-width:0;max-width:66px;justify-self:end}
- .pen-bar .drawing-location{grid-row:1;grid-column:5;margin-left:0}
+ #pen-control.pen-bar{display:flex;gap:5px}
+ .pen-bar .pen-swatches{display:none}
+ .pen-bar .pen-colour-menu{display:inline-flex}
+ .pen-bar .pen-width-select{min-width:0;max-width:66px}
+ .pen-bar .drawing-location{margin-left:auto}
 }

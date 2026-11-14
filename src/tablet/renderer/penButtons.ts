@@ -67,18 +67,18 @@ export interface SlotActions {
 }
 export type PenButtonMap = Record<Slot, SlotActions>
 
-/** Physical side-button defaults, shared by native reports and standard pen events. */
+/** First button: erase / Undo; second button: select / Redo. Native reports normalize to these pointer slots. */
 export const DEFAULT_BUTTONS: PenButtonMap = {
-  lower: { hold: "erase", double: "undo" },
-  upper: { hold: "select", double: "redo" },
+  lower: { hold: "select", double: "redo" },
+  upper: { hold: "erase", double: "undo" },
   eraser: { hold: "erase", double: "none" },
   tipAlt: { hold: "none", double: "none" },
 }
 
 /** Earlier default maps are upgraded; deliberate custom actions stay as chosen. */
 export const SWAPPED_DEFAULTS: Pick<PenButtonMap, "lower" | "upper"> = {
-  lower: { hold: "select", double: "redo" },
-  upper: { hold: "erase", double: "undo" },
+  lower: { hold: "erase", double: "undo" },
+  upper: { hold: "select", double: "redo" },
 }
 
 /** What each button did before a button had two jobs (0.4.0 and earlier): a stored value equal to it was never chosen. */
@@ -108,11 +108,16 @@ export const DOUBLE_CHOICES: { action: TapAction; label: string }[] = [
 ]
 
 export const SLOT_NAMES: Record<Slot, string> = {
-  lower: "Lower button (nearer the tip)", upper: "Upper button (farther from the tip)", eraser: "Eraser end", tipAlt: "Tip + Alt",
+  lower: "Second button (Right Click)", upper: "First button (Middle Click)", eraser: "Eraser end", tipAlt: "Tip + Alt",
+}
+
+/** Display reports name physical positions; the nearer-tip switch is the app's first button. */
+export const DISPLAY_SLOT_NAMES: Record<Slot, string> = {
+  ...SLOT_NAMES, lower: "Second button (farther from the tip)", upper: "First button (nearer the tip)",
 }
 
 /** The popover's order: the first button first. */
-export const ROW_ORDER: Slot[] = ["lower", "upper", "eraser", "tipAlt"]
+export const ROW_ORDER: Slot[] = ["upper", "lower", "eraser", "tipAlt"]
 
 export const ACTION_WORDS: Record<PenAction, string> = Object.fromEntries(
   [...HOLD_CHOICES, ...DOUBLE_CHOICES].map((choice) => [choice.action, choice.label]),
@@ -190,9 +195,16 @@ export interface ButtonRow {
 }
 
 /** One row per button for the Pen popover: the name, the hold job, the double-tap job. */
-export const buttonRows = (map: PenButtonMap): ButtonRow[] => ROW_ORDER.map((slot) => ({
-  slot, name: SLOT_NAMES[slot], hold: map[slot].hold, double: hasDoubleTap(slot) ? map[slot].double : null,
+export const buttonRows = (map: PenButtonMap, display = false): ButtonRow[] => ROW_ORDER.map((slot) => ({
+  slot, name: (display ? DISPLAY_SLOT_NAMES : SLOT_NAMES)[slot], hold: map[slot].hold, double: hasDoubleTap(slot) ? map[slot].double : null,
 }))
+
+export const buttonsHint = (display: boolean, physicalFeed = false): string =>
+  "Hold = the button held while the pen touches (Select: a drag inside the selection moves it). Double-tap = the button pressed twice quickly "
+  + "without the tip touching; a single press does nothing. "
+  + (display || physicalFeed
+    ? "The physical side buttons are read directly, so Wacom Center needs no setting for them."
+    : "Leave the side buttons at Wacom's Right Click (second button) and Middle Click (first button): NoteMind reads them itself.")
 
 /** The side buttons in words, for the Pen chip's tooltip. */
 export const buttonSummary = (map: PenButtonMap): string =>

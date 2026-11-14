@@ -35,6 +35,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { zoomScale, type Point } from "@notemind/core"
 import type { Turns } from "../shared/orientation"
 import { subscribeOrientation } from "./orientation"
+import { elementPoint } from "./padCoordinates"
 import { holdBegins, inContact, penLifted, pressAction } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
@@ -209,8 +210,8 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   }), [act, finish, schedule])
 
   const at = (event: { clientX: number; clientY: number }): Point => {
-    const rect = canvas.current!.getBoundingClientRect()
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    const point = elementPoint(canvas.current!, event)
+    return { x: point.x, y: point.y }
   }
 
   const eraseAt = (g: Extract<Gesture, { kind: "erase" }>, screen: Point) => {

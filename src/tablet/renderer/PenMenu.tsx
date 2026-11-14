@@ -8,15 +8,18 @@
  * its `pen-none` / `pen-pen` / `pen-pressure` classes with it), and this popover opens under the pen button.
  */
 
-import { Fragment, useEffect, useRef, type CSSProperties } from "react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react"
+import { createPortal } from "react-dom"
 import { returnFocusSoon } from "./focusReturn"
 import { setButton, setPenDraws, setPressure, usePenSettings } from "./penSettings"
 import {
-  ACTION_WORDS, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, type HoldAction, type TapAction,
+  ACTION_WORDS, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, buttonsHint, type HoldAction, type TapAction,
 } from "./penButtons"
 import { heldAction, heldSlot, usePenLive } from "./penLive"
 import { OrientationSelect } from "./OrientationSelect"
+import { useNativeButtons } from "./nativeButtonsFeed"
 import { acceptStatus, changeSettings, usePenFeedStore } from "./penFeed"
+import { menuRoot, menuSize } from "./padCoordinates"
 
 const WORDS = {
   none: "No pen seen yet. Touch the tablet with the pen over this window.",
@@ -55,27 +58,52 @@ export interface SheetPlace { top: number; right: number }
 export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
   const settings = usePenSettings()
   const status = usePenFeedStore().status
+  const [pad, setPad] = useState<{enabled:boolean;available:boolean;owned:boolean}|null>(null)
+  useEffect(() => {
+    const api = (window as any).notemind?.pad
+    if (!api) return
+    let live = true, pushed = false
+    const off = api.onState(value => { pushed = true; if (live) setPad(value) })
+    api.state().then(value => { if (live && !pushed) setPad(value) }).catch(() => {})
+    return () => { live = false; off() }
+  }, [])
+  const onPad = !!(pad?.enabled && pad.available && pad.owned)
+  const display = useNativeButtons().present || !!pad?.available
+  const physicalFeed = status?.tablet?.sideButtonMapping === "physical"
   const pop = useRef<HTMLDivElement | null>(null)
+  const [popupDoc,setPopupDoc]=useState<Document|null>(null)
+  const [bounds,setBounds]=useState<{left:number;top:number;width:number;maxHeight:number}|null>(null)
+  useLayoutEffect(()=>{
+    const element=pop.current
+    if(!element)return
+    setPopupDoc(element.ownerDocument)
+    const viewport=menuSize(element.ownerDocument),width=Math.max(0,Math.min(400,viewport.width-8)),maxHeight=Math.max(0,viewport.height-8)
+    const height=Math.min(maxHeight,element.scrollHeight+Math.max(0,element.offsetHeight-element.clientHeight))
+    const next={left:Math.max(4,viewport.width-at.right-width),top:Math.max(4,Math.min(at.top,viewport.height-height-4)),width,maxHeight}
+    setBounds(was=>was&&was.left===next.left&&was.top===next.top&&was.width===next.width&&was.maxHeight===next.maxHeight?was:next)
+  })
   // Like the app's other popovers: a click anywhere else or Esc puts it away. Esc goes first and stops there, so the same
   // press does not also let go of a box or a tool; the keyboard goes back to the notes.
   useEffect(() => {
-    const away = (event: PointerEvent) => { if (!pop.current?.contains(event.target as Node)) onClose() }
+    const doc = pop.current?.ownerDocument ?? document
+    const view = doc.defaultView ?? window
+    const away = (event: PointerEvent) => { const target = event.target as Node | null; if (!target || typeof target.nodeType !== "number" || !pop.current?.contains(target)) onClose() }
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return
       event.preventDefault(); event.stopPropagation()
       onClose()
-      returnFocusSoon()
+      if (doc === document) returnFocusSoon()
     }
-    window.addEventListener("pointerdown", away, true)
-    window.addEventListener("keydown", key, true)
-    window.addEventListener("resize", onClose)
+    view.addEventListener("pointerdown", away, true)
+    view.addEventListener("keydown", key, true)
+    view.addEventListener("resize", onClose)
     return () => {
-      window.removeEventListener("pointerdown", away, true); window.removeEventListener("keydown", key, true)
-      window.removeEventListener("resize", onClose)
+      view.removeEventListener("pointerdown", away, true); view.removeEventListener("keydown", key, true)
+      view.removeEventListener("resize", onClose)
     }
   }, [onClose])
-  const where: CSSProperties = { position: "fixed", top: at.top, right: at.right, left: "auto", maxHeight: `calc(100vh - ${at.top + 8}px)` }
-  return (
+  const where: CSSProperties = bounds?{position:"fixed",...bounds,right:"auto"}:{ position: "fixed", top: at.top, right: at.right, left: "auto", maxHeight: `calc(100vh - ${at.top + 8}px)` }
+  const contents=(
     <div ref={pop} className="pen-pop" data-pen="sheet" style={{ width: 400, ...where }}
          onMouseDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()}>
       <p>{WORDS[settings.seen]}</p>
@@ -96,7 +124,7 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
         <span />
         <span className="hint" style={{ margin: 0 }}>Hold</span>
         <span className="hint" style={{ margin: 0 }}>Double-tap</span>
-        {buttonRows(settings.buttons).map((row) => (
+        {buttonRows(settings.buttons, display || physicalFeed).map((row) => (
           <Fragment key={row.slot}>
             <span>{row.name}</span>
             <select value={row.hold} data-pen={`btn-${row.slot}`} aria-label={`${row.name}: hold`} style={{ minWidth: 0 }}
@@ -112,28 +140,24 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
           </Fragment>
         ))}
       </div>
-      <p className="hint">
-        Hold = the button held while the pen touches (Select: a drag inside the selection moves it). Double-tap =
-        the button pressed twice quickly without the tip touching; a single press does nothing. Leave the side
-        buttons at Wacom's Right Click (lower) and Middle Click (upper): NoteMind reads them itself.
-      </p>
+      <p className="hint" data-pen="buttons-hint">{buttonsHint(display, physicalFeed)}</p>
 
       <h4>Tablet orientation</h4>
       <label className="pen-slot">
         How the tablet is turned
         <OrientationSelect />
       </label>
-      <label>
+      {!onPad && <label>
         <input type="checkbox" data-pen="map-sheet" checked={status?.settings.mapSheet === true}
                onChange={(event) => { void changeSettings({ mapSheet: event.target.checked }) }} />
         {" "}Map the whole tablet to the sheet
-      </label>
-      <p className="hint">
+      </label>}
+      {!onPad && <p className="hint">
         While the sheet is in front the whole tablet writes on it (on a Mac NoteMind takes the tablet from the
         Wacom driver, which asks once for Input Monitoring). If the cursor ever misbehaves, switch it off or restart
         NoteMind.
-      </p>
-      {status?.mapping === "refused" && (
+      </p>}
+      {!onPad && status?.mapping === "refused" && (
         <p className="hint">
           The Wacom driver would not confine the pen to the sheet.{" "}
           <button className="icon-button" data-pen="retry-mapping" onClick={() => { void retryMapping() }}
@@ -142,5 +166,6 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
       )}
     </div>
   )
+  return popupDoc?createPortal(contents,menuRoot(popupDoc)):contents
 }
-
+

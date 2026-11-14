@@ -11,7 +11,7 @@ test('the display button feed sends changes only and keeps its own state',()=>{
  const f=feed.createButtonsFeed(),events=[];f.onChange(s=>events.push(s));const next={present:true,range:true,tip:true,lower:true,upper:false};f.set(next);f.set(next);next.lower=false;assert.equal(events.length,1);assert.equal(f.get().lower,true);events[0].tip=false;assert.equal(f.get().tip,true);
 });
 test('display button mapping keeps first and second buttons distinct',()=>{
- native.resetNativeButtons();native.setNativeButtons({present:true,range:true,tip:true,lower:true,upper:false},1000);assert.equal(native.nativeLive(1000),true);assert.equal(native.nativeSideMask(),2);native.setNativeButtons({present:true,range:true,tip:true,lower:false,upper:true},1001);assert.equal(native.nativeSideMask(),4);native.setNativeButtons({present:false,range:false,tip:false,lower:false,upper:false},1002);assert.equal(native.nativeLive(1002),false);
+ native.resetNativeButtons();native.setNativeButtons({present:true,range:true,tip:true,lower:true,upper:false},1000);assert.equal(native.nativeLive(1000),true);assert.equal(native.nativeSideMask(),4);native.setNativeButtons({present:true,range:true,tip:true,lower:false,upper:true},1001);assert.equal(native.nativeSideMask(),2);native.setNativeButtons({present:false,range:false,tip:false,lower:false,upper:false},1002);assert.equal(native.nativeLive(1002),false);
 });
 
 test('the display reader processes physical button reports and clears state on disconnect',()=>{
@@ -51,10 +51,10 @@ test('display button IPC only serves the app window and stops when disposed',()=
 test('physical display buttons control pen contact without changing other pointers',()=>{
  const out=path.join(dir,'buttons.cjs');esbuild.buildSync({stdin:{contents:"export * from './src/tablet/renderer/penButtons.ts'; export {setNativeButtons,resetNativeButtons} from './src/tablet/renderer/nativeButtons.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',outfile:out,alias:{'@notemind/core':path.resolve('src/tablet/core.js')}});
  const actions=require(out);actions.resetNativeButtons();const event={pointerType:'pen',pointerId:7,button:0,buttons:0,pressure:0};
- actions.setNativeButtons({present:true,range:true,tip:true,lower:true,upper:false});assert.equal(actions.inContact(event),true);assert.equal(actions.slotOf(event),'lower');assert.equal(actions.resolvePress(event,{eraser:false}).kind,'erase');
+ actions.setNativeButtons({present:true,range:true,tip:true,lower:true,upper:false});assert.equal(actions.inContact(event),true);assert.equal(actions.slotOf(event),'upper');assert.equal(actions.resolvePress(event,{eraser:false}).kind,'erase');
  actions.setNativeButtons({present:true,range:true,tip:false,lower:true,upper:false});assert.equal(actions.resolvePress(event,{eraser:false}).kind,'ignore');
  const synthetic={...event,pointerId:4242,button:2,buttons:2,pressure:.5};assert.equal(actions.slotOf(synthetic),'lower');assert.equal(actions.inContact(synthetic),true);
- actions.resetNativeButtons();assert.equal(actions.resolvePress({...event,pointerId:4242,button:0,buttons:3,pressure:.7},{eraser:false}).kind,'erase');assert.equal(actions.resolvePress({...event,pointerId:4242,button:0,buttons:5,pressure:.7},{eraser:false}).kind,'select');
+ actions.resetNativeButtons();assert.equal(actions.resolvePress({...event,pointerId:4242,button:0,buttons:3,pressure:.7},{eraser:false}).kind,'select');assert.equal(actions.resolvePress({...event,pointerId:4242,button:0,buttons:5,pressure:.7},{eraser:false}).kind,'erase');
  const mouse={...event,pointerType:'mouse',button:0,buttons:1};assert.equal(actions.inContact(mouse),true);actions.resetNativeButtons();
 });
 

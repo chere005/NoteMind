@@ -13,16 +13,19 @@ interface FindProps {
   onNext(): void
   onPrevious(): void
   onClose(): void
-  inputRef: RefObject<HTMLInputElement | null>
+  inputRef?: RefObject<HTMLInputElement | null>
+  autoFocus?: boolean
 }
 
 
-export function FindStrip({ query, onQuery, label, canStep, onNext, onPrevious, onClose, inputRef }: FindProps) {
-  useEffect(() => { inputRef.current?.focus({ preventScroll: true }); inputRef.current?.select() }, [inputRef])
+export function FindStrip({ query, onQuery, label, canStep, onNext, onPrevious, onClose, inputRef, autoFocus = true }: FindProps) {
+  const ownInput = useRef<HTMLInputElement | null>(null)
+  const input = inputRef ?? ownInput
+  useEffect(() => { if (autoFocus) { input.current?.focus({ preventScroll: true }); input.current?.select() } }, [input, autoFocus])
   return (
     <div className="doc-find" role="search" aria-label="Find in this PDF" data-doc="find">
       <Icon name="search" size={14} />
-      <input ref={inputRef} type="text" value={query} placeholder="Find in this PDF" aria-label="Find in this PDF" spellCheck={false} autoComplete="off"
+      <input ref={input} type="text" value={query} placeholder="Find in this PDF" aria-label="Find in this PDF" spellCheck={false} autoComplete="off"
              data-doc-find="input"
              onChange={(event) => onQuery(event.target.value)}
              onKeyDown={(event) => {
@@ -39,6 +42,7 @@ export function FindStrip({ query, onQuery, label, canStep, onNext, onPrevious, 
 }
 
 interface PageProps {
+  autoFocus?: boolean
   
   page: number
   pages: number
@@ -52,11 +56,11 @@ interface PageProps {
 }
 
 
-export function PageField({ page, pages, parse, onGo, onClose, onInvalid }: PageProps) {
+export function PageField({ page, pages, parse, onGo, onClose, onInvalid, autoFocus = true }: PageProps) {
   const [text, setText] = useState(String(page))
   const input = useRef<HTMLInputElement | null>(null)
   const done = useRef(false)
-  useEffect(() => { input.current?.focus({ preventScroll: true }); input.current?.select() }, [])
+  useEffect(() => { if (autoFocus) { input.current?.focus({ preventScroll: true }); input.current?.select() } }, [autoFocus])
   const finish = (go: boolean) => {
     if (done.current) return
     if (go) {

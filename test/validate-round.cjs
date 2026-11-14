@@ -5,7 +5,7 @@ function run(exe,args,report,env={}){console.log('Checking '+args.join(' '));con
 try{
  if(!packaged)run(process.platform==='win32'?'npm.cmd':'npm',['run','preflight']);
  for(const name of ['review','restart','sidebar','sidebar-actions','document-pane','document-integration','welcome','welcome-guide','welcome-tour','editor-toolbar','workspace-ux','menu-audit','tables-styles','notes-features','notes-recovery','keys-format','syntax-highlighting','projects','find-replace','clipboard','footer','structure','tabs-recents','pdf-export','help','drawing-tools','nm-format','large-drawing','image-note','launch-file'])run(require('electron'),['test/hidden-runner.cjs',name],name,{NOTEMIND_TEST_APP:packaged?(name==='document-integration'?appDir:path.join(appDir,'src')):''});
- for(const name of ['pad-app','pen-display-events','picture-editor','light-mode'])run(require('electron'),['test/'+name+'.cjs'],null,{NOTEMIND_TEST_APP:packaged?path.join(appDir,'src'):''});
+ for(const name of ['pad-app','pen-display-events','pad-coordinate-events','menu-rotation','picture-editor','light-mode'])run(require('electron'),['test/'+name+'.cjs'],null,{NOTEMIND_TEST_APP:packaged?path.join(appDir,'src'):''});
  run(require('electron'),['test/hidden-runner.cjs','picture-app'],null,{NOTEMIND_TEST_APP:packaged?path.join(appDir,'src'):''});
  run(process.execPath,['test/pen-smoke.cjs']);if(process.platform==='win32')run(process.execPath,['test/portable.cjs'],'portable');
  summary.ok=true;

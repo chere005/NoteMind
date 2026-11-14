@@ -51,8 +51,9 @@ export function sampleOf(r: { f: number; x: number; y: number; p: number }, devi
     y: clamp(1 - r.y / device.maxY),
     p: tip ? clamp(r.p / device.maxP) : 0,
     tip,
-    lower: inRange && ready && (r.f & 0x02) !== 0,
-    upper: inRange && ready && (r.f & 0x04) !== 0,
+    // Normalize physical positions to the same first/second pointer slots as display capture.
+    lower: inRange && ready && (r.f & 0x04) !== 0,
+    upper: inRange && ready && (r.f & 0x02) !== 0,
     eraser: inRange && (r.f & 0x08) !== 0,
     inRange,
     backend: "machid",
@@ -120,6 +121,7 @@ export class MacPenBackend implements PenBackend {
               info = {
                 name: line.name, vendorId: 0x056a, productId: line.pid, aspect: line.maxY > 0 ? line.maxX / line.maxY : null,
                 rawX: [0, line.maxX], rawY: [0, line.maxY], pressureMax: line.maxP,
+                sideButtonMapping: "physical",
                 claims: { pressure: true, tilt: false, lower: true, upper: true, eraser: false },
               }
               this.core.setDevice(info)
