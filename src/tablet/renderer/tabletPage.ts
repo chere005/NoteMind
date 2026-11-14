@@ -251,7 +251,7 @@ export class TabletPage {
   private changeListeners = new Set<() => void>()
   private applying = false
 
-  constructor(aspect = 16 / 9) { this.aspect = aspect > 0.2 && aspect < 5 ? aspect : 16 / 9 }
+  constructor(aspect = 16 / 9) { this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9 }
 
   get canUndo(): boolean { return this.past.length > 0 }
   get canRedo(): boolean { return this.future.length > 0 }
@@ -272,7 +272,7 @@ export class TabletPage {
   }
 
   setAspect(aspect: number): void {
-    const next = aspect > 0.2 && aspect < 5 ? aspect : 16 / 9
+    const next = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
     if (Math.abs(next - this.aspect) < 1e-9) return
     this.aspect = next
     this.emit(null)

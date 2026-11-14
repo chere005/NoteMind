@@ -2,13 +2,21 @@ const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('n
 // Project windows run in separate processes. The latest focus event owns the shared display.
 function createPadOwnership({file,id=crypto.randomUUID(),onChange=()=>{},interval=250,clock=()=>process.hrtime.bigint()}){
  let owned=false,closed=false,timer=null,serial=Promise.resolve();
+ function liveOwner(data){
+  if(!Number.isInteger(data?.pid)||data.pid<=0)return false;
+  try{process.kill(data.pid,0);return true;}catch(error){return error.code==='EPERM';}
+ }
  function update(value){if(owned===value)return;owned=value;onChange(value);}
  async function read(){try{return JSON.parse(await fs.readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error;}}
  async function check(){if(closed)return;const data=await read();if(!closed)update(data?.id===id);}
  async function lock(){for(let i=0;i<100;i++){try{return await fs.open(file+'.lock','wx');}catch(error){if(error.code!=='EEXIST')throw error;try{const stat=await fs.stat(file+'.lock');if(Date.now()-stat.mtimeMs>30000)await fs.unlink(file+'.lock');}catch{}await new Promise(resolve=>setTimeout(resolve,30));}}throw Error('Pen display is busy; try again.');}
  function claim(){
   const stamp=clock();serial=serial.catch(()=>{}).then(async()=>{if(closed)return;await fs.mkdir(path.dirname(file),{recursive:true});const guard=await lock();
-   try{const current=await read();let previous=-1n;try{previous=BigInt(current?.stamp??-1);}catch{}if(!closed&&previous<=stamp){const temp=file+'.'+crypto.randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify({id,stamp:String(stamp)}),{flag:'wx'});if(!closed)await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}}}
+   try{const current=await read();let previous=-1n;try{previous=BigInt(current?.stamp??-1);}catch{}
+    // Monotonic timestamps survive in the file, but their epoch restarts when the Mac reboots.
+    // Only a running owner with a timestamp from this boot can supersede a delayed focus claim.
+    if(!liveOwner(current)||previous>process.hrtime.bigint())previous=-1n;
+    if(!closed&&previous<=stamp){const temp=file+'.'+crypto.randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify({id,pid:process.pid,stamp:String(stamp)}),{flag:'wx'});if(!closed)await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}}}
    finally{await guard.close();await fs.unlink(file+'.lock').catch(()=>{});}await check();
   });return serial;
  }

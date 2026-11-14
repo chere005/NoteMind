@@ -17,3 +17,20 @@ test('an older delayed focus claim cannot steal a newer claim',async()=>{
  try{await second.claim();await first.claim();await first.check();await second.check();assert.equal(first.owned,false);assert.equal(second.owned,true);assert.equal(JSON.parse(await fs.readFile(file,'utf8')).id,'new');}
  finally{first.stop();second.stop();await fs.rm(dir,{recursive:true,force:true});}
 });
+test('a saved owner from a previous boot cannot block the tablet toggle',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-pad-reboot-')),file=path.join(dir,'owner.json');
+ const first=createPadOwnership({file,id:'current'});
+ try{
+  const stamp=String(process.hrtime.bigint()+86400000000000n);
+  for(const stale of [{id:'legacy',stamp},{id:'reused-pid',pid:process.pid,stamp}]){
+   await fs.writeFile(file,JSON.stringify(stale));await first.check();assert.equal(first.owned,false);
+   await first.claim();assert.equal(first.owned,true);
+   const saved=JSON.parse(await fs.readFile(file,'utf8'));assert.equal(saved.id,'current');assert.equal(saved.pid,process.pid);
+  }
+ }finally{first.stop();await fs.rm(dir,{recursive:true,force:true});}
+});
+test('an exited owner cannot supersede a current focus claim',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-pad-exited-')),file=path.join(dir,'owner.json'),first=createPadOwnership({file,id:'current',clock:()=>100n});
+ try{await fs.writeFile(file,JSON.stringify({id:'exited',pid:0,stamp:'200'}));await first.claim();assert.equal(first.owned,true);}
+ finally{first.stop();await fs.rm(dir,{recursive:true,force:true});}
+});
