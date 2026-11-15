@@ -8,6 +8,8 @@ Install Node.js and Python, then `npm install`, `npm run build`, and `npm start`
 
 The portable Windows application is `dist/NoteMind/NoteMind.exe`. On Apple Silicon macOS the build creates `dist/NoteMind/NoteMind.app`, signed locally for this machine; it is not notarized for distribution.
 
+The app logo lives in `assets/logo.svg`. The build renders its master PNG and platform icons from that source, using the same monoline style as CalMind and PlanMind.
+
 ## Included
 
 - Projects: a name plus files and folders, kept in a `.wmpr` file that saves itself on every change and opens in its own window, with a Default Workspace, twelve recent files and twelve recent projects, rename by file, and Undo for adding or removing a project's files and folders. Older `.wm` workspace files convert to `.wmpr` when opened. Older projects kept only in the local registry become project files in Documents/NoteMind Projects. Folder and file links, hidden sections, content search, live folder refresh, drag reordering and moving, rename, duplicate, Trash, and file-operation undo/redo.
