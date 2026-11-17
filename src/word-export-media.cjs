@@ -5,6 +5,17 @@ const CHUNK = 196608, WORKING = 256 * 1024 * 1024, MAX_PIXELS = 64 * 1024 * 1024
 const abort = () => Object.assign(Error("Word export cancelled."), { name: "AbortError" }), check = (signal) => {
   if (signal?.aborted) throw abort();
 }, task = () => new Promise(setImmediate);
+function snapshotValue(value,seen){
+ if(typeof value==='function'||typeof value==='symbol')return structuredClone(value);
+ if(value===null||typeof value!=='object')return value;
+ if(seen.has(value))return seen.get(value);
+ const prototype=Object.getPrototypeOf(value);
+ if(!Array.isArray(value)&&prototype!==Object.prototype&&prototype!==null){const copy=structuredClone(value);seen.set(value,copy);return copy;}
+ const copy=Array.isArray(value)?new Array(value.length):{};seen.set(value,copy);
+ for(const key of Object.keys(value))Object.defineProperty(copy,key,{value:snapshotValue(value[key],seen),enumerable:true,writable:true,configurable:true});
+ return copy;
+}
+function captureWordDocument(doc){const copy={...doc,assets:{...doc.assets}},seen=new WeakMap();for(const key of Object.keys(copy))if(key!=='assets')copy[key]=snapshotValue(copy[key],seen);return copy;}
 async function write(handle, bytes) {
   let at = 0;
   while (at < bytes.length) {
@@ -83,7 +94,7 @@ async function exportInScope(doc, file, options, services, expected) {
   let directory, working, receipt, failure;
   try {
     check(signal);
-    const metadata = { ...doc, assets: Object.fromEntries(Object.keys(doc.assets || {}).map((name) => [name, ""])) }, names = await storage.wordImageNames(metadata);
+    const assetNames=Object.keys(doc.assets||{}),metadata = { ...doc, assets: Object.fromEntries(assetNames.map((name) => [name, ""])) }, names = assetNames.length?await storage.wordImageNames(metadata):[];
     check(signal);
     directory = await fs.mkdtemp(path.join(services.tempRoot, "notemind-word-media-"));
     const images = /* @__PURE__ */ Object.create(null), sources = /* @__PURE__ */ new Map();
@@ -177,7 +188,7 @@ async function exportInScope(doc, file, options, services, expected) {
   }
 }
 async function exportWordWithMedia(doc, file, options = {}, services = {}) {
-  const storage = services.storage || require("./archive-codec.cjs"), settings = { ...services, storage, tempRoot: services.tempRoot || os.tmpdir() }, snapshot = { ...structuredClone({ ...doc, assets: void 0 }), assets: { ...doc.assets } }, expected = await (services.guard || require("./guarded-write.cjs")).fingerprintFile(file);
+  const storage = services.storage || require("./archive-codec.cjs"), settings = { ...services, storage, tempRoot: services.tempRoot || os.tmpdir() }, snapshot = captureWordDocument(doc), expected = await (services.guard || require("./guarded-write.cjs")).fingerprintFile(file);
   check(options.signal);
   if (storage.hasRawAssetScope()) return exportInScope(snapshot, file, options, settings, expected);
   const owner = require("node:crypto").randomUUID(), lease = await storage.preflightRawAssets([], { owner });
@@ -208,4 +219,4 @@ async function exportWordWithMedia(doc, file, options = {}, services = {}) {
     }
   }
 }
-module.exports = { exportWordWithMedia,spoolImageInput:spool,acquireImageWorking:waitWorking };
+module.exports = { exportWordWithMedia,captureWordDocument,spoolImageInput:spool,acquireImageWorking:waitWorking };
