@@ -361,8 +361,10 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=await require('./markdown-files.cjs').canonicalAsync(doc);
   let bytes,revision;if(['.nm','.wm'].includes(ext))({bytes,revision}=await require('./archive-codec.cjs').encodeWithDigest(doc));else{bytes=Buffer.from(doc.text);revision=digest(bytes);}
-  if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,revision);if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
-  const saveWarnings=[];try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
+  const saveWarnings=[];try{
+   if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,revision);if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
+   try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
+  }finally{if(archive)require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(bytes);}
   doc={...doc,path:file,revision};delete doc.otherOpenPaths;
   try{await notesStore.version(doc,automatic?'Autosaved':'Saved');}catch(error){saveWarnings.push('History: '+error.message);}
   let recoverySaved=false;try{const kept=await notesStore.draft({...doc,dirty:false});if(kept?.recoveryId)doc.recoveryId=kept.recoveryId;recoverySaved=true;}catch(error){saveWarnings.push('Recovery: '+error.message);}
