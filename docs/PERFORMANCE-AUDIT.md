@@ -4,6 +4,14 @@ This is an active engineering record, not a completed release audit. Installed N
 
 All workloads run sequentially at reduced priority, in temporary profiles with hidden windows. No user documents or installed application are modified. RSS includes worker threads in the same process; renderer working-set measurements are separate. A stopped baseline is not a completed workload or a valid final-memory comparison.
 
+## Current incremental checkpoints
+
+- Shared source `de299dc` integrates presets, full selection interactions, precision view/line tools and essential PDF reference markup. Precision's strengthened hidden gate passes 42 workflows; sparse edit history passes 65 focused checks after independent review. These are source checkpoints, not a signed release or completion-panel result.
+- Actual 2M-dot producer candidate `a1a0c43` reduces decoded heap from approximately 300.7 MB to 234.6 MB, build-stage combined memory from 993,755,136 to 844,775,424 bytes, and pack-stage combined memory from 1,053,130,752 to 902,856,704 bytes. The complete gate still fails before first paint at 1,081,229,312 bytes. Worker identity storage is the active bottleneck; phase improvements do not constitute a completed load/edit pass.
+- PDF `8e1050b` passes 13 recorded 100-page phases using actual scoped markup transport, at a sampled combined 949,878,784 bytes, with zero runtime warnings/errors. Actual App/PadHost `b4ae81f` passes six ownership/pen-command phases at 533,282,816 bytes. A real archive-worker 2.4 MB pressure-markup save/reopen preserves every point and pressure without Main `rawReadWhole`; larger supported markup remains gated.
+- Bounded Word XML passes actual many-paragraph 1/4/16 MiB workloads; 16 MiB takes 13.1 seconds at 756.6 MB sampled combined peak. Dense inline formatting is distinct: 1/4 MiB pass, while 16 MiB exceeded the guard at 1,079,066,624 bytes. Compact inline token backing is under native retest; tables and cross-feature foreground contention follow.
+- Overview source `a94928c` is isolated, compiled and focused-green. Its actual 3,000-page/camera/portal proof is queued behind the serial producer/Word jobs. No overview native pass is claimed yet.
+
 | Pipeline stage and workload | Baseline | Development observation | Interpretation / active owner |
 |---|---|---|---|
 | Dirty-state signature, append to 100,000 strokes / 2,000,000 points | 16.83 ms | 0.100 ms; Undo 0.011 ms | Exact legacy signature retained, incremental immutable leaves. Drawing team. |
