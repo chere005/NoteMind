@@ -1,0 +1,15 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),{pageModule,load}=require('./helpers/tablet-surface.cjs'),graphics=require('../src/graphics-pane.js'),{pullSheetState}=require('../src/load-sheet-state.js');
+const signature=load('src/tablet/renderer/sheetSignature.ts'),source=fs.readFileSync('src/tablet-entry.tsx','utf8'),start=source.indexOf(' const openSheet=async()=>'),end=source.indexOf('\n\n const openPicture=',start),body=source.slice(start,end)+'\nreturn openSheet;';
+assert.ok(start>0&&end>start);const gate=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+function fixture({open,loadGate,signatureGate}={}){
+ const lifecycle={active:true,requests:new Set()},models={current:[]},observed={disposed:0,published:0,errors:[],finished:[],active:0},entered=gate();
+ class Page extends pageModule.TabletPage{async loadGeometryAsync(...args){if(loadGate){entered.resolve();await loadGate.promise;}return super.loadGeometryAsync(...args)}async disposeAsync(){observed.disposed++;return super.disposeAsync()}}
+ const context={openLifecycle:{current:lifecycle},AbortController,window:{notemind:{openPane:open||(async()=>({file:'fixture.nmg',sheet:{name:'Fixture',aspect:1,strokes:[]}})),loadSheetChunk:async()=>assert.fail('cancelled transfer was read'),finishSheetLoad:async id=>observed.finished.push(id)}},pullSheetState,graphics,validSheetsAsync:async()=>true,TabletPage:Page,primeSheetSource:signature.primeSheetSource,paper:()=>({}),prepareSheetSignature:async(...args)=>{if(signatureGate){entered.resolve();await signatureGate.promise;}return signature.prepareSheetSignature(...args)},bindPage:()=>{},setSheets:change=>{observed.published++;models.current=change(models.current)},setActive:()=>observed.active++,setSource:()=>{},setSaveError:value=>observed.errors.push(value),liveSheets:models};
+ return{open:new Function(...Object.keys(context),body)(...Object.values(context)),lifecycle,observed,entered,models,cancel(){lifecycle.active=false;for(const request of lifecycle.requests)request.abort();}};
+}
+test('an App unmounted while its open dialog resolves retires the returned private transfer without publication',async()=>{
+ const wait=gate(),f=fixture({open:()=>wait.promise}),pending=f.open();f.cancel();wait.resolve({transfer:{transferSession:'fixture-owned-transfer',encodedSheets:[],chunkBytes:196608}});await pending;assert.deepEqual(f.observed.finished,['fixture-owned-transfer']);assert.equal(f.observed.published,0);assert.equal(f.observed.active,0);assert.deepEqual(f.observed.errors,[]);assert.equal(f.lifecycle.requests.size,0);
+});
+for(const stage of['load','signature'])test('an App unmounted during '+stage+' disposes its unpublished page and suppresses late model updates',async()=>{
+ const wait=gate(),f=fixture(stage==='load'?{loadGate:wait}:{signatureGate:wait}),pending=f.open();await f.entered.promise;f.cancel();wait.resolve();await pending;assert.equal(f.observed.disposed,1);assert.equal(f.observed.published,0);assert.equal(f.observed.active,0);assert.deepEqual(f.observed.errors,[]);assert.equal(f.lifecycle.requests.size,0);
+});
