@@ -78,19 +78,24 @@ class DrawingHistoryBudget {
       pointCount += level ? child.pointCount : child.points.length;
       estimatedBytes += level ? child.estimatedBytes : 160 + child.points.length * 64 + (child.pressures ? 32 + child.pressures.length * 8 : 0);
     }
-    const resources = [{ bytes: 64 + children.length * 8, current: 0, history: 0 }], aggregate = !level && certified ? {bytes: estimatedBytes - resources[0].bytes, current: 0, history: 0} : null;
-    if (aggregate) resources.push(aggregate);
-    return { current: 0, history: 0, children, level, count, pointCount, estimatedBytes, resources, aggregate, aggregateEpoch: epoch };
+    return { current: 0, history: 0, children, level, count, pointCount, estimatedBytes, aggregate: !level && certified, aggregateEpoch: epoch };
+  }
+  adjustNode(node, wasCurrent, wasHistory) {
+    const bytes = node.aggregate ? node.estimatedBytes : 64 + node.children.length * 8;
+    const current = node.current > 0, history = node.history > 0;
+    if ((wasCurrent || wasHistory) !== (current || history)) this.ownTotal += current || history ? bytes : -bytes;
+    if ((wasHistory && !wasCurrent) !== (history && !current)) this.ownExtra += history && !current ? bytes : -bytes;
   }
   canAggregate(array) { return (decodedGeometry.get(array) || 0) > this.lastUncertified; }
   materializeLeaf(node) {
-    const aggregate = node.aggregate;
-    if (!aggregate) return;
+    if (!node.aggregate) return;
+    const bytes = node.estimatedBytes - (64 + node.children.length * 8);
     for (const kind of ['current', 'history']) if (node[kind] > 0) {
       for (const stroke of node.children) this.holdStroke(stroke, kind, 1);
-      this.adjust(aggregate, kind, -1);
     }
-    node.resources.pop(); node.aggregate = null;
+    if (node.current || node.history) this.ownTotal -= bytes;
+    if (node.history && !node.current) this.ownExtra -= bytes;
+    node.aggregate = false;
     this.aggregateLeaves.delete(node);
   }
   invalidateAggregates() {
@@ -268,11 +273,11 @@ class DrawingHistoryBudget {
     if (!node) return;
     if (node.aggregate && node.aggregateEpoch !== this.aggregateEpoch) this.materializeLeaf(node);
     this.visits++;
-    const before = node[kind] > 0;
+    const wasCurrent = node.current > 0, wasHistory = node.history > 0, before = node[kind] > 0;
     node[kind] += delta;
     if (node[kind] < 0) throw Error("Invalid drawing tree ownership.");
     if (before === node[kind] > 0) return;
-    for (const resource of node.resources) this.adjust(resource, kind, delta > 0 ? 1 : -1);
+    this.adjustNode(node, wasCurrent, wasHistory);
     if (node.aggregate) { if (node.current || node.history) this.aggregateLeaves.add(node); else this.aggregateLeaves.delete(node); }
     else if (node.level) for (const child of node.children) this.holdNode(child, kind, delta > 0 ? 1 : -1);
     else for (const stroke of node.children) this.holdStroke(stroke, kind, delta > 0 ? 1 : -1);
@@ -303,11 +308,11 @@ class DrawingHistoryBudget {
     while (stack.length) {
       const node = stack.pop();
       if (node.aggregate && node.aggregateEpoch !== this.aggregateEpoch) this.materializeLeaf(node);
-      const held = node[kind] > 0;
+      const wasCurrent = node.current > 0, wasHistory = node.history > 0, held = node[kind] > 0;
       this.visits++; node[kind] += change;
       if (node[kind] < 0) throw Error('Invalid drawing tree ownership.');
       if (held !== (node[kind] > 0)) {
-        for (const resource of node.resources) this.adjust(resource, kind, change);
+        this.adjustNode(node, wasCurrent, wasHistory);
         if (node.aggregate) { if (node.current || node.history) this.aggregateLeaves.add(node); else this.aggregateLeaves.delete(node); }
         else if (node.level) for (const child of node.children) stack.push(child);
         else for (const stroke of node.children) this.holdStroke(stroke, kind, change);
