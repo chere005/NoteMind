@@ -4,6 +4,7 @@ test('streamed JSON hashing matches native JSON semantics without normalizing im
  for(const value of values)assert.equal(await hashJsonAsync(value),hashText(JSON.stringify(value)));
  for(let i=0;i<100;i++){const value={width:i/7,points:Array.from({length:i},(_,p)=>({y:Math.sin(p),x:p/97})),colorHex:'#12aBcD',pressures:Array.from({length:i},(_,p)=>p/(i||1))};assert.equal(await hashJsonAsync(value),fingerprint(value));}
  const cyclic={};cyclic.self=cyclic;await assert.rejects(hashJsonAsync(cyclic),/circular/);await assert.rejects(hashJsonAsync({value:1n}),/BigInt/);
+ await assert.rejects(hashJsonAsync({value:Object(1n)}),/BigInt/);
 });
 test('large exact hashes yield, honor cancellation after a yield and propagate scheduler failures',async()=>{
  const value={points:Array.from({length:30000},(_,i)=>({x:i/30000,y:i/60000})),pressures:Array.from({length:30000},()=>.5)},controller=new AbortController();let pauses=0;
@@ -15,4 +16,9 @@ test('large exact hashes yield, honor cancellation after a yield and propagate s
 
 test('large imported string values and keys escape in bounded chunks with exact surrogate pairing',async()=>{
  const boundary='x'.repeat(8191)+'😀'+'\ud800\n\t\\"'.repeat(40000),value={[boundary]:boundary,points:[{y:-0,x:.2}]};let pauses=0;const options={yieldControl:async()=>{pauses++}};assert.equal(await hashJsonAsync(value,options),fingerprint(value));assert.ok(pauses>2);const text=JSON.stringify(value);assert.equal(await equalsJsonAsync(value,text,options),true);assert.equal(await equalsJsonAsync(value,text+' '),false);assert.equal(await equalsJsonAsync(value,text.replace('points','pointS')),false);
+});
+
+test('deep valid imported JSON stays iterative and native array length snapshots are exact',async()=>{
+ let value={leaf:'value'};for(let i=0;i<4000;i++)value={nested:value};assert.equal(await hashJsonAsync(value),fingerprint(value));
+ const make=()=>{const array=[1,2,3];Object.defineProperty(array,0,{get(){array.push(4);return 1},enumerable:true});return array};assert.equal(await hashJsonAsync(make()),fingerprint(make()));
 });
