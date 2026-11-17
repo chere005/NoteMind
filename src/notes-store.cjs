@@ -99,7 +99,7 @@ class NotesStore {
     // This is an optimization hint only; publication still validates objects before committing a reference.
     try{const info=await archiveCodec.readSnapshot(this.root,last.id,{referencesOnly:true});for(const hash of info.knownHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}}catch{}
    }
-   const id=randomUUID(),publish=options=>archiveCodec.publishVersion(doc,{root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null}),verifiedLegacyID=null;
+   const id=randomUUID(),publish=options=>archiveCodec.publishVersion(doc,{root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null,existingVersionId:last?.storage==='snapshot-v1'?last.id:undefined}),verifiedLegacyID=null;
    if(prepared.unchanged&&prepared.legacyHash&&!last.storage){
     let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.documentMetadata;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
     if(sameMetadata)verifiedLegacyID=last.id;else prepared=await publish({});

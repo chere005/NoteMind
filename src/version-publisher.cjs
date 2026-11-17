@@ -1,10 +1,11 @@
 const snapshots=require('./snapshot-store.cjs');
 // Only immutable objects and a unique version manifest are published here. The main process commits the library index last.
 const objects=new Map();
-async function publishVersion(doc,{root,id,knownHashes=[],previousHash=null}={}){
+async function publishVersion(doc,{root,id,knownHashes=[],previousHash=null,existingVersionId}={}){
  if(typeof root!=='string'||!root||typeof id!=='string')throw Error('Invalid version publication.');
  let prepared=snapshots.prepareSnapshot(doc,{knownHashes,previousHash,copyObjectBytes:false});
  if(prepared.unchanged&&typeof previousHash==='string'&&previousHash.startsWith('snapshot2:')){
+  if(existingVersionId)await snapshots.readSnapshot(root,existingVersionId,{referencesOnly:true,expectedHash:previousHash});
   try{await snapshots.publishSnapshotObjects(root,prepared,objects);}
   catch(error){if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;objects.clear();const {contentHash,legacyHash}=prepared;prepared=snapshots.prepareSnapshot(doc,{copyObjectBytes:false});await snapshots.publishSnapshotObjects(root,prepared,objects);Object.assign(prepared,{unchanged:true,contentHash,legacyHash});}
  }else if(!prepared.unchanged){

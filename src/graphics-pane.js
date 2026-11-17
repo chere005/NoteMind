@@ -140,14 +140,14 @@
     const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),metadataLength=view.getUint32(8,true),strokeCount=view.getUint32(12,true),pointCount=view.getUint32(16,true);
     if(view.getUint32(20,true)!==bytes.length||metadataLength>MAX_METADATA_BYTES||metadataLength>bytes.length-24||strokeCount>MAX_POINTS||pointCount>MAX_POINTS)throw Error('Invalid binary graphics size.');
     const metadata=JSON.parse(textOf(bytes.subarray(24,24+metadataLength)));if(!metadata||typeof metadata!=='object'||typeof metadata.name!=='string')throw Error('Invalid binary graphics metadata.');binaryMeta(metadata);
-    const strokes=[];let at=24+metadataLength,seen=0,work=0;
+    const strokes=[];let at=24+metadataLength,seen=0,work=0;const hashView=hashes?.hashBytes?new DataView(hashes.hashBytes.buffer,hashes.hashBytes.byteOffset,hashes.hashBytes.byteLength):null;if(hashView&&hashView.byteLength!==strokeCount*8)throw Error('Invalid drawing fingerprints.');
     for(let index=0;index<strokeCount;index++){
       if(at+16>bytes.length)throw Error('Truncated binary graphics stroke.');const flags=bytes[at+3],hasPressure=flags&1,width=view.getFloat64(at+4,true),count=view.getUint32(at+12,true),hex=[bytes[at],bytes[at+1],bytes[at+2]].map(v=>v.toString(16).padStart(2,'0')).join(''),colour='#'+[...hex].map((c,i)=>flags&(1<<(i+1))?c.toUpperCase():c).join('');at+=16;
       if(flags>127||!coordinate(width)||width<=0||count>pointCount-seen||at+count*(hasPressure?24:16)>bytes.length)throw Error('Invalid binary graphics stroke.');seen+=count;const points=[],pressures=hasPressure?[]:null;
       const box={x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};for(let point=0;point<count;point++){const x=view.getFloat64(at,true),y=view.getFloat64(at+8,true);at+=16;if(!coordinate(x)||!coordinate(y))throw Error('Invalid binary graphics point.');points.push({x,y});box.x=Math.min(box.x,x);box.y=Math.min(box.y,y);box.right=Math.max(box.right,x);box.bottom=Math.max(box.bottom,y);if(hasPressure){const pressure=view.getFloat64(at,true);at+=8;if(!finite(pressure))throw Error('Invalid binary graphics pressure.');pressures.push(pressure);}if(++work%8192===0)await asyncPause(options);}
-      const stroke={colorHex:colour,width,points,...(pressures?{pressures}:{})};globalThis.NoteMindStrokeBounds?.primeStrokeBox(stroke,box);if(hashes?.strokeHashes)globalThis.NoteMindStrokeSignatures?.primeStrokeFingerprint(stroke,hashes.strokeHashes[index]);options.onStroke?.(stroke,index);strokes.push(stroke);if(++work%8192===0)await asyncPause(options);
+      const stroke={colorHex:colour,width,points,...(pressures?{pressures}:{})};globalThis.NoteMindStrokeBounds?.primeStrokeBox(stroke,box);const hash=hashView?hashView.getUint32(index*8,true).toString(16).padStart(8,'0')+hashView.getUint32(index*8+4,true).toString(16).padStart(8,'0'):hashes?.strokeHashes?.[index];if(hash)globalThis.NoteMindStrokeSignatures?.primeStrokeFingerprint(stroke,hash);options.onStroke?.(stroke,index);strokes.push(stroke);if(++work%8192===0)await asyncPause(options);
     }
-    if(seen!==pointCount||at!==bytes.length||hashes?.strokeHashes&&hashes.strokeHashes.length!==strokeCount)throw Error('Invalid binary graphics length.');await asyncPause(options);const sheet={...metadata,...extra,strokes};globalThis.NoteMindStrokeSignatures?.primeDecodedSheet(sheet,{validated:true,backdropHash:hashes?.backdropHash});return sheet;
+    if(seen!==pointCount||at!==bytes.length||hashes?.strokeHashes&&hashes.strokeHashes.length!==strokeCount)throw Error('Invalid binary graphics length.');let backdrop=extra?.backdrop??metadata.backdrop;if(hashes?.backdropBytes){backdrop='';const data=bytesOf(hashes.backdropBytes),decode=new TextDecoder('utf-8',{fatal:true});for(let offset=0;offset<data.length;offset+=65536){backdrop+=decode.decode(data.subarray(offset,offset+65536));await asyncPause(options);}}await asyncPause(options);const sheet={...metadata,...extra,backdrop,strokes};globalThis.NoteMindStrokeSignatures?.primeDecodedSheet(sheet,{validated:true,backdropHash:hashes?.backdropHash});return sheet;
   }
   async function decodeBase64Async(data,options={}) {
     if(typeof data!=='string'||!data.length||data.length>Math.ceil(MAX_BINARY_BYTES/3)*4)throw Error('Invalid encoded graphics data.');const bytes=new Uint8Array(Math.floor(data.length/4)*3+3);let offset=0,carry='';
@@ -191,5 +191,22 @@
     }
     return { ...sheet, aspect: sheet.aspect * box.width / box.height, backdrop: null, strokes };
   }
-  return { encode, decode, validate, transform, crop, selected, BINARY_MAGIC, MAX_BINARY_BYTES, isBinary, validateBinary, encodeBytes, encodeBytesAsync, bytesBase64, encodeBase64, decodeBase64, decodeAsync, decodeBase64Async, yieldTask };
+  async function cropAsync(sheet,box,{signal,yieldControl=yieldTask}={}){
+    if(!box)return sheet; // Worker input is already validated and immutable.
+    if(!(box.width>0&&box.height>0))throw Error('Select an area of the sheet.');
+    const strokes=[];let work=0;const pause=async()=>{if(signal?.aborted)throw Error('Drawing export cancelled.');await yieldControl();if(signal?.aborted)throw Error('Drawing export cancelled.');},normalize=p=>({x:(p.x-box.x)/box.width,y:(p.y-box.y)/box.height});
+    for(const s of sheet.strokes){
+      if(selected(s,box)){const points=[];for(const point of s.points){points.push(normalize(point));if(++work%8192===0)await pause();}strokes.push({...s,width:s.width/box.width,points});}
+      else{let points=[],pressures=[];const flush=()=>{if(points.length)strokes.push({colorHex:s.colorHex,width:s.width/box.width,points,...(s.pressures?{pressures}:{})});points=[];pressures=[];};
+        for(let i=1;i<s.points.length;i++){
+          const a=s.points[i-1],b=s.points[i],dx=b.x-a.x,dy=b.y-a.y;let lo=0,hi=1,clipped=false;
+          for(const [p,q]of [[-dx,a.x-box.x],[dx,box.x+box.width-a.x],[-dy,a.y-box.y],[dy,box.y+box.height-a.y]]){if(p===0){if(q<0)clipped=true;continue;}const r=q/p;if(p<0)lo=Math.max(lo,r);else hi=Math.min(hi,r);}
+          if(clipped||lo>hi)flush();else{const point=t=>normalize({x:a.x+dx*t,y:a.y+dy*t}),start=point(lo),end=point(hi),last=points[points.length-1];if(last&&(Math.abs(last.x-start.x)>1e-9||Math.abs(last.y-start.y)>1e-9))flush();const pressure=t=>s.pressures[i-1]+(s.pressures[i]-s.pressures[i-1])*t;if(!points.length){points.push(start);if(s.pressures)pressures.push(pressure(lo));}points.push(end);if(s.pressures)pressures.push(pressure(hi));if(hi<1)flush();}
+          if(++work%8192===0)await pause();
+        }flush();
+      }
+      if(++work%8192===0)await pause();
+    }return {...sheet,aspect:sheet.aspect*box.width/box.height,backdrop:null,strokes};
+  }
+  return { encode, decode, validate, transform, crop, cropAsync, selected, BINARY_MAGIC, MAX_BINARY_BYTES, isBinary, validateBinary, encodeBytes, encodeBytesAsync, bytesBase64, encodeBase64, decodeBase64, decodeAsync, decodeBase64Async, yieldTask };
 });

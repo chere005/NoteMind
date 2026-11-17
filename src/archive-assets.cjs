@@ -62,6 +62,7 @@ class ArchiveAssetWorker extends AssetCache{
  observe(token,bytes,info){
   const entry=this.entries.get(token);if(!entry)return;
   if(entry.hash&&entry.hash!==info.sha256)throw Error('An archive asset digest cannot be changed.');
+  if(entry.hash===info.sha256&&entry.binaryBytes===bytes.length&&typeof entry.canonical==='boolean')return;
   entry.hash=info.sha256;entry.binaryBytes=bytes.length;
   // Noncanonical legacy base64 must still decode to the same normalized string as before.
   entry.canonical ??= entry.data.length%4===0&&/^[A-Za-z0-9+/]*={0,2}$/.test(entry.data)&&entry.data.length===4*Math.ceil(bytes.length/3)&&Buffer.from(entry.data.slice(-4),'base64').toString('base64')===entry.data.slice(-4);

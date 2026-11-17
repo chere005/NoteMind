@@ -76,8 +76,9 @@ async function publishSnapshot(root,id,prepared,cache=new Map()){
  // Both document hashing and JSON serialization have already completed in the trusted worker.
  try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
 }
-async function readSnapshot(root,id,{referencesOnly=false,assetResolver}={}){
+async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expectedHash}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});
+ if(expectedHash&&expectedHash!=='snapshot2:'+manifest.checksum)throw Error('Version metadata is damaged.');
  if(referencesOnly){
   const knownHashes=[];await mapLimit([...new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref])).values()],8,async ref=>{try{const stat=await fs.lstat(objectFile(root,ref.hash));if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size===ref.bytes)knownHashes.push(ref.hash);}catch(error){if(error.code!=='ENOENT')throw error;}});
   return {knownHashes};

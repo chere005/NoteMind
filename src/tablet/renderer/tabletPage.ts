@@ -164,6 +164,22 @@ export function paintStrokes(context: CanvasRenderingContext2D, strokes: InkStro
   }
 }
 
+/** Dense recovery/exports yield between bounded pieces; pen contact still paints synchronously. */
+export async function paintStrokesYielding(context:CanvasRenderingContext2D,strokes:InkStroke[],toPixel:(point:Point)=>Point,scale:number,colour?:string,from=0,tint?:(hex:string)=>string,options:{cancelled?:()=>boolean;yieldControl?:()=>Promise<any>}={}){
+  const yieldControl=options.yieldControl||(()=>new Promise<void>(resolve=>setTimeout(resolve,0)))
+  let work=0
+  for(const stroke of strokes){
+    if(options.cancelled?.())return false
+    if(stroke.points.length<=8192&&from===0){paintStrokes(context,[stroke],toPixel,scale,colour,0,tint);work+=stroke.points.length+1;if(work>=8192){work=0;await yieldControl()}continue}
+    for(let start=Math.max(0,from-1);start<stroke.points.length-1;start+=8191){
+      if(options.cancelled?.())return false
+      const end=Math.min(stroke.points.length,start+8192),part={...stroke,points:stroke.points.slice(start,end),...(stroke.pressures?{pressures:stroke.pressures.slice(start,end)}:{})}
+      paintStrokes(context,[part],toPixel,scale,colour,0,tint);work+=end-start;if(work>=8192){work=0;await yieldControl()}
+    }
+  }
+  return !options.cancelled?.()
+}
+
 /**
  * Strokes (fractions of the sheet) as note items, landed on the pane.
  *

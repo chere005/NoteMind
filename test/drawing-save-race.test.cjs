@@ -13,7 +13,7 @@ const sheet = name => ({ name, page: { aspect: 2, strokes: [stroke(.2)], backdro
 function pendingSave(sheets) {
   let complete;
   const context = {
-    sheets, active: 0, currentSheets: sheets, sheetSignature, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
+    sheets, active: 0, currentSheets: sheets, surface:{current:null},sheetsSnapshot:()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper})),sheetSignature, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
     latestSheets: { current: sheets.map(s => ({ name: s.name, aspect: s.page.aspect, strokes: s.page.strokes, paper: s.paper })) },
     drawingSvg: () => 'preview',drawingPreview: () => 'preview', refresh() {}, setSaveError(message) { throw Error(message); },
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
@@ -68,6 +68,10 @@ test('versioned save retains its initiating file revision and records the commit
 
 test('dense save passes the encoded sidecar without re-reading newer geometry',async()=>{
  const first=sheet('First'),{context,complete}=pendingSave([first]);let worker,seen;context.denseDrawing=()=>true;context.denseAssets=snapshot=>{seen=snapshot;return new Promise(resolve=>worker=resolve)};const saving=context.save();first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'Later',aspect:2,strokes:first.page.strokes,paper:first.paper}];assert.equal(seen.name,'First');assert.equal(seen.strokes.length,1);worker({sidecar:'exact binary',data:'preview'});await new Promise(setImmediate);assert.equal(context.savedData.encodedGraphics,'exact binary');assert.equal(context.savedData.strokes,undefined);complete('/tmp/first.nm');await saving;
+});
+
+test('save commits unfinished pen contact before capturing its immutable payload and signature',async()=>{
+ const first=sheet('First'),{context,complete}=pendingSave([first]);let flushed=0;context.surface.current={flush(){if(!flushed++)first.page.strokes=[...first.page.strokes,stroke(.7)];}};const saving=context.save();assert.equal(flushed,1);assert.equal(context.savedData.strokes.length,2);first.page.strokes=[...first.page.strokes,stroke(.9)];complete('/tmp/first.nm');await saving;assert.notEqual(context.currentSheets[0].saved,sheetSignature(context.currentSheets[0]));
 });
 
 test('a dense drawing save captures payload and signature before asynchronous preview encoding',async()=>{

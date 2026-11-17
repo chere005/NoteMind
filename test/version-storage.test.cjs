@@ -52,3 +52,9 @@ test('an unchanged history check repairs missing shared bytes without adding a r
  const {root,store,doc}=await fixture(t);await store.version(doc);const initial=(await store.versions(doc.id))[0],manifest=JSON.parse(await fs.readFile(snapshots.manifestFile(root,initial.id))),ref=manifest.assets['assets/a.bin'];await fs.unlink(snapshots.objectFile(root,ref.hash));
  await store.version(doc);assert.equal((await store.versions(doc.id)).length,1);assert.deepEqual((await store.versionDoc(doc.id,initial.id)).assets,doc.assets);
 });
+test('a missing or substituted manifest cannot masquerade as an intact unchanged backup',async t=>{
+ const {root,store,doc}=await fixture(t);await store.version(doc);const original=(await store.versions(doc.id))[0],file=snapshots.manifestFile(root,original.id),bytes=await fs.readFile(file),index=await fs.readFile(path.join(root,'index.json'));
+ await fs.unlink(file);await assert.rejects(store.version(doc),/ENOENT/);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),index);
+ const different=snapshots.prepareSnapshot({...doc,text:'Different history'});await fs.writeFile(file,different.manifestBytes);await assert.rejects(store.version(doc),/metadata is damaged/);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),index);
+ await fs.writeFile(file,bytes);assert.equal((await store.versionDoc(doc.id,original.id)).text,'A');
+});

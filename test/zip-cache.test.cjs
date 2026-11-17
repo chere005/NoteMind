@@ -22,3 +22,9 @@ test('compression cache cannot retain more than its byte budget',()=>{
  const zip=isolated(),a=crypto.randomBytes(17*1024*1024),b=crypto.randomBytes(17*1024*1024);for(const data of[a,b])for(const at of[0,Math.floor(data.length/2),data.length-4096])data.fill(0,at,at+4096);
  zip.pack({a});zip.pack({b});zip.pack({b});assert.equal(zip.calls(),2);zip.pack({a});assert.equal(zip.calls(),3);
 });
+test('large compressible input reuses bounded compressed output instead of recompressing every save',()=>{
+ const zip=isolated(),data=Buffer.alloc(33*1024*1024,7),first=zip.pack({'assets/large.bin':data});zip.pack({'assets/renamed.bin':data});assert.equal(zip.calls(),1);assert.deepEqual(zip.unpack(first)['assets/large.bin'],data);
+});
+test('already compressed zstd attachments use compatible ZIP storage without another compression pass',()=>{
+ const zip=isolated(),data=zlib.zstdCompressSync(Buffer.alloc(4096,7)),bytes=zip.pack({'assets/source.zst':data});assert.equal(zip.calls(),0);assert.equal(bytes.readUInt16LE(8),0);assert.deepEqual(zip.unpack(bytes)['assets/source.zst'],data);
+});

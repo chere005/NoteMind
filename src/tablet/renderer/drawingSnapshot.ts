@@ -1,4 +1,5 @@
 import type { InkStroke } from './tabletPage'
+import { pressureScale } from '@notemind/core'
 import { colourOfPaper, inkOn, paintPaper, parsePaper, type Paper } from './tabletPaper'
 
 type Region = { x: number; y: number; width: number; height: number }
@@ -36,12 +37,12 @@ export function svgDrawing(snapshot: ReturnType<typeof snapshotDrawing>, withPap
   const w=1000,h=1000/aspect,paper=parsePaper(snapshot.paper)
   const paths=strokes.map(stroke=>{
     const runs=new Map<number,string[]>(),colour=withPaper?inkOn(paper,stroke.colorHex):stroke.colorHex
-    stroke.points.forEach((point,index)=>{
-      const previous=stroke.points[Math.max(0,index-1)],pressure=stroke.pressures?.[index]??.5,thickness=stroke.width*(.2+1.6*Math.max(0,Math.min(1,pressure)))
-      let segments=runs.get(thickness);if(!segments){segments=[];runs.set(thickness,segments)}
-      segments.push(`M${(previous.x*w).toFixed(2)} ${(previous.y*h).toFixed(2)} L${(point.x*w).toFixed(2)} ${(point.y*h).toFixed(2)}`)
-    })
-    return [...runs].map(([thickness,segments])=>`<path d="${segments.join(' ')}" fill="none" stroke="${attribute(colour)}" stroke-width="${thickness}" stroke-linecap="round"/>`).join('')
+    if(!stroke.points.length)return ''
+    const at=(point:any)=>`${point.x*w} ${point.y*h}`
+    if(stroke.points.length===1){const point=stroke.points[0]!;runs.set(Math.max(.5,stroke.width),[`M${at(point)} L${point.x*w+.01} ${point.y*h}`])}
+    else if(stroke.pressures?.length===stroke.points.length){for(let index=1;index<stroke.points.length;index++){const previous=stroke.points[index-1]!,point=stroke.points[index]!,thickness=Math.max(.25,stroke.width*pressureScale((stroke.pressures[index-1]!+stroke.pressures[index]!)/2));let segments=runs.get(thickness);if(!segments){segments=[];runs.set(thickness,segments)}segments.push(`M${at(previous)} L${at(point)}`)}}
+    else runs.set(Math.max(.5,stroke.width),['M'+stroke.points.map(at).join(' L')])
+    return [...runs].map(([thickness,segments])=>`<path d="${segments.join(' ')}" fill="none" stroke="${attribute(colour)}" stroke-width="${thickness}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${region.x*w} ${region.y*h} ${region.width*w} ${region.height*h}">${withPaper?paperSvg(paper,{width:w,height:h},region):''}${backdrop?`<image href="${attribute(backdrop)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`:''}${paths}</svg>`
 }
@@ -78,6 +79,6 @@ export async function rasterDrawing(snapshot: ReturnType<typeof snapshotDrawing>
   if (withPaper) deps.paintPaper(ctx, paper, sheet, area, size)
   if (backdrop) { const image = await deps.backdropReady(backdrop);if (!image) throw Error('Could not load the drawing background.');deps.paintBackdrop(ctx, image, sheet, area, size) }
   ctx.save();ctx.scale(canvas.width / area.width, canvas.height / area.height);ctx.translate(-area.x, -area.y)
-  deps.paintStrokes(ctx, strokes, (point: any) => ({ x: point.x * w, y: point.y * h }), 1, undefined, 0, withPaper ? (colour: string) => deps.inkOn(paper, colour) : undefined)
+  await deps.paintStrokes(ctx, strokes, (point: any) => ({ x: point.x * w, y: point.y * h }), 1, undefined, 0, withPaper ? (colour: string) => deps.inkOn(paper, colour) : undefined)
   ctx.restore();return canvas
 }

@@ -15,7 +15,8 @@ function alreadyCompressed(data){
     ||(data.subarray(0,4).toString('ascii')==='RIFF'&&data.subarray(8,12).toString('ascii')==='WEBP')
     ||data.subarray(4,8).toString('ascii')==='ftyp'
     ||(data[0]===0x50&&data[1]===0x4b&&[3,5,7].includes(data[2]))
-    ||(data[0]===0x1f&&data[1]===0x8b);
+    ||(data[0]===0x1f&&data[1]===0x8b)
+    ||(data[0]===0x28&&data[1]===0xb5&&data[2]===0x2f&&data[3]===0xfd);
 }
 function storeWithoutCompression(data){
   if(alreadyCompressed(data))return true;
@@ -29,7 +30,7 @@ function storeWithoutCompression(data){
 }
 function compressedFile(data) {
   if(storeWithoutCompression(data))return {bytes:data,crc:crc32(data),method:0};
-  if(data.length<1024||data.length>CACHE_BYTES)return {bytes:zlib.deflateRawSync(data),crc:crc32(data),method:8};
+  if(data.length<1024)return {bytes:zlib.deflateRawSync(data),crc:crc32(data),method:8};
   const key=createHash('sha256').update(data).digest('hex'),found=compressedFiles.get(key);
   if(found){compressedFiles.delete(key);compressedFiles.set(key,found);return found;}
   const entry={bytes:zlib.deflateRawSync(data),crc:crc32(data),method:8};
