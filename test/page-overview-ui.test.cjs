@@ -9,7 +9,7 @@ function harness(count=100,activeId='p0'){let cursor=0,dirty=false,tree;const sl
 
  function render(){for(let n=0;n<10;n++){dirty=false;cursor=0;tree=module.exports.PageOverview(props);attach();while(effects.length)effects.shift()();if(!dirty)return}throw Error('render loop')}
  function find(predicate){let found;walk(tree,node=>{if(!found&&predicate(node))found=node});return found}function all(predicate){const out=[];walk(tree,node=>{if(predicate(node))out.push(node)});return out}
- const focus=name=>{const value=[...attached.values()].find(value=>value.id===name);value?.element.focus();value?.node.props.onFocus();};const event=(key,extra={})=>({key,keyCode:0,nativeEvent:{isComposing:false},preventDefault(){this.prevented=true},...extra});render();return{props,calls,selected,leases,scroller,render,find,all,event,focus,get focused(){return focused},unmount(){for(const slot of slots)slot?.cleanup?.()}}}
+ const focus=name=>{const value=[...attached.values()].find(value=>value.id===name);value?.element.focus();value?.node.props.onFocus();};const event=(key,extra={})=>({key,keyCode:0,nativeEvent:{isComposing:false},preventDefault(){this.prevented=true},...extra});render();return{props,calls,selected,leases,scroller,render,find,all,event,focus,blur(){focused=null;scroller.ownerDocument.activeElement={};},get focused(){return focused},unmount(){for(const slot of slots)slot?.cleanup?.()}}}
 const page=(h,n)=>h.find(node=>node.type==='button'&&node.props['aria-label']==='Page '+n+', page '+(n+1));
 test('the component mounts only visible rows, exposes stable page names and releases its visibility lease',async()=>{const h=harness(4000);assert.ok(h.all(node=>node.props?.role==='gridcell').length<=15);assert.equal(h.all(node=>node.props?.tabIndex===0).length,1);assert.equal(h.find(node=>node.props?.role==='grid').props['aria-rowcount'],1334);assert.ok([...h.leases.values()][0].length<=15);h.unmount();await Promise.resolve();assert.equal(h.leases.size,0)});
 test('keyboard focus scrolls a virtual page into view while selection remains explicitly clicked',()=>{const h=harness();page(h,0).props.onKeyDown(h.event('End'));h.render();assert.ok(h.scroller.scrollTop>0);assert.equal(h.focused,'Page 99');assert.deepEqual(h.selected,[]);page(h,99).props.onClick();assert.deepEqual(h.selected,['p99'])});
@@ -24,4 +24,11 @@ test('keyboard reordering retains the moved page focus across row remounts and v
  moved().props.onKeyDown(h.event('ArrowDown'));h.render();assert.equal(h.focused,'Page 3');h.focus('Page 0');
  for(let step=0;step<8;step++){moved().props.onKeyDown(h.event('ArrowDown',{altKey:true}));h.render();assert.equal(h.focused,'Page 0');assert.equal(h.all(node=>node.props?.tabIndex===0).length,1);}
  assert.ok(h.scroller.scrollTop>0);assert.deepEqual(h.selected,[]);assert.equal(h.calls.length,8);
+});
+
+test('failed asynchronous reorder cannot restore stale focus on a later viewport change',async()=>{
+ const h=harness();let reject;h.props.onReorder=()=>new Promise((_resolve,fail)=>reject=fail);h.render();h.focus('Page 0');page(h,0).props.onKeyDown(h.event('ArrowDown',{altKey:true}));h.render();h.blur();reject(Error('Reorder failed'));await new Promise(setImmediate);h.render();h.scroller.scrollTop=190;h.find(node=>node.props?.role==='grid').props.onScroll({currentTarget:h.scroller});h.render();assert.equal(h.focused,null);assert.ok(h.find(node=>node.props?.role==='alert'));
+});
+test('an older reorder rejection cannot cancel the newer pending focus owner',async()=>{
+ const h=harness(),pending=[];h.props.onReorder=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));h.render();h.focus('Page 0');page(h,0).props.onKeyDown(h.event('ArrowDown',{altKey:true}));page(h,0).props.onKeyDown(h.event('ArrowDown',{altKey:true}));pending[0].reject(Error('Old request failed'));await new Promise(setImmediate);h.render();assert.equal(h.find(node=>node.props?.role==='alert'),undefined);h.props.pages=require('../src/page-overview-coordinator.cjs').reorderPages(h.props.pages,'p0','p4');h.render();assert.equal(h.focused,'Page 0');pending[1].resolve();await new Promise(setImmediate);
 });
