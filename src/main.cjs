@@ -17,6 +17,7 @@ const fileActions=require('./file-actions.cjs')(path.join(app.getPath('userData'
 let win, padController;
 const projectHome=process.env.NOTEMIND_HOME||app.getPath('userData'),projectService=require('./projects.cjs')(projectHome,process.env.NOTEMIND_WORKSPACES||path.join(projectHome,'workspaces'),path.join(process.env.NOTEMIND_DATA&&!process.env.NOTEMIND_HOME?projectHome:app.getPath('documents'),'NoteMind Projects'));
 const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
+const pdfReferences=require('./pdf-reference-service.cjs').register();
 const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc));
 const notepadFormat=require('./notepad-format.cjs');
 const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO});
@@ -138,7 +139,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   win.webContents.on('did-finish-load', () => { if (pendingDocument) { win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(pendingDocument)); pendingDocument = null; } else if(guidePending){guidePending=false;win.show();win.focus();win.webContents.send('menu:command','welcomeNote');} else if(showWelcomeAtStart)welcome.show(); });
 
-  win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();welcome.dispose();app.quit();});
+  win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();void pdfReferences.dispose();welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
 
   pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>{const request=inputMonitoring.onStatus(status);if(request)void request.then(result=>{if(result.access==='granted')pen?.displayRetry?.();});}, displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });

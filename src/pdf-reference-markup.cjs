@@ -10,7 +10,7 @@ class MarkupBook {
  pageNumber(page){if(!Number.isInteger(page)||page<1||page>this.pageCount)throw Error('Invalid PDF markup page.');}
  strokePoints(stroke){
   if(this.counts.has(stroke))return this.counts.get(stroke);
-  if(!stroke||!/^#(?:[a-f0-9]{3}|[a-f0-9]{6}|[a-f0-9]{8})$/i.test(stroke.colorHex)||!Number.isFinite(stroke.width)||stroke.width<=0||stroke.width>1000||!Array.isArray(stroke.points)||!stroke.points.length||stroke.points.length>this.maxPoints||stroke.opacity!==undefined&&(!Number.isFinite(stroke.opacity)||stroke.opacity<0||stroke.opacity>1))throw Error('Invalid PDF ink stroke.');
+  if(!stroke||!/^#[a-f0-9]{6}$/i.test(stroke.colorHex)||!Number.isFinite(stroke.width)||stroke.width<=0||stroke.width>1000||!Array.isArray(stroke.points)||!stroke.points.length||stroke.points.length>this.maxPoints||stroke.opacity!==undefined)throw Error('Invalid PDF ink stroke.');
   for(const point of stroke.points)if(!point||![point.x,point.y].every(value=>Number.isFinite(value)&&Math.abs(value)<=16))throw Error('Invalid PDF ink point.');
   if(stroke.pressures!==undefined&&(!Array.isArray(stroke.pressures)||stroke.pressures.length!==stroke.points.length||stroke.pressures.some(value=>!Number.isFinite(value)||value<0||value>1)))throw Error('Invalid PDF ink pressure.');
   this.counts.set(stroke,stroke.points.length);return stroke.points.length;

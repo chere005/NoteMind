@@ -1,0 +1,50 @@
+const {app,BrowserWindow,ipcMain,dialog}=require('electron'),path=require('node:path'),{randomUUID}=require('node:crypto'),{PDFReferenceJobs}=require('./pdf-reference-jobs.cjs');
+class WorkerClient {
+ constructor(service){
+  this.service=service;this.pending=new Map();this.next=0;this.closed=false;this.window=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,preload:path.join(__dirname,'pdf-reference-preload.cjs')}});this.contents=this.window.webContents;service.clients.set(this.contents,this);this.window.webContents.setBackgroundThrottling(false);this.window.webContents.on('render-process-gone',()=>this.dispose(Error('PDF renderer stopped.')));this.window.once('closed',()=>this.dispose(Error('PDF renderer closed.')));this.ready=this.window.loadFile(path.join(__dirname,'pdf-reference-worker.html'));
+ }
+ receive(packet){const job=this.pending.get(packet?.id);if(!job)return;this.pending.delete(packet.id);clearTimeout(job.timer);packet.error?job.reject(Object.assign(Error(packet.error.message),{name:packet.error.name})):job.resolve(packet.value);}
+ async call(method,args={}){await this.ready;if(this.closed)throw Error('PDF renderer is closed.');if(this.pending.size>=32)throw Error('PDF rendering is busy.');const id=++this.next;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('PDF rendering timed out.'));this.cancel(args.requestId||id);},60000);this.pending.set(id,{resolve,reject,timer});try{this.window.webContents.send('pdf-reference:request',{id,method,args});}catch(error){this.pending.delete(id);clearTimeout(timer);reject(error);}});}
+ cancel(requestId){if(!this.closed&&!this.window.isDestroyed())try{this.contents.send('pdf-reference:request',{id:++this.next,method:'cancel',args:{requestId}});}catch{}}
+ dispose(error=Error('PDF reference closed.')){if(this.closed)return;this.closed=true;this.service.clients.delete(this.contents);for(const job of this.pending.values()){clearTimeout(job.timer);job.reject(error);}this.pending.clear();if(!this.window.isDestroyed())this.window.destroy();}
+}
+class PDFReferenceService {
+ constructor({root=path.join(process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),'PDF Markup'),jobs=new PDFReferenceJobs(root),clientFactory,maximumSessions=2}={}){Object.assign(this,{root,jobs,maximumSessions});this.clients=new Map();this.owners=new Map();this.clientFactory=clientFactory||(()=>new WorkerClient(this));this.closed=false;ipcMain.on('pdf-reference:reply',(event,packet)=>this.clients.get(event.sender)?.receive(packet));app.once('will-quit',()=>{void this.dispose();});}
+ owner(sender){if(this.closed||!sender||sender.isDestroyed?.())throw Error('The PDF window is closed.');let value=this.owners.get(sender);if(!value){value=new Map();this.owners.set(sender,value);sender.once('destroyed',()=>{for(const state of value.values())state.client.dispose();this.owners.delete(sender);});}return value;}
+ get(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)throw Error('This PDF reference has expired. Reopen it.');owned.delete(id);owned.set(id,state);return state;}
+ async open(sender,{file,password,attachment,previousHash}={}){
+  const owned=this.owner(sender);if(password!==undefined&&(typeof password!=='string'||password.length>1024))throw Error('Invalid PDF password.');if(attachment&&(!/^[\w-]{1,80}$/.test(attachment.noteId)||typeof attachment.logicalId!=='string'||attachment.logicalId.length>4096))throw Error('Invalid PDF attachment owner.');if(typeof file!=='string'||!file.toLowerCase().endsWith('.pdf'))throw Error('Choose a PDF document.');let opened;if(previousHash){const current=[...owned.values()].find(value=>value.file===file&&value.previous.some(item=>item.sourceHash===previousHash));if(!current)throw Error('This marked PDF version is unavailable.');const entry=current.previous.find(value=>value.sourceHash===previousHash);opened=await this.jobs.call('inspect',{file:entry.path});opened.file=current.file;}else opened=await this.jobs.call('inspect',{file});if(sender.isDestroyed?.())throw Error('The PDF window is closed.');
+  const identity=attachment?'attachment:'+String(attachment.noteId)+':'+String(attachment.logicalId):opened.file;
+  const sourceHash=previousHash||opened.sourceHash;if(sourceHash!==opened.sourceHash)throw Error('The marked PDF source is damaged.');
+  for(const state of owned.values())if(state.identity===identity&&state.sourceHash===sourceHash){await state.ready;return this.describe(state);}
+  while(owned.size>=this.maximumSessions){const [id,state]=owned.entries().next().value;await Promise.allSettled([...state.saves]);state.client.dispose();owned.delete(id);}
+  const client=this.clientFactory(),state={id:randomUUID(),identity,file:opened.file,sourceHash,pageCount:0,first:null,client,saves:new Set(),attachment,previous:[],index:null};owned.set(state.id,state);
+  state.ready=(async()=>{const value=await client.call('open',{bytes:opened.bytes,password,sourceHash});state.pageCount=value.pageCount;state.first=await client.call('info',{page:1});const saved=await this.jobs.call('state',{identity,sourceHash});state.index=saved.index;state.previous=saved.previous;})();try{await state.ready;return this.describe(state);}catch(error){owned.delete(state.id);client.dispose();throw error;}
+ }
+ describe(state){return{id:state.id,sourceHash:state.sourceHash,pageCount:state.pageCount,first:state.first,index:state.index,previous:state.previous,attachment:state.attachment};}
+ pageNumber(state,page){if(!Number.isInteger(page)||page<1||page>state.pageCount)throw Error('Invalid PDF page.');}
+ async page(sender,id,page,options={}){const state=this.get(sender,id);this.pageNumber(state,page);const thumbnail=!!options.thumbnail,maxDimension=options.maxDimension??(thumbnail?256:2048);if(!Number.isInteger(maxDimension)||maxDimension<16||maxDimension>4096||options.requestId!==undefined&&(typeof options.requestId!=='string'||options.requestId.length>128))throw Error('Invalid PDF page request.');return state.client.call('render',{page,maxDimension,thumbnail,requestId:options.requestId});}
+ serialize(_sender,bytes){return this.jobs.call('serialize',{bytes});}
+ info(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('info',{page});}
+ text(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('text',{page});}
+ ink(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return this.jobs.call('page',{identity:state.identity,sourceHash:state.sourceHash,page});}
+ async save(sender,id,{page,bytes,expectedRevision=null,noteRevision=null}){
+  const state=this.get(sender,id);this.pageNumber(state,page);const args={identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page,bytes,expectedRevision,noteRevision,sourcePath:state.file},run=(async()=>{let saved=await this.jobs.call('save',args);if(saved.needsSource){const sourceBytes=await state.client.call('source');saved=await this.jobs.call('save',{...args,bytes:saved.bytes,sourceBytes});}return saved;})();state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
+ }
+ async previous(sender,id,sourceHash){const current=this.get(sender,id),entry=current.previous.find(value=>value.sourceHash===sourceHash);if(!entry)throw Error('This marked PDF version is unavailable.');return this.open(sender,{file:current.file,attachment:current.attachment,previousHash:sourceHash});}
+ async close(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)return;await Promise.all([...state.saves]);state.client.dispose();owned.delete(id);}
+ cancel(sender,id,requestId){this.get(sender,id).client.cancel(requestId);}
+ async export(sender,id){
+  const state=this.get(sender,id);await Promise.all([...state.saves]);const lease=await this.jobs.call('captureExport',{identity:state.identity,sourceHash:state.sourceHash});
+  try{
+   const result=await dialog.showSaveDialog(BrowserWindow.fromWebContents(sender),{title:'Export annotated PDF',defaultPath:state.file.replace(/\.pdf$/i,'')+' annotated.pdf',filters:[{name:'PDF',extensions:['pdf']}]});if(result.canceled)return null;
+   const {physicalPath,keyPath}=require('./path-key.cjs'),target=physicalPath(result.filePath),original=physicalPath(state.file),relative=path.relative(physicalPath(path.join(this.root,'Originals')),target),insideOriginals=!relative||relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative);if(keyPath(target)===keyPath(original)||insideOriginals)throw Error('Choose a different file to keep the original PDF unchanged.');
+   const expectedRevision=await this.jobs.call('targetRevision',{file:target}),sourceBytes=lease?undefined:await state.client.call('source');return await this.jobs.call('export',{identity:state.identity,sourceHash:state.sourceHash,file:target,pageCount:state.pageCount,lease,sourceBytes,expectedRevision});
+  }finally{if(lease)await this.jobs.call('releaseExport',{id:lease.id}).catch(()=>{});}
+ }
+ async dispose(){if(this.closed)return;this.closed=true;for(const owned of this.owners.values())for(const state of owned.values())state.client.dispose();this.owners.clear();await this.jobs.dispose();}
+}
+module.exports={PDFReferenceService,WorkerClient};
+
+function register(options){let service;const methods=new Set(['open','info','page','text','ink','save','serialize','previous','close','cancel','export']);ipcMain.handle('pdf-reference-call',(event,method,args=[])=>{if(!methods.has(method)||!Array.isArray(args)||args.length>4)throw Error('Invalid PDF reference request.');service ||= new PDFReferenceService(options);return service[method](event.sender,...args);});return{dispose:()=>service?.dispose()};}
+module.exports.register=register;

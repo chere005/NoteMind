@@ -5,6 +5,8 @@
  const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
  function adoptDraft(tab,saved){for(const key of ['id','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];}
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
+ function captureDurable(tab,value=snapshot(tab)){return window.NoteMindPDFReferences?.captureSnapshot(tab,value)||value;}
+ async function prepareDurable(tab,value){return window.NoteMindPDFReferences?.prepareSnapshot(tab,value)||value;}
  function captureInsertion(){ensureActiveTab();const tab=activeTab,snap=snapshot(tab);window.NoteMindHistory?.initialize(tab);let range=null;if(visual)try{const selected=getSelection();range=selected?.rangeCount&&rich.contains(selected.anchorNode)?selected.getRangeAt(0).cloneRange():carets.get(tab.id)?.cloneRange();}catch{}return {tab,text:snap.text,start:visual?null:source.selectionStart,end:visual?null:source.selectionEnd,range};}
  function insertionTab(target){const tab=target?.tab;if(!tab||!tabs.includes(tab))throw Error('The original Notepad is no longer open.');if(tab.doc.path&&!/\.(nm|wm|md)$/i.test(tab.doc.path))throw Error('Save the original Notepad as a .nm or .md file before inserting graphics or attachments.');return tab;}
  function restoreInsertion(target){if(target.range&&rich.contains(target.range.startContainer))carets.set(target.tab.id,target.range.cloneRange());else if(!visual&&source.value===target.text&&target.start!==null)source.setSelectionRange(target.start,target.end);}
@@ -18,7 +20,7 @@
  async function session(){const pending=[...closingDrafts.values()].filter(job=>!job.persisted).map(job=>job.tab),kept=[...new Set([...tabs,...pending])];await api.session({tabs:kept.filter(t=>!t.placeholder).map(t=>({id:t.doc.id,path:t.doc.path,visual:t.visual,scroll:t===activeTab?window.NoteMindScroll?.anchor():t.scroll})),active:activeTab?.doc.id});}
  async function persist(tab,saveFile=true){
   if(tab.placeholder)return;
-  const snap=snapshot(tab),edit=tab.editVersion||0;
+  const captured=captureDurable(tab),edit=tab.editVersion||0,snap=await prepareDurable(tab,captured);
   if(!snap.path&&!snap.manualTitle)snap.title=automaticTitle(snap.text);
   const stamp=JSON.stringify([edit,snap.path,snap.revision,snap.visual]);const kept=tab.draftStamp===stamp?snap:await api.draft(snap);tab.draftStamp=stamp;
   adoptDraft(tab,kept);if(!tabs.includes(tab))return;
@@ -27,7 +29,7 @@
    const saved=await api.autosave({...snap,id:kept.id,recoveryId:kept.recoveryId,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});
    for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
    if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
-   else if(!closingDrafts.has(tab))adoptDraft(tab,await api.draft(snapshot(tab)));
+   else if(!closingDrafts.has(tab))adoptDraft(tab,await api.draft(await prepareDurable(tab,captureDurable(tab))));
    if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
    tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
   }catch(error){tab.saveError=error.message;if(tab===activeTab)$('status').textContent='Draft recovered locally · '+error.message;}}
@@ -35,13 +37,13 @@
  }
  function reopenClosing(next){for(const job of closingDrafts.values()){const tab=job.tab;if(next.id&&next.id===tab.doc.id||next.path&&tab.doc.path&&notePathKey(next.path)===notePathKey(tab.doc.path)){job.reopened=true;return tab;}}return null;}
  function closeDraft(tab,captured,onFailure){
-  if(tab.placeholder)return Promise.resolve(null);const kept={...captured,assets:{...captured.assets},meta:structuredClone(captured.meta||{})},existing=closingDrafts.get(tab);
+  if(tab.placeholder)return Promise.resolve(null);captureDurable(tab,captured);const kept={...captured,assets:{...captured.assets},meta:structuredClone(captured.meta||{})},existing=closingDrafts.get(tab);window.NoteMindPDFReferences?.copyCapture(captured,kept);
   if(existing){Object.assign(existing,{captured:kept,editVersion:tab.editVersion||0,onFailure,reopened:false,saved:null,persisted:false,generation:existing.generation+1});return existing.promise;}
   const job={tab,captured:kept,editVersion:tab.editVersion||0,onFailure,generation:0,persisted:false,promise:null};closingDrafts.set(tab,job);
   job.promise=serial(async()=>{try{
    if(startupRun&&!ready)await startupRun;
-   for(;;){const generation=job.generation,reopened=job.reopened&&tabs.includes(tab),latest=reopened?snapshot(tab):{...(job.saved||job.captured),dirty:tab.dirty};for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(tab.doc,key))latest[key]=tab.doc[key];
-    tab.doc={...latest};if(reopened&&tab===activeTab)doc=tab.doc;const saved=await api.draft(latest);adoptDraft(tab,saved);if(generation!==job.generation)continue;job.persisted=true;
+   for(;;){const generation=job.generation,reopened=job.reopened&&tabs.includes(tab),latest=reopened?captureDurable(tab):{...(job.saved||job.captured),dirty:tab.dirty};if(!reopened)window.NoteMindPDFReferences?.copyCapture(job.saved||job.captured,latest);for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(tab.doc,key))latest[key]=tab.doc[key];
+    const preparedEdit=tab.editVersion||0,prepared=await prepareDurable(tab,latest);if(generation!==job.generation)continue;if(!reopened||preparedEdit===(tab.editVersion||0)){tab.doc={...prepared};if(reopened&&tab===activeTab)doc=tab.doc;}const saved=await api.draft(prepared);adoptDraft(tab,saved);if(generation!==job.generation)continue;job.persisted=true;
     await session();if(generation===job.generation)return saved;job.persisted=false;
    }
   }catch(error){tab.saveError=error.message;job.onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);}});
@@ -49,13 +51,13 @@
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
  async function flush(){if(startupRun&&!ready)await startupRun;ensureActiveTab();return serial(async()=>{for(const tab of [...tabs])await persist(tab);await session();updateTitle();window.notemind.dirty(false);});}
- function changed(tab){tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n));tab.placeholder=false;window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimers.get(tab));indexTimers.set(tab,setTimeout(()=>{indexTimers.delete(tab);if(ready&&tabs.includes(tab)&&tab.doc.id&&tab.hadImageAssets)void api.indexImages(snapshot(tab),{background:true}).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500));}
+ function changed(tab,{history=true}={}){tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n));tab.placeholder=false;if(history)window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimers.get(tab));indexTimers.set(tab,setTimeout(()=>{indexTimers.delete(tab);if(ready&&tabs.includes(tab)&&tab.doc.id&&tab.hadImageAssets)void api.indexImages(snapshot(tab),{background:true}).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500));}
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
-  await persist(tab,false);const snap=snapshot(tab),edit=tab.editVersion||0;
+  await persist(tab,false);const captured=captureDurable(tab),edit=tab.editVersion||0,snap=await prepareDurable(tab,captured);
   const saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;
   for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
   if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
-  tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await api.draft(snapshot(tab)));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
+  tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await api.draft(await prepareDurable(tab,captureDurable(tab))));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
  function changedView(){decorate();window.NoteMindHistory?.initialize(activeTab);schedule(400);}
@@ -102,5 +104,5 @@
  window.addEventListener('camera-flush',e=>e.detail.promises.push(flush()));
  window.addEventListener('notemind-command',e=>{if(e.detail==='quickNote'){$('new').click();rich.focus();}if(e.detail==='indexImages')action(indexCurrent);if(e.detail==='deleteNote'){const focused=window.NoteMindSidebar?.focusedDelete();if(focused)action(focused);else if(!activeTab.placeholder)action(()=>trash({path:doc.path,id:doc.id,title:doc.title}));}});
  api.onIndexProgress(value=>{if(value.id===doc.id)$('status').textContent='Indexing image text…';});
- window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
+ window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,captureDurable,prepareDurable,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
 })();

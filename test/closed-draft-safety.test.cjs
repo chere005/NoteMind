@@ -155,3 +155,8 @@ test('redrafting newer edits adopts the latest generation for the next save',asy
 test('manual save and final closing draft retain their newly published generation',async()=>{
  const h=await fixture();await h.notes.saveActive(true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);const before=h.a.doc.recoveryId;assert.equal(await h.c.closeTab(h.a),true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);assert.notEqual(h.a.doc.recoveryId,before);
 });
+
+test('ink preparation during a reopened close preserves newer live text and the next reclose',async()=>{
+ const h=await fixture(),gate=deferred();let preparing=false;const pdf={captureSnapshot:(_tab,snapshot)=>snapshot,copyCapture:noop,prepareSnapshot:async(_tab,snapshot)=>{preparing=true;await gate.promise;return {...snapshot,assets:{...snapshot.assets,'assets/captured-ink.json':'INK'}};}};
+ const queueGate=deferred();h.hooks.session=()=>queueGate.promise;const flushing=h.notes.flush();await until(()=>h.sessions.length>0);h.c.window.NoteMindPDFReferences=pdf;const closing=h.c.closeTab(h.a);h.c.addTab({...copy(h.a.doc),text:'Stale file'});assert.equal(h.c.activeTab,h.a);queueGate.resolve();await flushing;await until(()=>preparing);h.c.activateTab(h.b);h.edit(h.a,'New text while ink encodes');gate.resolve();await closing;assert.equal(h.a.doc.text,'New text while ink encodes');assert.equal(h.source.value,'Other B');await h.notes.flush();assert.equal(h.stored.get('A').text,'New text while ink encodes');
+});
