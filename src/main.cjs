@@ -298,16 +298,17 @@ ipcMain.handle('duplicate-entry', async (_, source) => { const ext = path.extnam
 ipcMain.handle('move-entry', async (_, source, folder) => { const src = path.resolve(source), dir = path.resolve(folder), target = path.join(dir, path.basename(src)); const key = p => process.platform === 'win32' ? p.toLowerCase() : p; if (key(src) === key(target)) return src; const stat = await fs.lstat(src); if (stat.isDirectory() && (key(dir) === key(src) || key(dir).startsWith(key(src) + path.sep))) throw Error('A folder cannot be moved inside itself.'); try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(src);await fileActions.rename(src,target);await notesStore.rename(src,target);notesIPC.send();return target; });
 
 ipcMain.handle('trash-entry', async (_, source) => {await settleDocumentWrites(source);await fileActions.trash(source);notesIPC.send();});
-ipcMain.handle('pad:request-access',async event=>{if(event.sender!==win?.webContents)return null;const result=await inputMonitoring.request();if(result.access==='granted')pen?.displayRetry?.();return result;});
-ipcMain.handle('pad:retry',event=>{if(event.sender===win?.webContents)pen?.displayRetry?.();});
-ipcMain.handle('pad:state',event=>event.sender===win?.webContents?padController?.state():null);
-ipcMain.handle('pad:close',event=>{if(event.sender!==win?.webContents)return null;padController?.setEnabled(false);return padController?.state();});
-ipcMain.handle('pad:set',async(event,enabled)=>{if(event.sender!==win?.webContents||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();});
-ipcMain.handle('pad:ready',event=>{if(event.sender===win?.webContents)padController?.markReady();});
-ipcMain.on('pad:input',(event,input)=>{if(event.sender===win?.webContents)padController?.input(input);});
-ipcMain.on('pad:activity',event=>{if(event.sender===win?.webContents)padController?.activity();});
-ipcMain.on('pad:pen-heartbeat',event=>{if(event.sender===win?.webContents)pen?.displayHeartbeat?.();});
-ipcMain.on('pad:pen-stop',event=>{if(event.sender===win?.webContents)pen?.displayStop?.();});
+const ownsPadEvent=event=>!!win&&!win.isDestroyed()&&event.sender===win.webContents;
+ipcMain.handle('pad:request-access',async event=>{if(!ownsPadEvent(event))return null;const result=await inputMonitoring.request();if(result.access==='granted')pen?.displayRetry?.();return result;});
+ipcMain.handle('pad:retry',event=>{if(ownsPadEvent(event))pen?.displayRetry?.();});
+ipcMain.handle('pad:state',event=>ownsPadEvent(event)?padController?.state():null);
+ipcMain.handle('pad:close',event=>{if(!ownsPadEvent(event))return null;padController?.setEnabled(false);return padController?.state();});
+ipcMain.handle('pad:set',async(event,enabled)=>{if(!ownsPadEvent(event)||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();});
+ipcMain.handle('pad:ready',event=>{if(ownsPadEvent(event))padController?.markReady();});
+ipcMain.on('pad:input',(event,input)=>{if(ownsPadEvent(event))padController?.input(input);});
+ipcMain.on('pad:activity',event=>{if(ownsPadEvent(event))padController?.activity();});
+ipcMain.on('pad:pen-heartbeat',event=>{if(ownsPadEvent(event))pen?.displayHeartbeat?.();});
+ipcMain.on('pad:pen-stop',event=>{if(ownsPadEvent(event))pen?.displayStop?.();});
 ipcMain.handle('edit-native',(_,action)=>{if(!['cut','copy','paste','selectAll'].includes(action))throw Error('Invalid edit action');win?.webContents[action]();});
 ipcMain.handle('spell-add',(_,word)=>{if(typeof word!=='string'||!word.trim()||word.length>100)throw Error('Invalid word');win?.webContents.session.addWordToSpellCheckerDictionary(word.trim());});
 ipcMain.handle('recent-remember',(_,file)=>{if(typeof file!=='string'||!file)throw Error('Invalid file');return projectService.recents.remember(path.resolve(file),'file');});

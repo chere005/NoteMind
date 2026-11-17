@@ -16,11 +16,9 @@ export function sampleOf(r: { f: number; x: number; y: number; p: number }, devi
     y: clamp(1 - r.y / device.maxY),
     p: tip ? clamp(r.p / device.maxP) : 0,
     tip,
-    // On Sean's Intuos, the nearer-tip physical button is reported as the HID lower switch (0x02),
-    // but ordinary pointer input maps it to DOM's second/right-click button. Normalize it to the app's
-    // first slot so the factory-default physical mapping matches the Wacom One's native feed.
-    lower: inRange && ready && (r.f & 0x04) !== 0,
-    upper: inRange && ready && (r.f & 0x02) !== 0,
+    // Keep physical lower/upper names identical to the passive feed and driver pointer bits.
+    lower: inRange && ready && (r.f & 0x02) !== 0,
+    upper: inRange && ready && (r.f & 0x04) !== 0,
     eraser: inRange && (r.f & 0x08) !== 0,
     inRange,
     backend: "machid",

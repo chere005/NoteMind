@@ -101,7 +101,7 @@ function insertAsset(name, data, sheet=null) {
  doc.assets[name]=data;doc.meta ||= {};doc.meta.graphicsPanes ||= {};doc.meta.graphicsPanes[name]={version:1};
  if(sheet)doc.assets[name+'.json']=btoa(unescape(encodeURIComponent(NoteMindGraphics.encode(sheet))));
  const text='\n\n!['+(sheet?'Drawing':'Image')+']('+name+')\n\n';
- if(visual){restoreCaret();const selection=getSelection(),range=selection.getRangeAt(0);const node=range.startContainer.nodeType===1?range.startContainer:range.startContainer.parentElement;const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol');if(block&&rich.contains(block))range.setStartAfter(block);range.collapse(false);const fragment=range.createContextualFragment(render(text)+'<p><br></p>'),last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range);}richChanged=true;}
+ if(visual){restoreCaret();const selection=getSelection(),range=selection.getRangeAt(0);const node=range.endContainer.nodeType===1?range.endContainer:range.endContainer.parentElement;const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol');if(block&&rich.contains(block)){range.setStartAfter(block);range.collapse(true);}else range.collapse(false);const fragment=range.createContextualFragment(render(text)+'<p><br></p>'),last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range);}richChanged=true;}
  else source.setRangeText(text,source.selectionStart,source.selectionEnd,'end');
  markDirty();return true;
 }

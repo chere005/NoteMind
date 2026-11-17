@@ -67,18 +67,20 @@ export interface SlotActions {
 }
 export type PenButtonMap = Record<Slot, SlotActions>
 
-/** First button: erase / Undo; second button: select / Redo. Native reports normalize to these pointer slots. */
+/** Persisted slots name physical positions, consistently across native and driver input. */
+export const BUTTON_LAYOUT = "physical-v1"
+/** Lower (near-tip) button: erase / Undo; upper button: select / Redo. */
 export const DEFAULT_BUTTONS: PenButtonMap = {
-  lower: { hold: "select", double: "redo" },
-  upper: { hold: "erase", double: "undo" },
+  lower: { hold: "erase", double: "undo" },
+  upper: { hold: "select", double: "redo" },
   eraser: { hold: "erase", double: "none" },
   tipAlt: { hold: "none", double: "none" },
 }
 
-/** Earlier default maps are upgraded; deliberate custom actions stay as chosen. */
-export const SWAPPED_DEFAULTS: Pick<PenButtonMap, "lower" | "upper"> = {
-  lower: { hold: "erase", double: "undo" },
-  upper: { hold: "select", double: "redo" },
+/** Unversioned `slots` used reversed pointer-slot names for native physical buttons. */
+const LEGACY_POINTER_DEFAULTS: Pick<PenButtonMap, "lower" | "upper"> = {
+  lower: { hold: "select", double: "redo" },
+  upper: { hold: "erase", double: "undo" },
 }
 
 /** What each button did before a button had two jobs (0.4.0 and earlier): a stored value equal to it was never chosen. */
@@ -108,16 +110,13 @@ export const DOUBLE_CHOICES: { action: TapAction; label: string }[] = [
 ]
 
 export const SLOT_NAMES: Record<Slot, string> = {
-  lower: "Second button (Right Click)", upper: "First button (Middle Click)", eraser: "Eraser end", tipAlt: "Tip + Alt",
+  lower: "Lower button (near the tip)", upper: "Upper button (farther from the tip)", eraser: "Eraser end", tipAlt: "Tip + Alt",
 }
 
-/** Display reports name physical positions; the nearer-tip switch is the app's first button. */
-export const DISPLAY_SLOT_NAMES: Record<Slot, string> = {
-  ...SLOT_NAMES, lower: "Second button (farther from the tip)", upper: "First button (nearer the tip)",
-}
+export const DISPLAY_SLOT_NAMES = SLOT_NAMES
 
-/** The popover's order: the first button first. */
-export const ROW_ORDER: Slot[] = ["upper", "lower", "eraser", "tipAlt"]
+/** The popover's order: the nearer-tip button first. */
+export const ROW_ORDER: Slot[] = ["lower", "upper", "eraser", "tipAlt"]
 
 export const ACTION_WORDS: Record<PenAction, string> = Object.fromEntries(
   [...HOLD_CHOICES, ...DOUBLE_CHOICES].map((choice) => [choice.action, choice.label]),
@@ -140,8 +139,7 @@ export const isPenAction = (value: unknown): value is PenAction => isHoldAction(
  *    choice is kept — a hold action as the HOLD job, a one-shot action (which used to fire on a single tap in the
  *    air) as the DOUBLE TAP of a side button. The other job takes the new default.
  */
-export function slotFrom(value: unknown, slot: Slot): SlotActions {
-  const fallback = DEFAULT_BUTTONS[slot]
+export function slotFrom(value: unknown, slot: Slot, fallback = DEFAULT_BUTTONS[slot]): SlotActions {
   if (value && typeof value === "object") {
     const pair = value as { hold?: unknown; double?: unknown }
     return {
@@ -159,15 +157,17 @@ export function slotFrom(value: unknown, slot: Slot): SlotActions {
  * `buttons` map, else the oldest two-way `sideButton`. Anything unreadable is the default.
  */
 export function migrateButtons(raw: unknown): PenButtonMap {
-  const stored = (raw && typeof raw === "object" ? raw : {}) as { slots?: unknown; buttons?: unknown; sideButton?: unknown }
+  const stored = (raw && typeof raw === "object" ? raw : {}) as { buttonLayout?: unknown; slots?: unknown; buttons?: unknown; sideButton?: unknown }
   const map = { ...DEFAULT_BUTTONS }
   if (stored.slots && typeof stored.slots === "object") {
-    for (const slot of SLOTS) map[slot] = slotFrom((stored.slots as Record<string, unknown>)[slot], slot)
-    // The swapped defaults of the first test build were never chosen: they become the right ones.
+    const physical = stored.buttonLayout === BUTTON_LAYOUT
+    for (const slot of SLOTS) map[slot] = slotFrom((stored.slots as Record<string, unknown>)[slot], slot,
+      !physical && hasDoubleTap(slot) ? LEGACY_POINTER_DEFAULTS[slot] : DEFAULT_BUTTONS[slot])
     const same = (a: SlotActions, b: SlotActions): boolean => a.hold === b.hold && a.double === b.double
-    if (same(map.lower, SWAPPED_DEFAULTS.lower) && same(map.upper, SWAPPED_DEFAULTS.upper)) {
-      map.lower = { ...DEFAULT_BUTTONS.lower }
-      map.upper = { ...DEFAULT_BUTTONS.upper }
+    // Both historical factory pairs become the physical defaults. Other old maps keep their physical actions
+    // by translating the old reversed slot names once; versioned maps are never inferred from their values.
+    if (!physical && !(same(map.lower, DEFAULT_BUTTONS.lower) && same(map.upper, DEFAULT_BUTTONS.upper))) {
+      [map.lower, map.upper] = [map.upper, map.lower]
     }
     return map
   }
@@ -204,7 +204,7 @@ export const buttonsHint = (display: boolean, physicalFeed = false): string =>
   + "without the tip touching; a single press does nothing. "
   + (display || physicalFeed
     ? "The physical side buttons are read directly, so Wacom Center needs no setting for them."
-    : "Leave the side buttons at Wacom's Right Click (second button) and Middle Click (first button): NoteMind reads them itself.")
+    : "Leave the lower button at Wacom's Right Click and the upper button at Middle Click: NoteMind reads them itself.")
 
 /** The side buttons in words, for the Pen chip's tooltip. */
 export const buttonSummary = (map: PenButtonMap): string =>

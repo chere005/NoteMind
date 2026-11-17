@@ -130,7 +130,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  const physicalPointer=async(type,point,{button=0,buttons=0,pressure=0}={})=>{await child.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet=surface]'),r=surface.getBoundingClientRect();surface.dispatchEvent(new PointerEvent(${JSON.stringify(type)},{pointerType:'pen',pointerId:9091,isPrimary:true,button:${button},buttons:${buttons},pressure:${pressure},clientX:r.left+r.width*${point.x},clientY:r.top+r.height*${point.y},bubbles:true,cancelable:true}))})()`);await wait(30)};
  const savedStrokeCount=async(count,label)=>{for(let n=0;n<40;n++){if(strokes().length===count)return;await wait(50)}throw Error(label)};
  const airDouble=async side=>{for(let n=0;n<2;n++){await physicalButtons({[side]:true});await physicalButtons({});}};
- // DOM contact arrives while HID still says tip=false. Its raw driver bit deliberately names the opposite slot.
+ // DOM contact can arrive before the HID tip report; both inputs keep the physical button slot.
  await physicalButtons({lower:true});await physicalPointer('pointerdown',physicalPoint,{buttons:3,pressure:.7});
  await physicalButtons({lower:true,tip:true});await physicalPointer('pointerdown',physicalPoint,{button:2,buttons:3,pressure:.7});
  await physicalPointer('pointermove',physicalPoint,{button:-1,buttons:3,pressure:.7});await physicalButtons({lower:true});await physicalPointer('pointerup',physicalPoint);await physicalButtons({});
@@ -170,7 +170,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await mouseDrag(await mirrorPoint('[data-tablet=surface]',.6,.3),await mirrorPoint('[data-tablet=surface]',.7,.4));
  if(strokes().length!==2||Math.abs(strokes()[1].points[0].x-.6)>.015||Math.abs(strokes()[1].points[0].y-.3)>.015)throw Error('The upright sidebar mouse did not map into the rotated page');
  await rotateBars(false);await wait(100);
- w.webContents.send('pad:pen-status',{state:'needs-input-monitoring',reason:'Enable Input Monitoring'});await wait(100);if(!await w.webContents.executeJavaScript(`document.querySelector('.pad-status')?.textContent.includes('Input Monitoring')`))throw Error('Capture status was not shown');
+ w.webContents.send('pad:pen-status',{state:'needs-input-monitoring',reason:'Enable Input Monitoring'});await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-status')||document.querySelector('.pad-placeholder').textContent.includes('Enable Input Monitoring')||[...document.querySelectorAll('.pad-placeholder button')].some(button=>/Open System Settings|Retry pen input/.test(button.textContent))`))throw Error('Pen permission details or actions appeared in the drawing pane');
 
  await rotateBars(true);await w.webContents.executeJavaScript('window.notemind.pad.set(true)');const inkBeforeClose=JSON.stringify(strokes());expectedTabletClose=true;
  checkpoint('tablet close and remembered settings');
@@ -199,8 +199,8 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
   const url='data:image/svg+xml;base64,'+Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${900*aspect}" height="900"><rect width="100%" height="100%" fill="white"/></svg>`).toString('base64');
   const detail=raw?{url}:{sheet:{name:'Restored drawing',aspect,strokes:aspect===10?[{colorHex:'#2D7DD2',width:3,points:[{x:.2,y:.3},{x:.5,y:.6}],pressures:[.25,.75]}]:[],backdrop:null},target:{tabId:'fixture',assetName:'fixture.svg'}};
   await w.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:${JSON.stringify(detail)}}));void 0`);await wait(300);
-  const fit=await display.webContents.executeJavaScript(`(()=>{const r=document.querySelector('[data-tablet=surface]').getBoundingClientRect(),stage=document.querySelector('.tablet-stage').getBoundingClientRect();return {aspect:r.width/r.height,width:r.width,height:r.height,availableWidth:stage.width,availableHeight:stage.height,inside:r.left>=stage.left-.5&&r.top>=stage.top-.5&&r.right<=stage.right+.5&&r.bottom<=stage.bottom+.5}})()`);
-  if(Math.abs(fit.aspect-aspect)>.001||!fit.inside||Math.min(Math.abs(fit.width-fit.availableWidth),Math.abs(fit.height-fit.availableHeight))>1)throw Error('The edited picture did not fill the available display at its own aspect: '+JSON.stringify(fit));
+  const fit=await display.webContents.executeJavaScript(`(()=>{const r=document.querySelector('[data-tablet=surface]').getBoundingClientRect(),stage=document.querySelector('.tablet-stage').getBoundingClientRect();return {aspect:r.width/r.height,width:r.width,height:r.height,availableWidth:stage.width,availableHeight:stage.height,inside:r.left>=stage.left-.5&&r.top>=stage.top-.5&&r.right<=stage.right+.5&&r.bottom<=stage.bottom+.5,onScreen:r.left>=-.5&&r.top>=-.5&&r.right<=innerWidth+.5&&r.bottom<=innerHeight+.5}})()`);
+  if(Math.abs(fit.aspect-aspect)>.001||!fit.inside||!fit.onScreen||Math.min(Math.abs(fit.width-fit.availableWidth),Math.abs(fit.height-fit.availableHeight))>1)throw Error('The edited picture did not fill the available display at its own aspect: '+JSON.stringify(fit));
  }
  await w.webContents.executeJavaScript(`window.__keyErrors=[];window.addEventListener('error',e=>window.__keyErrors.push(e.message));void 0`);
  await display.webContents.executeJavaScript(`document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true,cancelable:true}));void 0`);

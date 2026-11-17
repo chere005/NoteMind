@@ -31,20 +31,26 @@ test('right mouse temporarily selects regardless of the active tool or custom pe
  assert.equal(pen.resolvePress({...right,pointerType:'pen',pointerId:4242,button:1,buttons:5},settings).kind,'erase');
 });
 
-test('first and second button defaults migrate the old pair while retaining custom assignments',()=>{
- assert.deepEqual(plain(pen.DEFAULT_BUTTONS.upper),{hold:'erase',double:'undo'});
- assert.deepEqual(plain(pen.DEFAULT_BUTTONS.lower),{hold:'select',double:'redo'});
+test('lower and upper physical slots migrate once and retain explicit versioned assignments',()=>{
+ assert.deepEqual(plain(pen.DEFAULT_BUTTONS.lower),{hold:'erase',double:'undo'});
+ assert.deepEqual(plain(pen.DEFAULT_BUTTONS.upper),{hold:'select',double:'redo'});
  assert.deepEqual(plain(pen.migrateButtons({slots:{lower:{hold:'erase',double:'undo'},upper:{hold:'select',double:'redo'}}})),plain(pen.DEFAULT_BUTTONS));
+ assert.deepEqual(plain(pen.migrateButtons({slots:{lower:{hold:'select',double:'redo'},upper:{hold:'erase',double:'undo'}}})),plain(pen.DEFAULT_BUTTONS));
  const custom={lower:{hold:'pan',double:'contextMenu'},upper:{hold:'erase',double:'wider'},eraser:{hold:'none',double:'none'},tipAlt:{hold:'select',double:'none'}};
- assert.deepEqual(plain(pen.migrateButtons({slots:custom})),custom);
- const rows=pen.buttonRows(pen.DEFAULT_BUTTONS,true);assert.equal(rows[0].slot,'upper');assert.match(rows[0].name,/First.*nearer/);assert.equal(rows[1].slot,'lower');assert.match(rows[1].name,/Second.*farther/);
+ assert.deepEqual(plain(pen.migrateButtons({buttonLayout:pen.BUTTON_LAYOUT,slots:custom})),custom);
+ const migrated=plain(pen.migrateButtons({slots:custom}));
+ assert.deepEqual(migrated,{...custom,lower:custom.upper,upper:custom.lower});
+ assert.deepEqual(plain(pen.migrateButtons({buttonLayout:pen.BUTTON_LAYOUT,slots:migrated})),migrated);
+ const reversed={...custom,lower:{hold:'select',double:'redo'},upper:{hold:'erase',double:'undo'}};
+ assert.deepEqual(plain(pen.migrateButtons({buttonLayout:pen.BUTTON_LAYOUT,slots:reversed})),reversed);
+ const rows=pen.buttonRows(pen.DEFAULT_BUTTONS,true);assert.equal(rows[0].slot,'lower');assert.match(rows[0].name,/Lower.*near/);assert.equal(rows[1].slot,'upper');assert.match(rows[1].name,/Upper.*farther/);
  assert.match(pen.buttonsHint(true),/needs no setting/);
 });
 
 test('display capture and separate-tablet HID reports agree on physical holds and air double taps',()=>{
  pen.resetNativeButtons();
  for(const sampleOf of [pen.displaySample,pen.tabletSample]){
-  for(const [physicalBit,slot,hold,tap] of [[2,'upper','erase','undo'],[4,'lower','select','redo']]){
+  for(const [physicalBit,slot,hold,tap] of [[2,'lower','erase','undo'],[4,'upper','select','redo']]){
    const sample=sampleOf({f:0xe1|physicalBit,x:500,y:500,p:700},device,1);
    const event={pointerType:'pen',pointerId:4242,button:0,buttons:pen.maskOf(sample),pressure:sample.p};
    assert.equal(pen.slotOf(event),slot);assert.equal(pen.resolvePress(event,{eraser:false}).kind,hold);
@@ -61,7 +67,7 @@ test('display capture and separate-tablet HID reports agree on physical holds an
 
 test('passive physical reports resolve the same holds and taps without changing mouse input',()=>{
  const event={pointerType:'pen',pointerId:7,button:0,buttons:0,pressure:0};
- for(const [physical,mask,slot,hold,tap] of [['lower',4,'upper','erase','undo'],['upper',2,'lower','select','redo']]){
+ for(const [physical,mask,slot,hold,tap] of [['lower',2,'lower','erase','undo'],['upper',4,'upper','select','redo']]){
   pen.resetNativeButtons();const base={present:true,range:true,tip:false,lower:false,upper:false};
   pen.setNativeButtons({...base,tip:true,[physical]:true});assert.equal(pen.nativeSideMask(),mask);assert.equal(pen.slotOf(event),slot);assert.equal(pen.resolvePress(event,{eraser:false}).kind,hold);
   pen.setNativeButtons(base);let state=pen.noTap,now=10;const fired=[];
@@ -73,4 +79,13 @@ test('passive physical reports resolve the same holds and taps without changing 
   assert.equal(pen.resolvePress({...event,pointerType:'mouse',buttons:1},{eraser:false,selectTool:true}).kind,'select');
  }
  pen.resetNativeButtons();
+});
+
+test('driver fallback and native capture give the same lower erase and upper select gestures',()=>{
+ pen.resetNativeButtons();
+ for(const [button,buttons,slot,action]of [[2,3,'lower','erase'],[1,5,'upper','select']]){
+  const driver={pointerType:'pen',pointerId:7,button,buttons,pressure:.7};
+  assert.equal(pen.slotOf(driver),slot);assert.equal(pen.resolvePress(driver,{eraser:false}).kind,action);
+  assert.equal(pen.resolvePress({...driver,button:0},{eraser:false}).kind,action);
+ }
 });

@@ -51,9 +51,9 @@ export function sampleOf(r: { f: number; x: number; y: number; p: number }, devi
     y: clamp(1 - r.y / device.maxY),
     p: tip ? clamp(r.p / device.maxP) : 0,
     tip,
-    // Normalize physical positions to the same first/second pointer slots as display capture.
-    lower: inRange && ready && (r.f & 0x04) !== 0,
-    upper: inRange && ready && (r.f & 0x02) !== 0,
+    // Keep physical switch positions consistent with display capture and driver pointer input.
+    lower: inRange && ready && (r.f & 0x02) !== 0,
+    upper: inRange && ready && (r.f & 0x04) !== 0,
     eraser: inRange && (r.f & 0x08) !== 0,
     inRange,
     backend: "machid",

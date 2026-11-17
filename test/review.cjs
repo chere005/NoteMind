@@ -29,7 +29,7 @@ app.on('browser-window-created',(_,win)=>{if(!tested)win.setContentSize(1266,627
   check(await js("!!document.querySelector('[data-tablet=orientation-menu]')"),'drawing bar exposes tablet orientation');
   await click('[data-tablet=paper]');await click('[data-bar=paper-lines]');await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
   check(await js("document.querySelector('[data-tablet=surface]').dataset.paper==='lines'"),'paper choices work');
-  await command('pen:toggleErase');check(await js("document.querySelector('.tablet-pane>.camera-foot .line').textContent.includes('Erase tool')"),'pen menu selects the sheet eraser');await command('pen:toggleErase');
+  await command('pen:toggleErase');check(await js("document.querySelector('[data-bar=eraser]').getAttribute('aria-pressed')==='true'"),'pen menu selects the sheet eraser');await command('pen:toggleErase');
   await js("window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url:'data:image/svg+xml;base64,'+btoa('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\"><rect width=\"100\" height=\"100\" fill=\"red\"/></svg>')}}))");await pause(200);
   check(await js("Array.from(document.querySelectorAll('.sheet-tab .name')).some(b=>b.textContent==='Image')"),'image edit creates sheet');
   await stroke();if(!(sheets().at(-1).strokes.length===1&&sheets().at(-1).backdrop)){await pause(1500);report.saveDebug=await js("({footer:document.querySelector('.tablet-footer')?.textContent,tabs:[...document.querySelectorAll('.sheet-tab .name')].map(x=>x.textContent),menus:document.querySelectorAll('.float-menu').length})");}check(sheets().at(-1).strokes.length===1 && sheets().at(-1).backdrop,'annotated image persists');

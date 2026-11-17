@@ -4,7 +4,7 @@
  * geometry and the colour rules are tested with numbers.
  *
  * THE PAPER IS A BACKGROUND, NEVER INK. It is painted on its own canvas under the ink, it is not in
- * `TabletPage.strokes`. The transparent drawing is made from strokes alone. Only the Page picture includes the paper.
+ * `TabletPage.strokes`. Inserted drawings and Page pictures include it; an explicit ink-only export can omit it.
  *
  * Dotted paper supports camera recognition; the chooser also offers standard ruling styles.
  *

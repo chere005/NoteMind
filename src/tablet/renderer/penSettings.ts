@@ -39,7 +39,7 @@
 
 import { useSyncExternalStore } from "react"
 import {
-  DEFAULT_BUTTONS, hasDoubleTap, holdMap, migrateButtons,
+  BUTTON_LAYOUT, DEFAULT_BUTTONS, hasDoubleTap, holdMap, migrateButtons,
   type HoldAction, type PenButtonMap, type Slot, type TapAction,
 } from "./penButtons"
 
@@ -88,14 +88,18 @@ function load(): Pick<PenSettings, "penDraws" | "pressure" | "sideButton" | "but
 }
 
 let state: PenSettings = { ...load(), eraser: false, selectTool: false, seen: "none" }
+let preferenceRevision = 0
 const listeners = new Set<() => void>()
 
 function set(next: Partial<PenSettings>): void {
+  const persisted = (["penDraws", "pressure", "tool", "buttons"] as const)
+    .some(key => next[key] !== undefined && next[key] !== state[key])
+  if (persisted) preferenceRevision++
   state = { ...state, ...next }
-  try {
+  if (persisted) try {
     localStorage.setItem(KEY, JSON.stringify({
       penDraws: state.penDraws, pressure: state.pressure, tool: state.tool,
-      slots: state.buttons,
+      buttonLayout: BUTTON_LAYOUT, slots: state.buttons,
       // For an older NoteMind on the same profile.
       buttons: holdMap(state.buttons), sideButton: state.sideButton,
     }))
@@ -218,6 +222,8 @@ export function usePenSettings(): PenSettings {
   )
 }
 
-const receivePen=value=>{if(typeof value!=='string'||localStorage.getItem(KEY)===value)return;localStorage.setItem(KEY,value);state={...state,...load()};listeners.forEach(listener=>listener())};
-window.notemind.preferenceGet('pen').then(receivePen).catch(()=>{});
+const receivePen=value=>{if(typeof value!=='string'||localStorage.getItem(KEY)===value)return;preferenceRevision++;localStorage.setItem(KEY,value);state={...state,...load()};listeners.forEach(listener=>listener())};
+// A delayed startup read must not replace a button choice made while that read was in flight.
+const startupRevision=preferenceRevision;
+window.notemind.preferenceGet('pen').then(value=>{if(preferenceRevision===startupRevision)receivePen(value)}).catch(()=>{});
 window.notemind.onPreference(({key,value})=>{if(key==='pen')receivePen(value)});

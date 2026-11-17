@@ -1,13 +1,15 @@
 # Continuation
 
-- 0.33.0 is built separately; do not install, stop or relaunch the running app until Sean approves the next version.
+- 0.35.0 removes persistent capture diagnostics and instructional footer prose from the drawing pane; manual access and retry remain in Pen settings.
+- Inserting after a selection spanning multiple images creates a separate page block; it never nests a new page inside an existing graphics pane.
+- Physical lower pen button deletes strokes and upper selects; versioned mappings survive reopen and transient pen detection never writes preferences. Inserted pages retain their own paper and backdrop.
 - Main-window shutdown tolerates destroyed web contents; nested runtime signatures are sealed and strictly verified inside out.
 - Recovery writes serialize whole drafts; file/project saves reject external edits, follow file links and preserve moved tabs. Markdown moves, duplicates and history retain editable assets with filename-specific companions; duplicates get fresh identities.
 - Imports, scans, image text and drawing exports keep their original document and immutable source snapshot. Unicode search, fenced writing rules, section moves and attachment rendering preserve content.
 - Passive pen actions require the visible Wacom owner or a focused document; hidden pads restore throttling. Current Production and Preview builds share one device owner; older builds use their original profile owner.
 - OCR runs one worker with at most two threads and bounded queues, yields to foreground requests, and survives cancelled quits. PDF cancellation/passwords, stale cleanup, TIFF Word images, numbered exports, print controls and document shortcuts have regression coverage.
 
-- NoteMind 0.33.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- NoteMind 0.35.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
 - Held Wacom side buttons accept real pressure before a delayed HID tip report; native button pushes supersede older snapshots, and both main and Wacom windows observe the pen.
 - Native pen pipes handle asynchronous closure errors; denied independent capture stays paused with driver input available, and installed app/helper signatures use the local Developer ID when present. Quit waits for camera hydration after a Wacom portal remount.
 - An enabled extended Wacom opens directly on launch; closing only its window preserves the chosen drawing location for the next launch. `scripts/install-preview.cjs` installs a separate Preview app and visible data folder without replacing the running app.

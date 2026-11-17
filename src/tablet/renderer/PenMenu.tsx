@@ -1,7 +1,6 @@
 /**
  * The tablet pen's sheet: says whether a tablet pen has been seen, whether it reports pressure, and holds the pen's choices
- * (penSettings.ts): the pen always draws, pressure, what each button does, the tablet's orientation and (only when the driver
- * refused it) Retry for the system mapping. Nothing else.
+ * (penSettings.ts): drawing, pressure, buttons, orientation, and manual access/retry controls for an available Wacom.
  *
  * It was the Wacom CHIP on the bar until 2026-10-10 (Sean: "i only need a pen enabled and disabled button.. and a dropdown"):
  * now it is the pen menu's last row, "Tablet buttons and orientation…" (`PenSheetRow`, the old chip's `data-pen="chip"` and
@@ -59,6 +58,9 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
   const settings = usePenSettings()
   const status = usePenFeedStore().status
   const [pad, setPad] = useState<{enabled:boolean;available:boolean;owned:boolean}|null>(null)
+  const [padAction, setPadAction] = useState<string|null>(null)
+  const [padError, setPadError] = useState<string|null>(null)
+  const padPending = useRef(false)
   useEffect(() => {
     const api = (window as any).notemind?.pad
     if (!api) return
@@ -68,6 +70,15 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
     return () => { live = false; off() }
   }, [])
   const onPad = !!(pad?.enabled && pad.available && pad.owned)
+  const runPadAction = async (action:"requestAccess"|"retry") => {
+    if (padPending.current) return
+    const api = (window as any).notemind?.pad
+    if (!api?.[action]) return
+    padPending.current = true; setPadAction(action); setPadError(null)
+    try { await api[action]() }
+    catch (error) { setPadError(error instanceof Error ? error.message : String(error)) }
+    finally { padPending.current = false; setPadAction(null) }
+  }
   const display = useNativeButtons().present || !!pad?.available
   const physicalFeed = status?.tablet?.sideButtonMapping === "physical"
   const pop = useRef<HTMLDivElement | null>(null)
@@ -147,6 +158,13 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
         How the tablet is turned
         <OrientationSelect />
       </label>
+      {pad?.available && <div className="pen-input-actions">
+        {(window as any).notemind?.platform === "darwin" && <button type="button" data-pen="input-monitoring" disabled={padAction!==null}
+          title="Open macOS Input Monitoring settings for pen input" onClick={() => { void runPadAction("requestAccess") }}>Input Monitoring…</button>}
+        <button type="button" data-pen="retry-input" disabled={padAction!==null}
+          title="Try the Wacom pen input again" onClick={() => { void runPadAction("retry") }}>Retry Pen Input</button>
+        {padError && <p className="hint" role="alert">{padError}</p>}
+      </div>}
       {!onPad && <label>
         <input type="checkbox" data-pen="map-sheet" checked={status?.settings.mapSheet === true}
                onChange={(event) => { void changeSettings({ mapSheet: event.target.checked }) }} />
