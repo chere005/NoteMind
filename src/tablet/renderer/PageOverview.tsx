@@ -1,0 +1,52 @@
+import {useEffect,useLayoutEffect,useMemo,useRef,useState,useSyncExternalStore} from 'react'
+import {OverviewCoordinator,stepBefore,visibleWindow} from '../../page-overview-coordinator.cjs'
+import {OverviewThumbnailClient} from '../../overview-thumbnail-client.cjs'
+import './page-overview.css'
+
+export interface OverviewPage {
+ pageId:string
+ name?:string
+ geometryRevision?:string|number
+ revision?:string|number
+ signature?:string
+ strokeCount?:number
+ pointCount?:number
+ aspect?:number
+ paper?:{kind:string;spacing:string;colour:string}
+ extent?:{x:number;y:number;width:number;height:number}
+ backdropHash?:string
+ preview?:{revision:string|number;data:string}
+}
+export interface PageOverviewProps {
+ pages:OverviewPage[]
+ activeId:string|null
+ onSelect:(id:string)=>void
+ onReorder:(id:string,beforeId:string|null)=>void|Promise<void>
+ loadCompact:(id:string,options:{signal:AbortSignal;background?:boolean})=>Promise<any>
+ coordinator?:OverviewCoordinator
+ onClose?:()=>void
+}
+const MIME='application/x-notemind-overview-page'
+const nameOf=(page:OverviewPage)=>page.name?.slice(0,256)||'Untitled page'
+const countOf=(value:number|undefined)=>Number.isSafeInteger(value)&&typeof value==='number'&&value>=0?Math.min(value,2000000):0
+
+/** The host owns selection/persistence. This view owns only visible thumbnail leases. */
+export function PageOverview({pages,activeId,onSelect,onReorder,loadCompact,coordinator:shared,onClose}:PageOverviewProps){
+ const load=useRef(loadCompact);load.current=loadCompact
+ const [local]=useState(()=>{const client=new OverviewThumbnailClient(),render=Object.assign(client.render.bind(client),{dispose:()=>client.dispose()});return new OverviewCoordinator({load:(id:string,options:any)=>load.current(id,options),render})})
+ const coordinator=shared||local!,owner=useRef({}),scroller=useRef<HTMLDivElement>(null),buttons=useRef(new Map<string,HTMLButtonElement>()),focusPending=useRef<string|null>(null),drag=useRef<string|null>(null),lifetime=useRef(0)
+ const [viewport,setViewport]=useState({width:600,height:600,scrollTop:0}),[focusId,setFocusId]=useState<string|null>(activeId||pages[0]?.pageId||null),[drop,setDrop]=useState<string|null>(null),[error,setError]=useState('')
+ useSyncExternalStore(coordinator.subscribe,coordinator.getSnapshot,coordinator.getSnapshot)
+ const window=visibleWindow(pages.length,viewport),visible=useMemo(()=>pages.slice(window.start,window.end),[pages,window.start,window.end]),visibleIds=useMemo(()=>visible.map(page=>page.pageId),[visible])
+ useEffect(()=>{coordinator.setPages(pages)},[coordinator,pages])
+ useEffect(()=>{coordinator.setVisible(owner.current,visibleIds);return()=>coordinator.releaseVisible(owner.current)},[coordinator,visibleIds])
+ useEffect(()=>{const generation=++lifetime.current;return()=>{queueMicrotask(()=>{if(lifetime.current===generation)local.dispose()})}},[local])
+ useEffect(()=>{if(!pages.some(page=>page.pageId===focusId))setFocusId(pages.some(page=>page.pageId===activeId)?activeId:pages[0]?.pageId||null)},[pages,focusId,activeId])
+ useLayoutEffect(()=>{const node=scroller.current;if(!node)return;const initial=pages.findIndex(page=>page.pageId===activeId);if(initial>=0)node.scrollTop=Math.floor(initial/visibleWindow(pages.length,{width:node.clientWidth,height:node.clientHeight}).columns)*190;const measure=()=>setViewport(previous=>({...previous,width:node.clientWidth,height:node.clientHeight,scrollTop:node.scrollTop}));measure();const observer=new ResizeObserver(measure);observer.observe(node);return()=>observer.disconnect()},[])
+ useLayoutEffect(()=>{const id=focusPending.current,node=id&&buttons.current.get(id);if(node){focusPending.current=null;node.focus({preventScroll:true})}},[visibleIds,focusId])
+ const focus=(index:number)=>{const page=pages[Math.max(0,Math.min(pages.length-1,index))],node=scroller.current;if(!page||!node)return;setFocusId(page.pageId);focusPending.current=page.pageId;const top=Math.floor(index/window.columns)*window.rowHeight;if(top<node.scrollTop)node.scrollTop=top;else if(top+window.rowHeight>node.scrollTop+node.clientHeight)node.scrollTop=top+window.rowHeight-node.clientHeight;setViewport(previous=>({...previous,scrollTop:node.scrollTop}));buttons.current.get(page.pageId)?.focus({preventScroll:true});if(buttons.current.has(page.pageId))focusPending.current=null}
+ const move=(id:string,beforeId:string|null|undefined)=>{if(beforeId===undefined||beforeId===id||!pages.some(page=>page.pageId===id)||beforeId!==null&&!pages.some(page=>page.pageId===beforeId))return;setError('');try{void Promise.resolve(onReorder(id,beforeId)).catch(reason=>setError(String(reason?.message||'Could not reorder pages.').slice(0,500)))}catch(reason){setError(String((reason as Error)?.message||'Could not reorder pages.').slice(0,500))}}
+ const key=(event:React.KeyboardEvent<HTMLButtonElement>,page:OverviewPage)=>{if(event.nativeEvent.isComposing||event.keyCode===229||event.ctrlKey||event.metaKey)return;const index=pages.findIndex(row=>row.pageId===page.pageId),delta=event.key==='ArrowLeft'?-1:event.key==='ArrowRight'?1:event.key==='ArrowUp'?-window.columns:event.key==='ArrowDown'?window.columns:0;if(event.altKey){if(delta){event.preventDefault();move(page.pageId,stepBefore(pages,page.pageId,delta))}return}if(delta){event.preventDefault();focus(index+delta)}else if(event.key==='Home'||event.key==='End'){event.preventDefault();focus(event.key==='Home'?0:pages.length-1)}}
+ const rows=[];for(let row=window.firstRow;row<window.lastRow;row++){const entries=pages.slice(row*window.columns,(row+1)*window.columns);rows.push(<div className="page-overview-row" role="row" aria-rowindex={row+1} key={row} style={{top:row*window.rowHeight,gridTemplateColumns:`repeat(${window.columns},minmax(0,1fr))`}}>{entries.map((page,column)=>{const thumbnail=coordinator.get(page.pageId),selected=page.pageId===activeId;return <div role="gridcell" aria-colindex={column+1} aria-selected={selected} key={page.pageId} className={`page-overview-cell${selected?' is-active':''}${drop===page.pageId?' is-drop':''}`} onDragOver={event=>{if(drag.current&&drag.current!==page.pageId){event.preventDefault();event.dataTransfer.dropEffect='move';setDrop(page.pageId)}}} onDragLeave={()=>setDrop(current=>current===page.pageId?null:current)} onDrop={event=>{event.preventDefault();const id=drag.current;drag.current=null;setDrop(null);if(id&&event.dataTransfer.getData(MIME)===id)move(id,page.pageId)}}><button type="button" className="page-overview-page" ref={node=>{if(node)buttons.current.set(page.pageId,node);else buttons.current.delete(page.pageId)}} tabIndex={page.pageId===focusId?0:-1} aria-label={`${nameOf(page)}, page ${row*window.columns+column+1}`} aria-current={selected?'page':undefined} title={nameOf(page)} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" draggable onDragStart={event=>{drag.current=page.pageId;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData(MIME,page.pageId)}} onDragEnd={()=>{drag.current=null;setDrop(null)}} onFocus={()=>setFocusId(page.pageId)} onKeyDown={event=>key(event,page)} onClick={()=>{setFocusId(page.pageId);onSelect(page.pageId)}}><span className="page-overview-preview">{thumbnail?.url?<img src={thumbnail.url} alt="" draggable={false}/>:<span className="page-overview-placeholder" aria-hidden="true">{row*window.columns+column+1}</span>}</span><span className="page-overview-name">{nameOf(page)}</span><span className="page-overview-count">{countOf(page.strokeCount).toLocaleString()} {countOf(page.strokeCount)===1?'stroke':'strokes'}</span></button>{thumbnail?.error&&<button type="button" className="page-overview-retry" onClick={()=>coordinator.retry(page.pageId)} title={thumbnail.error}>Retry preview</button>}</div>})}</div>)}
+ return <section className="page-overview" aria-label="Page overview"><header><span>Pages <span className="page-overview-total">{pages.length}</span></span>{onClose&&<button type="button" onClick={onClose} aria-label="Close page overview" title="Close page overview">×</button>}</header>{error&&<div role="alert" className="page-overview-error">{error}</div>}<div className="page-overview-scroll" ref={scroller} role="grid" aria-label="Pages" aria-rowcount={window.rows} aria-colcount={window.columns} onDragOver={event=>{if(drag.current&&!(event.target as HTMLElement).closest('[role=gridcell]')){event.preventDefault();event.dataTransfer.dropEffect='move'}}} onDrop={event=>{if((event.target as HTMLElement).closest('[role=gridcell]'))return;event.preventDefault();const id=drag.current;drag.current=null;setDrop(null);if(id&&event.dataTransfer.getData(MIME)===id)move(id,null)}} onScroll={event=>{const scrollTop=event.currentTarget.scrollTop;setViewport(previous=>({...previous,scrollTop}))}}><div className="page-overview-space" style={{height:window.totalHeight}}>{rows}</div>{!pages.length&&<div className="page-overview-empty">No pages</div>}</div></section>
+}
