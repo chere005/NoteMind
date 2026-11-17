@@ -17,7 +17,7 @@ function packOutput(doc,known,context){
  return assets.pack(doc,known);
 }
 parentPort.on('message',async packet=>{
- let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch}=packet;packet=null;
+ let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup}=packet;packet=null;
  try{
   assets ||= new ArchiveAssetWorker(assetLimits);raw ||= new RawAssetStore({epoch:codecEpoch,...rawLimits,legacy:assets});assets.raw=raw;
   if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');
@@ -30,7 +30,7 @@ parentPort.on('message',async packet=>{
   else if(op==='rawLeaseRelease')value=raw.releaseLease(args[0]);
   else if(op==='rawRetain')value=raw.retain(args[0]);
   else if(op==='rawRelease')value=raw.release(args[0]);
-  else if(op==='rawScopedRelease')value=raw.releaseScoped(args[0],rawContext);
+  else if(op==='rawScopedRelease'){raw.releaseScoped(args[0],rawContext);value=inspectionCleanup?{inspectionCleanup}:undefined;}
   else if(op==='rawAcquireWorking')value=raw.acquireWorking(args[0],rawContext);
   else if(op==='rawReleaseWorking')value=raw.releaseWorking(args[0]);
   else if(op==='rawInfo')value=raw.info(args[0].descriptor,rawContext);
