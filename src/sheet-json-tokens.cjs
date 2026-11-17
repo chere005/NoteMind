@@ -38,4 +38,5 @@ class JSONValue{
  }
 }
 const sha=()=>createHash('sha256');
-module.exports={legacyTokens,legacyTokenBatches,CanonicalJSON,JSONValue,MAX_LEGACY_BYTES,MAX_METADATA_BYTES,sha};
+function textSHA(){const hash=sha();let parts=[],length=0,surrogate='';const flush=()=>{if(length)hash.update(parts.join(''));parts=[];length=0;};return {update(piece){piece=surrogate+piece;surrogate='';if(piece.length&&/[\uD800-\uDBFF]/.test(piece.at(-1))){surrogate=piece.at(-1);piece=piece.slice(0,-1);}parts.push(piece);length+=piece.length;if(length>=8192)flush();return this;},digest(){if(surrogate){parts.push(surrogate);length++;surrogate='';}flush();return hash.digest('hex');}};}
+module.exports={legacyTokens,legacyTokenBatches,CanonicalJSON,JSONValue,MAX_LEGACY_BYTES,MAX_METADATA_BYTES,sha,textSHA};

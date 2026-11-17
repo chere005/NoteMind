@@ -1,4 +1,4 @@
-const graphics=require('./graphics-pane.js'),{hashText,removeSuffix}=require('./stroke-signature.js');
+const graphics=require('./graphics-pane.js'),{hashText,hashWriter,removeSuffix}=require('./stroke-signature.js');
 const validId=id=>Number.isSafeInteger(id)&&id>0;
 function metadata(value){
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof value.name!=='string')throw Error('Invalid drawing sheet.');
@@ -7,6 +7,6 @@ function metadata(value){
 }
 const nonunit=extent=>extent&&(extent.x!==0||extent.y!==0||extent.width!==1||extent.height!==1);
 const suffix=(meta,backdropHash)=>'],'+JSON.stringify([backdropHash,JSON.stringify(meta.paper),...(nonunit(meta.extent)?[JSON.stringify(meta.extent)]:[])]).slice(1);
-async function signature(meta,root,index,backdropHash){let value=hashText('['+JSON.stringify(meta.name)+','+JSON.stringify(meta.aspect)+',['),at=0;for await(const record of index.records(root))value=hashText((at++?',':'')+JSON.stringify(record.hash),value);return 'nm2:'+hashText(suffix(meta,backdropHash),value);}
+async function signature(meta,root,index,backdropHash){const value=hashWriter().write('['+JSON.stringify(meta.name)+','+JSON.stringify(meta.aspect)+',[');let at=0;for await(const record of index.records(root))value.write((at++?',':'')+JSON.stringify(record.hash));return 'nm2:'+value.write(suffix(meta,backdropHash)).digest();}
 function appendSignature(meta,old,records,backdropHash){if(meta.name!==old.metadata.name||meta.aspect!==old.metadata.aspect)return null;let value=removeSuffix(old.signature.slice(4),suffix(old.metadata,old.backdrop?.hash||null)),count=old.order.count;for(const record of records)value=hashText((count++?',':'')+JSON.stringify(record.hash),value);return 'nm2:'+hashText(suffix(meta,backdropHash),value);}
 module.exports={metadata,validId,signature,appendSignature,suffix,nonunit};

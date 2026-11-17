@@ -1,7 +1,7 @@
 // Legacy migration visits scalar tokens twice; it never assembles a point graph.
-const {legacyTokenBatches,CanonicalJSON,JSONValue,sha}=require('./sheet-json-tokens.cjs');
+const {legacyTokenBatches,CanonicalJSON,JSONValue,sha,textSHA}=require('./sheet-json-tokens.cjs');
 const {sheetRevision,sameSheetRevision}=require('./sheet-revision.cjs'),{metadata,signature}=require('./sheet-schema.cjs');
-const {StrokeBinaryBuilder,GeometryBatcher}=require('./sheet-geometry.cjs'),{hashText}=require('./stroke-signature.js');
+const {StrokeBinaryBuilder,GeometryBatcher}=require('./sheet-geometry.cjs'),{hashText,hashWriter}=require('./stroke-signature.js');
 const MAX_BACKGROUND=150*1024*1024,MAX_PAGES=10000;
 class ValueBoundary{
  constructor(visit){this.visit=visit;this.depth=0;this.started=false;this.done=false;}
@@ -31,7 +31,7 @@ async function scanLegacy(file,packs,{index,nextStroke=1}={}){
  const before=await sheetRevision(file);if(!before)return null;const fileHash=sha(),pages=[];let needsSecondPass=false;
  await visitPages(file,{
   startPage:at=>({at,keys:new Set(),meta:Object.create(null),properties:[],backdrop:null,saved:null}),
-  property(page,key){let sink;if(key==='backdrop')sink=backgroundSink(packs);else if(key==='saved')sink=textSink();else{const digest=sha(),canonical=new CanonicalJSON(piece=>digest.update(piece)),value=key==='strokes'?null:new JSONValue(),geometry=key==='strokes'&&index?new LegacyGeometry(packs,index,()=>nextStroke++):null;sink={token(token){canonical.token(token);value?.token(token);return geometry?.token(token);},async finish(){if(geometry)page.geometry=await geometry.finish();return {value:value?.root,digest:digest.digest('hex')};}};}page.sink=sink;return token=>sink.token(token);},
+  property(page,key){let sink;if(key==='backdrop')sink=backgroundSink(packs);else if(key==='saved')sink=textSink();else{const digest=textSHA(),canonical=new CanonicalJSON(piece=>digest.update(piece)),value=key==='strokes'?null:new JSONValue(),geometry=key==='strokes'&&index?new LegacyGeometry(packs,index,()=>nextStroke++):null;sink={token(token){canonical.token(token);value?.token(token);return geometry?.token(token);},async finish(){if(geometry)page.geometry=await geometry.finish();return {value:value?.root,digest:digest.digest('hex')};}};}page.sink=sink;return token=>sink.token(token);},
   async endProperty(page,key){const result=await page.sink.finish();if(key==='backdrop')page.backdrop=result.value;else if(key==='saved')page.saved=result;else if(key!=='strokes')Object.defineProperty(page.meta,key,{value:result.value,enumerable:true});if(key!=='saved'&&key!=='pageId')page.properties.push([key,result.digest]);},
   async endPage(page){if(!page.keys.has('strokes'))throw Error('Invalid drawing strokes.');page.metadata=metadata(page.meta);page.semantic=sha().update(JSON.stringify(page.properties.sort((a,b)=>a[0].localeCompare(b[0])))).digest('hex');if(page.geometry){const current=await signature(page.metadata,page.geometry.order,index,page.backdrop?.hash||null);page.metadata.saved=page.saved?.value?.startsWith('nm2:')?page.saved.value:null;if(page.saved?.digest&&!page.saved?.value?.startsWith('nm2:'))needsSecondPass=true;page.materialized={metadata:page.metadata,order:page.geometry.order,binaryBytes:page.geometry.binaryBytes,backdrop:page.backdrop,signature:current,legacySemantic:page.semantic};delete page.geometry;}delete page.sink;delete page.meta;delete page.properties;delete page.keys;pages.push(page);}
  },bytes=>fileHash.update(bytes));
@@ -43,7 +43,7 @@ class LegacyGeometry{
  async finish(){if(!this.complete||this.array||this.stroke)throw Error('Invalid drawing strokes.');for(const record of await this.batch.flush())await this.builder.add(record);return {order:await this.builder.finish(),binaryBytes:this.binaryBytes};}
 }
 class StreamedStroke{
- constructor(){this.builder=new StrokeBinaryBuilder();this.depth=0;this.key=null;this.mode=null;this.point=null;this.pointKey=null;this.seen=new Set();this.hash=null;this.canonical=new CanonicalJSON(piece=>{this.hash=hashText(piece,this.hash);});this.scalar=null;}
+ constructor(){this.builder=new StrokeBinaryBuilder();this.depth=0;this.key=null;this.mode=null;this.point=null;this.pointKey=null;this.seen=new Set();this.hash=hashWriter();this.canonical=new CanonicalJSON(piece=>this.hash.write(piece));this.scalar=null;}
  token(token){
   this.canonical?.token(token);const n=token.name;
   if(n==='startObject'){this.depth++;if(this.depth===3&&this.mode==='points')this.point={};else if(this.depth!==1)throw Error('Invalid graphics point.');return;}
@@ -57,7 +57,7 @@ class StreamedStroke{
   if(n==='numberValue'){const value=Number(token.value);if(this.depth===1&&this.key==='width')this.builder.width=value;else if(this.depth===3&&this.point&&this.pointKey){this.point[this.pointKey]=value;this.pointKey=null;}else if(this.depth===2&&this.mode==='pressures')this.builder.pressure(value);else throw Error('Invalid graphics stroke number.');return;}
   if(['nullValue','trueValue','falseValue'].includes(n))throw Error('Invalid graphics stroke value.');
  }
- finish(){if(!this.seen.has('points'))throw Error('Invalid graphics stroke points.');return {...this.builder.finish(),hash:this.hash};}
+ finish(){if(!this.seen.has('points'))throw Error('Invalid graphics stroke points.');return {...this.builder.finish(),hash:this.hash.digest()};}
 }
 async function escapedStringHash(hash,bytes){hash.update('"');for(let at=0;at<bytes.length;at+=65536)hash.update(JSON.stringify(bytes.subarray(at,at+65536).toString('ascii')).slice(1,-1));hash.update('"');}
 async function materializeLegacy(file,scan,packs,index,{selected=()=>true,nextStroke=1,pageId=()=>require('node:crypto').randomUUID()}={}){
@@ -66,7 +66,7 @@ async function materializeLegacy(file,scan,packs,index,{selected=()=>true,nextSt
   startPage:at=>({at,keys:new Set()}),
   property(page,key){
    if(key!=='strokes'||!selected(scan.pages[page.at]))return ()=>{};
-   const descriptor=scan.pages[page.at],builder=index.builder(),batch=new GeometryBatcher(packs),old=descriptor.saved?.digest&&!descriptor.saved?.value?.startsWith('nm2:')?sha():null;let bytes=0,count=0,first=true;
+   const descriptor=scan.pages[page.at],builder=index.builder(),batch=new GeometryBatcher(packs),old=descriptor.saved?.digest&&!descriptor.saved?.value?.startsWith('nm2:')?textSHA():null;let bytes=0,count=0,first=true;
    old?.update('{"name":'+JSON.stringify(descriptor.metadata.name)+',"aspect":'+JSON.stringify(descriptor.metadata.aspect)+',"strokes":');
    const canonical=old?new CanonicalJSON(piece=>old.update(piece)):null;current={descriptor,builder,batch,old,get bytes(){return bytes;},get count(){return count;}};
    return token=>{
