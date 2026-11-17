@@ -8,7 +8,7 @@ const same=(a,b)=>['dev','ino','size','mtimeNs','ctimeNs'].every(key=>a[key]===b
 async function legacyCollision(base,file,folder){const entries=await fs.opendir(base);try{for await(const entry of entries)if(entry.name!==path.basename(file)&&/\.md$/i.test(entry.name)&&markdown.legacyFolder(entry.name)===folder)return true;}finally{await entries.close().catch(()=>{});}return false;}
 async function publishMarkdownVersionFromFile(file,{root,id,noteId,titleFallback='',expectedRevision,previousHash=null,existingVersionId}={},hooks={}){
  if(typeof file!=='string'||!path.isAbsolute(file)||typeof root!=='string'||!root||typeof id!=='string'||typeof noteId!=='string'||!expectedRevision||!/^[a-f0-9]{64}$/.test(expectedRevision.sha256)||!Number.isSafeInteger(expectedRevision.bytes))throw Error('Invalid Markdown version publication.');
- const base=await fs.realpath(path.dirname(file)),primary=path.join(base,path.basename(file)),observations=new Map(),assetFiles=new Map(),refs={},assetHashes={};let metadata={},legacyOwner=null,total=0;
+ const base=await fs.realpath(path.dirname(file)),primary=path.join(base,path.basename(file)),observations=new Map(),assetFiles=new Map(),refs=Object.create(null),assetHashes=Object.create(null);let metadata={},legacyOwner=null,total=0;
  const observe=(target,sourceIdentity)=>observations.set(target,sourceIdentity);
  const read=async(target,name,expected)=>{const result=await readLinkedAsset(target,{root:base,name},{expectedIdentity:expected});observe(target,result.sourceIdentity);return result;};
  const original=await read(primary,'assets/source.md');if(original.bytes.length!==expectedRevision.bytes||hash(original.bytes)!==expectedRevision.sha256)throw changed();const text=original.bytes.toString('utf8');original.bytes=null;
