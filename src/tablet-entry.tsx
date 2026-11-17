@@ -76,7 +76,7 @@ const sheetSignature=s=>s.loaded===false?(s.name===s.lazyMetadata?.name&&JSON.st
 function App(){
 
  const [documents,setDocuments]=useState([]),[documentId,setDocumentId]=useState(null);
- useEffect(()=>{const open=e=>{const value={...e.detail,key:e.detail.bindingId?'pdf:'+e.detail.attachment.noteId+':'+e.detail.attachment.logicalId:e.detail.path};setDocuments(old=>old.some(d=>(d.key||d.path)===value.key)?old:[...old,value]);setDocumentId(value.key);if(document.getElementById('pane').hidden)document.getElementById('paneToggle').click()};window.addEventListener('notemind-preview',open);return()=>window.removeEventListener('notemind-preview',open)},[]);
+ useEffect(()=>{const open=e=>{const value={...e.detail,key:e.detail.bindingId?'pdf:'+e.detail.attachment.noteId+':'+e.detail.attachment.logicalId+':'+e.detail.path:e.detail.path};setDocuments(old=>old.some(d=>(d.key||d.path)===value.key)?old:[...old,value]);setDocumentId(value.key);if(document.getElementById('pane').hidden)document.getElementById('paneToggle').click()};window.addEventListener('notemind-preview',open);return()=>window.removeEventListener('notemind-preview',open)},[]);
  const [sheets,setSheets]=useState([{name:'Sheet 1',page:new TabletPage(1/A5_ASPECT)}]);
 
  const [loaded,setLoaded]=useState(false), [loadFailed,setLoadFailed]=useState(false); const saves=useRef(Promise.resolve()), saveTimer=useRef(null), latestSheets=useRef(null), liveSheets=useRef(sheets), sheetSaver=useRef(null), lazySheets=useRef(null), pageIdentities=useRef(new WeakMap()), modelCache=useRef(new SheetModelCache()), modelPrune=useRef(null), pendingSheetActions=useRef(new Set()), persistence=useRef({loaded:false,loadFailed:false});

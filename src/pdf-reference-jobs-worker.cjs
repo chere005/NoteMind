@@ -12,6 +12,7 @@ parentPort.on('message',async packet=>{
   else if(operation==='scanFinish'){const session=scanSessions.get(args.id);if(!session)throw Error('Scan assembly expired.');scanSessions.delete(args.id);const bytes=await session.finish({signal:controller.signal});value={data:Buffer.from(bytes).toString('base64'),bytes:bytes.length};}
   else if(operation==='scanAbort'){scanSessions.delete(args.id);value=true;}
   else if(operation==='reconcile'){value=await require('./pdf-reference-reconcile.cjs').reconcile(store,args);}
+  else if(operation==='match'){if(typeof args.data!=='string'||args.data.length>200*1024*1024||!/^[a-f0-9]{64}$/.test(args.sourceHash))throw Error('Invalid PDF source check.');value=sha(Buffer.from(args.data,'base64'))===args.sourceHash;}
   else if(operation==='attachment'){if(typeof args.data!=='string'||args.data.length>200*1024*1024)throw Error('The attachment is too large.');const bytes=Buffer.from(args.data,'base64'),file=path.join(args.directory,sha(bytes).slice(0,20)+path.extname(args.name));await require('./pdf-ink-store.cjs').atomic(file,bytes);value={path:file,name:path.basename(args.name)};}
   else if(operation==='serialize'){inkCodec.decode(args.bytes);value={revision:sha(args.bytes),data:Buffer.from(args.bytes.buffer,args.bytes.byteOffset,args.bytes.byteLength).toString('base64')};}
   else if(operation==='save'){

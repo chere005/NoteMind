@@ -4,7 +4,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),{digest}=require(
 async function reconcile(store,{id,revision,pdfs}){
  const patches=[];if(typeof id!=='string'||!Array.isArray(pdfs)||pdfs.length>1000)throw Error('Invalid PDF recovery owner.');
  for(const item of pdfs){
-  if(typeof item.name!=='string'||typeof item.data!=='string'||item.data.length>70*1024*1024)throw Error('Invalid PDF attachment recovery.');
+  if(typeof item.name!=='string'||typeof item.data!=='string'||item.data.length>200*1024*1024)throw Error('Invalid PDF attachment recovery.');
   const identity='attachment:'+id+':'+String(item.reference?.id||item.name),identityFolder=path.dirname(store.folder(identity,'0'.repeat(64)));
   try{await fs.access(identityFolder);}catch(error){if(error.code==='ENOENT')continue;throw error;}
   const sourceHash=digest(Buffer.from(item.data,'base64')),index=await store.read(identity,sourceHash);if(!index)continue;
