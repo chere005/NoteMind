@@ -29,3 +29,16 @@ test('literal marker runs never allocate a delimiter or token row per character'
 test('consumed private inline storage releases exact owned backing without touching ordinary callers',()=>{const tokens=parseInline('*a* [b](x) '.repeat(4000),md,{});assert.ok(tokens.length);assert.equal(releaseInline(tokens),true);assert.equal(tokens.length,0);assert.equal(releaseInline(tokens),false);const borrowed=md.parseInline('*borrowed*',{})[0].children;assert.equal(releaseInline(borrowed),false);assert.equal(borrowed[1].content,'borrowed');let retained;streamMarkdown('*a* [b](x) '.repeat(4000),token=>{if(token.type==='inline')retained=token.children;},{consumeInline:true});assert.equal(retained.length,0);let durable;streamMarkdown('*a* [b](x) '.repeat(4000),token=>{if(token.type==='inline')durable=token.children;});assert.ok(durable.length);releaseInline(durable);});
 
 test('failed synchronous Word consumer retires its owned inline packet before propagating',()=>{let captured;assert.throws(()=>streamMarkdown('*a* [b](x) '.repeat(4000),token=>{if(token.type==='inline'){captured=token.children;throw Error('owned failure');}},{consumeInline:true}),/owned failure/);assert.equal(captured.length,0);});
+
+test('compact private Word rows preserve wide unsigned IDs and sparse pages through widening and release',()=>{
+ const {Tokens}=require('../src/word-inline.cjs'),store=new Tokens(()=>{}),ids=[0,1,255,256,65535,65536,0xffffffff];
+ for(let index=0;index<ids.length;index++)store.content.set(index,ids[index]);
+ assert.deepEqual(ids.map((_,index)=>store.content.get(index)),ids);
+ store.content.set(8192*3,7);assert.equal(store.content.get(8192*2),0);assert.equal(store.content.get(8192*3),7);
+ const last=store.content.pages[3].buffer;store.content.set(8192*3+1,65536);assert.equal(last.byteLength,0);assert.equal(store.content.get(8192*3),7);assert.equal(store.content.get(8192*3+1),65536);
+ store.content.release();assert.equal(store.content.bytes,0);assert.equal(store.content.get(8192*3),0);
+});
+test('Word inline compaction preserves many distinct attributes and deeply nested semantic levels',()=>{
+ const text=Array.from({length:400},(_,i)=>'[*label '+i+'*](https://example.com/'+i+' "title '+i+'")').join(' ');
+ assert.deepEqual(stream(text),md.parse(text,{}).map(comparable));
+});

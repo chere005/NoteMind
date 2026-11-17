@@ -18,9 +18,19 @@ class Strings {
 class Column {
   constructor(Type) { this.Type = Type; this.pages = []; }
   get(i) { return this.pages[i >>> 13]?.[i & (PAGE - 1)] || 0; }
-  set(i, value) { (this.pages[i >>> 13] ||= new this.Type(PAGE))[i & (PAGE - 1)] = value; }
-  get bytes() { return this.pages.length * PAGE * this.Type.BYTES_PER_ELEMENT; }
-  release() { for (const page of this.pages) discard(page.buffer); this.pages.length = 0; }
+  set(i, value) {
+    const at=i >>> 13;let page=this.pages[at];
+    if(this.Type===Uint32Array){
+      value=value>>>0;
+      if(!page&&!value)return;
+      const Type=value<=255?Uint8Array:value<=65535?Uint16Array:Uint32Array;
+      if(!page)page=this.pages[at]=new Type(PAGE);
+      else if(Type.BYTES_PER_ELEMENT>page.BYTES_PER_ELEMENT){const grown=new Type(PAGE);grown.set(page);discard(page.buffer);page=this.pages[at]=grown;}
+    }else page ||=this.pages[at]=new this.Type(PAGE);
+    page[i & (PAGE - 1)]=value;
+  }
+  get bytes() { return this.pages.reduce((sum,page)=>sum+(page?.byteLength||0),0); }
+  release() { for (const page of this.pages) if(page)discard(page.buffer); this.pages.length = 0; }
 }
 class Cache {
   constructor() { this.values = new Map(); }
@@ -174,7 +184,7 @@ function balancePairs(state, check) {
   const process = delimiters => {
     const max = delimiters.length; if (!max) return;
     const bottom = Object.create(null), jumps = new Uint32Array(max); let header = 0, last = -2;
-    for (let closerAt = 0; closerAt < max; closerAt++) {
+    try{for (let closerAt = 0; closerAt < max; closerAt++) {
       if (closerAt % 4096 === 0) check();
       const closer = delimiters[closerAt];
       if (delimiters[header].marker !== closer.marker || last !== closer.token - 1) header = closerAt;
@@ -194,8 +204,7 @@ function balancePairs(state, check) {
         }
       }
       if (newMin !== -1) limits[(closer.open ? 3 : 0) + (closer.length || 0) % 3] = newMin;
-    }
-    discard(jumps.buffer);
+    }}finally{discard(jumps.buffer);}
   };
   process(state.delimiters);
   for (let i = 0; i < state.tokens_meta.length; i++) { if (i % 4096 === 0) check(); const list = state.tokens_meta[i]?.delimiters; if (list) process(list); }
