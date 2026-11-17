@@ -192,6 +192,9 @@ async function exportInScope(doc, file, options, services, expected) {
   }
 }
 async function exportWordWithMedia(doc, file, options = {}, services = {}) {
+  return require('./word-export-operations.cjs').operations.run(signal=>exportWordOperation(doc,file,{...options,signal},services),options.signal);
+}
+async function exportWordOperation(doc, file, options = {}, services = {}) {
   const storage = services.storage || require("./archive-codec.cjs"), settings = { ...services, storage, tempRoot: services.tempRoot || os.tmpdir() }, snapshot = captureWordDocument(doc), expected = await (services.guard || require("./guarded-write.cjs")).fingerprintFile(file);
   check(options.signal);
   if (storage.hasRawAssetScope()) return exportInScope(snapshot, file, options, settings, expected);

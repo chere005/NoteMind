@@ -8,7 +8,7 @@ class WordExportJobs{
  run(doc,images,options,target,{signal,beforeStart,onStarted}={}){
   if(this.disposed)return Promise.reject(Error('Word tools are closing.'));if(signal?.aborted)return Promise.reject(abort());
   if(!doc||typeof doc.text!=='string'||Object.keys(doc.assets||{}).length||!images||typeof images!=='object'||Array.isArray(images)||Object.values(images).some(value=>!value?.source))return Promise.reject(Error('Word packaging requires private media spools.'));
-  let packet,bytes;try{bytes=Buffer.byteLength(doc.text)+Buffer.byteLength(JSON.stringify({meta:doc.meta,title:doc.title,images,options,target}));if(Buffer.byteLength(doc.text)>16*1024*1024||bytes>this.maxBytes)throw Error('Word export metadata is too large.');packet=structuredClone({doc,images,options,target:{...target,tempId:target.tempId||randomUUID()}});}catch(error){return Promise.reject(error);}
+  let packet,bytes;try{const boundedDoc={text:doc.text,title:doc.title,assets:{},meta:doc.meta};bytes=Buffer.byteLength(boundedDoc.text)+Buffer.byteLength(JSON.stringify({meta:boundedDoc.meta,title:boundedDoc.title,images,options,target}));if(Buffer.byteLength(boundedDoc.text)>16*1024*1024||bytes>this.maxBytes)throw Error('Word export metadata is too large.');packet=structuredClone({doc:boundedDoc,images,options,target:{...target,tempId:target.tempId||randomUUID()}});}catch(error){return Promise.reject(error);}
   if(this.jobs.size>=this.maxPending||this.bytes+bytes>this.maxBytes)return Promise.reject(Error('Word export is busy. The document remains open.'));
   const controller=new AbortController(),stop=()=>controller.abort();signal?.addEventListener('abort',stop,{once:true});if(signal?.aborted)stop();
   const job={id:randomUUID(),packet,bytes,controller,beforeStart,onStarted,promise:null,worker:null};this.jobs.add(job);this.bytes+=bytes;
@@ -19,7 +19,7 @@ class WordExportJobs{
   try{
    if(this.disposed||signal.aborted)throw abort();await job.beforeStart?.(signal);if(this.disposed||signal.aborted)throw abort();
    const cancel=new Int32Array(new SharedArrayBuffer(4));let value,failure,timer,cancelTimer,settled=false;
-   worker=this.workerFactory(path.join(__dirname,'word-export-worker.cjs'),{resourceLimits:{maxOldGenerationSizeMb:128},execArgv:[]});job.worker=worker;
+   worker=this.workerFactory(path.join(__dirname,'word-export-worker.cjs'),{execArgv:[]});job.worker=worker;
    const completion=new Promise((resolve,reject)=>{
     const stop=()=>{Atomics.store(cancel,0,1);if(!cancelTimer)cancelTimer=setTimeout(()=>{try{void Promise.resolve(worker.terminate()).catch(error=>{failure ||=error;});}catch(error){failure ||=error;}},1000);cancelTimer.unref?.();};
     signal.addEventListener('abort',stop,{once:true});
@@ -37,4 +37,14 @@ class WordExportJobs{
  async dispose(){this.disposed=true;for(const job of this.jobs)job.controller.abort();await Promise.allSettled([...this.jobs].map(job=>job.promise));}
 }
 const jobs=new WordExportJobs();
-module.exports={WordExportJobs,jobs};
+const quitHooks=new WeakSet();
+function installWordShutdown(app,{pool=jobs,operations=require('./word-export-operations.cjs').operations}={}){
+ if(!app||typeof app.on!=='function'||quitHooks.has(app))return;quitHooks.add(app);let waiting=null;
+ app.on('will-quit',event=>{
+  if(!pool.jobs.size&&!operations.active.size)return;
+  event?.preventDefault?.();if(waiting)return;
+  waiting=Promise.allSettled([operations.dispose(),pool.dispose()]);
+  void waiting.then(()=>app.quit()).catch(error=>console.error(error));
+ });
+}
+module.exports={WordExportJobs,jobs,installWordShutdown};

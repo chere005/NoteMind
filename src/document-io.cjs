@@ -65,6 +65,7 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc){
  ipcMain.handle('document-print-release',(event,token)=>printLeases.release(event.sender,token));
  ipcMain.handle('pdf-geometry',(_,options)=>require('./pdf-options.cjs').geometry(options));
  ipcMain.handle('document-export',(event,doc,format,options)=>exportDocument(doc,format,options,event.sender));
+ require('./word-export-jobs.cjs').installWordShutdown(app);
  app.on('will-quit',dispose);
 }
 function dispose(){disposed=true;void printLeases.dispose();for(const controller of conversions.values())controller.abort();conversions.clear();for(const controller of exportsActive)controller.abort();exportsActive.clear();reader.dispose();if(helper&&!helper.isDestroyed())helper.destroy();helper=null;pendingHelper?.then(w=>{if(!w.isDestroyed())w.destroy();}).catch(()=>{});}
