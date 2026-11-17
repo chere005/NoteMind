@@ -160,7 +160,11 @@ async function exportInScope(doc, file, options, services, expected) {
     }
     check(signal);
     const { signal: _, clean: __, onWarning: ___, ...wireOptions } = options;
-    receipt = await storage.exportWordFile({ ...doc, assets: {} }, images, wireOptions, { file, spoolRoot: directory, expected, signal });
+    // Every image is now a checked private file; the final worker needs no raw descriptor.
+    await require("./document-continuation.cjs").releaseDocumentInputs();
+    const attachments = Object.fromEntries(Object.entries(doc.meta?.attachments || {}).map(([name, value]) => [name, {thumbnail: value?.thumbnail}]));
+    const packet = {text: doc.text, title: doc.title, assets: {}, meta: {attachments}};
+    receipt = await (services.wordJobs || require("./word-export-jobs.cjs").jobs).run(packet, images, wireOptions, { file, spoolRoot: directory, expected }, {signal, onStarted:services.onPackage, beforeStart:async()=>{working=await waitWorking(storage,signal);link(working.signal);check(signal);}});
     return receipt;
   } catch (error) {
     failure = error;
