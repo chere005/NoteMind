@@ -21,7 +21,7 @@ import { holdBegins, inContact, penLifted, pressAction } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
 import {
-  boxFromPoints, fitRect, hitBox, moveBox, paintStrokes, resizeBox, SHEET_REF, strokeUnder,
+  boxFromPoints, hitBox, moveBox, paintStrokes, resizeBox, SHEET_REF, strokeUnder,
   type BoxHandle, type BoxHit, type InkStroke, type TabletPage,
 } from "./tabletPage"
 import { backdropImage, backdropRect, paintBackdrop } from "./tabletBackdrop"
@@ -29,6 +29,7 @@ import { doubleClickBox } from "./doubleClickBox"
 import { colourOfPaper, inkOn, paintPaper, usePaper } from "./tabletPaper"
 import { BoxActions, type BoxButtons } from "./BoxActions"
 import { elementPoint, elementSize } from "./padCoordinates"
+import { pagePixelSize, pointOnPage, pointOnView, rectOnView, UNIT_SHEET } from './sheetViewport'
 import graphics from "../../graphics-pane.js"
 import "./tablet.css"
 
@@ -89,7 +90,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   { page, colour, width, box, onBox, onEdited, frame: regionBox = null, buttons = null }, handle) {
   const host = useRef<HTMLDivElement | null>(null)
   const wrap = useRef<HTMLDivElement | null>(null)
-  const [fit, setFit] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  const [fit, setFit] = useState({ x: 0, y: 0, width: 0, height: 0, viewport: { ...UNIT_SHEET } })
   /** A backdrop picture finished loading: the paper canvas is painted again. */
   const [backdropTick, setBackdropTick] = useState(0)
   const [dpr, setDpr] = useState(() => (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1))
@@ -97,7 +98,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const backdrop = useRef<HTMLCanvasElement | null>(null)
   const context = useRef<CanvasRenderingContext2D | null>(null)
   const size = useRef<Size>({ width: 0, height: 0 })
+  const viewport = useRef<Rect>({ ...UNIT_SHEET })
   const gesture = useRef<Gesture | null>(null)
+  const finishGesture = useRef<() => void>(() => {})
   const committingStroke = useRef(false)
   /** The box is being dragged, moved or resized: its row of buttons waits until it is let go. */
   const [boxing, setBoxing] = useState(false)
@@ -111,11 +114,21 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const latest = useRef({ colour, width, onBox, onEdited, page, box, paper, regionBox })
   latest.current = { colour, width, onBox, onEdited, page, box, paper, regionBox }
 
-  const toPixel = useCallback((point: Point): Point =>
-    ({ x: point.x * size.current.width, y: point.y * size.current.height }), [])
+  useEffect(() => {
+    const finish = () => finishGesture.current()
+    window.addEventListener('camera-flush', finish)
+    return () => window.removeEventListener('camera-flush', finish)
+  }, [])
+
+  const toPixel = useCallback((point: Point): Point => {
+    const shown = pointOnView(point, viewport.current)
+    return { x: shown.x * size.current.width, y: shown.y * size.current.height }
+  }, [])
+
+  const pageSize = () => pagePixelSize(size.current, viewport.current)
 
   /** Pixels per reference unit: a stroke's width is kept in units of the sheet, not of the screen. */
-  const unit = () => size.current.width / SHEET_REF
+  const unit = () => pageSize().width / SHEET_REF
   /** How a stroke's colour looks on this paper. */
   const tint = (hex: string): string => inkOn(latest.current.paper, hex)
 
@@ -151,7 +164,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       ctx.clearRect(0, 0, size.current.width, size.current.height)
       ctx.drawImage(g.preview.fixed, 0, 0, size.current.width, size.current.height)
       const sx = g.next.width / g.origin.width, sy = g.next.height / g.origin.height
-      ctx.save();ctx.translate((g.next.x - g.origin.x * sx) * size.current.width, (g.next.y - g.origin.y * sy) * size.current.height);ctx.scale(sx, sy)
+      const from = toPixel(g.origin), to = toPixel(g.next)
+      ctx.save();ctx.translate(to.x - from.x * sx, to.y - from.y * sy);ctx.scale(sx, sy)
       ctx.drawImage(g.preview.ink, 0, 0, size.current.width, size.current.height);ctx.restore()
       return
     }
@@ -160,7 +174,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       ctx.clearRect(0, 0, element.width, element.height)
       paintStrokes(ctx, latest.current.page.strokes, toPixel, unit(), undefined, 0, tint)
       // A stroke under the pen is repainted whole after a resize or an erase.
-      if (g?.kind === "draw") {
+      if (g?.kind === "draw" && !g.out) {
         paintStrokes(ctx, [g.stroke], toPixel, unit(), undefined, 0, tint)
         g.drawn = g.stroke.points.length
       }
@@ -185,11 +199,13 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const view = element.ownerDocument.defaultView ?? window
     const measure = () => {
       const rect = elementSize(element)
-      // The sheet has the screen's shape; the pane it sits in need not, so it is
-      // fitted inside it (letterboxed) and never stretched.
-      const box = fitRect({ width: rect.width, height: rect.height }, latest.current.page.aspect)
+      // All available paper is writable. Only the viewport expands: canonical ink and its history never stretch.
+      const sheetView = latest.current.page.fitViewport(rect)
+      viewport.current = sheetView
+      const box = { x: 0, y: 0, width: rect.width, height: rect.height, viewport: sheetView }
       size.current = { width: box.width, height: box.height }
-      setFit((was) => (was.x === box.x && was.y === box.y && was.width === box.width && was.height === box.height ? was : box))
+      setFit((was) => (was.width === box.width && was.height === box.height
+        && was.viewport.x === sheetView.x && was.viewport.y === sheetView.y && was.viewport.width === sheetView.width && was.viewport.height === sheetView.height ? was : box))
       setDpr(view.devicePixelRatio || 1)
       schedule(true)
     }
@@ -197,10 +213,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // The sheet's shape follows the tablet's orientation.
     const unlisten = latest.current.page.onChange(() => {
       if (committingStroke.current) return
-      const r = elementSize(element)
-      const next = fitRect({ width: r.width, height: r.height }, latest.current.page.aspect)
-      if (Math.abs(next.width - size.current.width) > 0.5 || Math.abs(next.height - size.current.height) > 0.5) measure()
-      else schedule(true)
+      measure()
     })
     const observer = new ResizeObserver(measure)
     observer.observe(element)
@@ -216,6 +229,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const onRatio = () => { measure(); watchRatio() }
     watchRatio()
     return () => {
+      finishGesture.current()
       unlisten()
       observer.disconnect()
       view.removeEventListener("resize", measure)
@@ -234,12 +248,13 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (element.width !== w || element.height !== h) { element.width = w; element.height = h }
     const ctx = element.getContext("2d")
     if (!ctx) return
-    const units: Size = { width: SHEET_REF, height: SHEET_REF * fit.height / fit.width }
-    paintPaper(ctx, paper, units, { x: 0, y: 0, ...units }, { width: w, height: h }, dpr)
+    const units: Size = { width: SHEET_REF, height: SHEET_REF / page.aspect }
+    const view = fit.viewport, area = { x: view.x * units.width, y: view.y * units.height, width: view.width * units.width, height: view.height * units.height }
+    paintPaper(ctx, paper, units, area, { width: w, height: h }, dpr)
     // A picture sent here by Edit with Tablet is under the ink, on the paper (tabletBackdrop.ts).
     const under = page.backdrop ? backdropImage(page.backdrop, () => setBackdropTick((n) => n + 1)) : null
-    if (under) paintBackdrop(ctx, under, units, { x: 0, y: 0, ...units }, { width: w, height: h })
-  }, [paper, page, backdropTick, fit.width, fit.height, dpr])
+    if (under) paintBackdrop(ctx, under, units, area, { width: w, height: h })
+  }, [paper, page, page.backdrop, backdropTick, fit, dpr])
   // The ink's look follows the paper (dark paper lifts the default ink).
   useEffect(() => { schedule(true) }, [paper.colour, schedule])
 
@@ -324,8 +339,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // A stroke that strays past the edge (the pen is captured) stops at the sheet's edge.
     const clamp = (value: number, from = 0, to = 1) => Math.min(to, Math.max(from, value))
     // On a sheet bound to a region, at the region's edge.
-    const f = latest.current.regionBox ?? { x: 0, y: 0, width: 1, height: 1 }
-    const raw = { x: x / Math.max(1, rect.width), y: y / Math.max(1, rect.height) }
+    const f = latest.current.regionBox ?? viewport.current
+    const raw = pointOnPage({ x: x / Math.max(1, rect.width), y: y / Math.max(1, rect.height) }, viewport.current)
     const e = 1e-6
     return {
       px: { x, y },
@@ -338,7 +353,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   const eraseAt = (g: Extract<Gesture, { kind: "erase" }>, point: Point) => {
     const p = g.page
-    const index = strokeUnder(p.strokes, point, size.current, ERASE_RADIUS, size.current.width / SHEET_REF)
+    const index = strokeUnder(p.strokes, point, pageSize(), ERASE_RADIUS, unit())
     if (index < 0) return
     if (!g.marked) { p.mark(); g.marked = true }
     p.removeAt(index)
@@ -371,7 +386,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       eraseAt(g, latest.current.regionBox ? raw : point)
     } else if (action === "select") {
       const current = latest.current.box
-      const hit = current ? hitBox(current, point, size.current) : null
+      const hit = current ? hitBox(current, point, pageSize()) : null
       const base = { kind: "box" as const, pointerId: event.pointerId, startPx: px, start: point, dragged: false, page: latest.current.page, strokes: latest.current.page.strokes }
       if (current && hit === "inside") gesture.current = { ...base, mode: "move", origin: current, handle: null }
       else if (current && hit && hit !== "inside") gesture.current = { ...base, mode: "resize", origin: current, handle: hit }
@@ -382,7 +397,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,
         stroke: {
           colorHex: latest.current.colour,
-          width: latest.current.width * SHEET_REF / Math.max(1, size.current.width),
+          width: latest.current.width * SHEET_REF / Math.max(1, pageSize().width),
           points: [point],
           ...(pen && penSettings().pressure ? { pressures: [pressure] } : {}),
         },
@@ -408,7 +423,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       // The mouse over the box says what a drag would do.
       if (event.pointerType !== "pen" && wrap.current) {
         const current = latest.current.box
-        const hit = current ? hitBox(current, at(event).unit, size.current) : null
+        const hit = current ? hitBox(current, at(event).unit, pageSize()) : null
         wrap.current.style.cursor = tools.eraser ? "crosshair" : hit ? CURSORS[hit] : "crosshair"
       }
       return
@@ -448,7 +463,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       if (!g.dragged) setBoxing(true)
       g.dragged = true
       if (g.mode === "move" || g.mode === "resize") {
-        const next = g.mode === "move" ? moveBox(g.origin!, here.unit.x - g.start.x, here.unit.y - g.start.y) : resizeBox(g.origin!, g.handle!, here.unit, size.current, MIN_BOX_PX)
+        const next = g.mode === "move" ? moveBox(g.origin!, here.unit.x - g.start.x, here.unit.y - g.start.y, viewport.current) : resizeBox(g.origin!, g.handle!, here.unit, pageSize(), MIN_BOX_PX, viewport.current)
         g.next = next
         latest.current.onBox(next)
         schedule(true)
@@ -461,6 +476,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (event.pointerType === "pen" && (event.type === "pointerup" || event.type === "pointercancel")) touching.current = false
     const g = gesture.current
     if (g && g.pointerId !== event.pointerId) return
+    // A lift can carry a newer position than the last move (also on the native sample feed).
+    if (g?.kind === "draw" && !g.out && event.type !== "pointercancel") {
+      const point = at(event).unit, last = g.stroke.points[g.stroke.points.length - 1]
+      if (!last || point.x !== last.x || point.y !== last.y) {
+        g.stroke.points.push(point)
+        g.stroke.pressures?.push(event.pressure > 0 ? event.pressure : g.stroke.pressures[g.stroke.pressures.length - 1] ?? .5)
+      }
+    }
     // The last samples are painted now, not left to a frame that will find no stroke.
     if (g?.kind === "draw") paint()
     gesture.current = null
@@ -489,7 +512,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       if (g.mode === "new") {
         const made = boxFromPoints(g.start, at(event).unit)
         // Under 8 px either way is a click, not a box.
-        latest.current.onBox(made.width * size.current.width > MIN_BOX_PX && made.height * size.current.height > MIN_BOX_PX ? made : null)
+        latest.current.onBox(made.width * pageSize().width > MIN_BOX_PX && made.height * pageSize().height > MIN_BOX_PX ? made : null)
       }
     } else if (g.mode === "new") {
       // The Mac's rule: one click outside the box takes it away, two take the picture under the ink (else the whole sheet).
@@ -498,6 +521,16 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       // A click inside the box that did not move it: two of them are a double click too (the next size of box).
       clicked(event)
     }
+  }
+
+  // A source/document switch can remove the surface before its captured pointer lifts.
+  finishGesture.current = () => {
+    const g = gesture.current
+    gesture.current = null
+    touching.current = false
+    if (!g) return
+    if (g.kind === "draw" && !g.out) g.page.add(g.stroke)
+    if ((g.kind === "draw" && !g.out) || (g.kind === "erase" && g.marked)) latest.current.onEdited()
   }
 
   /**
@@ -509,7 +542,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const before = lastClick.current
     if (before && event.timeStamp - before.time < DOUBLE_MS && Math.hypot(point.x - before.x, point.y - before.y) < 8) {
       lastClick.current = null
-      latest.current.onBox(doubleClickBox(before.box, pictureRect()))
+      latest.current.onBox(doubleClickBox(before.box, pictureRect(), viewport.current))
       return true
     }
     lastClick.current = { time: event.timeStamp, x: point.x, y: point.y, box: latest.current.box }
@@ -520,7 +553,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const pictureRect = (): Rect | null => {
     const sheet = size.current
     if (!(sheet.width > 0 && sheet.height > 0)) return null
-    const aspect = sheet.width / sheet.height
+    const aspect = latest.current.page.aspect
     const current = latest.current.page
     if (!current.backdrop) return null
     const image = backdropImage(current.backdrop, () => undefined)
@@ -528,11 +561,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const erasing = tools.eraser
+  const shownBox = box ? rectOnView(box, fit.viewport) : null
+  const shownRegion = regionBox ? rectOnView(regionBox, fit.viewport) : null
   return (
     <div className="tablet-host" ref={host} data-tablet="host"
          onPointerMove={(event) => { lastAt.current = { x: event.clientX, y: event.clientY } }}
          onPointerDown={(event) => { if (event.target === host.current) latest.current.onBox(null) }}>
       <div className="tablet" ref={wrap} tabIndex={0} data-tablet="surface" data-paper={paper.kind} data-paper-colour={paper.colour}
+           data-sheet-viewport={JSON.stringify(fit.viewport)}
            style={{ cursor: erasing ? "crosshair" : "crosshair", left: fit.x, top: fit.y, width: fit.width, height: fit.height,
              backgroundColor: colourOfPaper(paper.colour).paper }}
            onPointerEnter={(event) => enter(event)}
@@ -545,27 +581,27 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         {/* The ink is first in the tree (what reads "the sheet's canvas" reads the ink); the paper sits under it by z-order. */}
         <canvas ref={canvas} className="ink" data-layer="ink" style={{ width: "100%", height: "100%" }} />
         <canvas ref={backdrop} className="paper" data-layer="paper" style={{ width: "100%", height: "100%" }} />
-        {regionBox && (
+        {shownRegion && (
           <div className="box-clip">
             <div className="region-frame" data-tablet="region-frame" style={{
-              left: `${regionBox.x * 100}%`, top: `${regionBox.y * 100}%`, width: `${regionBox.width * 100}%`, height: `${regionBox.height * 100}%`,
+              left: `${shownRegion.x * 100}%`, top: `${shownRegion.y * 100}%`, width: `${shownRegion.width * 100}%`, height: `${shownRegion.height * 100}%`,
             }} />
           </div>
         )}
-        {box && (
+        {shownBox && (
           <div className="box-clip">
             <div className="box" data-tablet="box" style={{
-              left: `${box.x * 100}%`, top: `${box.y * 100}%`,
-              width: `${box.width * 100}%`, height: `${box.height * 100}%`,
+              left: `${shownBox.x * 100}%`, top: `${shownBox.y * 100}%`,
+              width: `${shownBox.width * 100}%`, height: `${shownBox.height * 100}%`,
             }}>
               {HANDLES.map((name) => <span key={name} className="handle" data-handle={name} />)}
             </div>
           </div>
         )}
       </div>
-      {box && buttons && !boxing && fit.width > 0 && (
+      {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
-        <BoxActions box={box} sheet={fit} bringOff={buttons.bringOff}
+        <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}
                     erase={async () => {
                       await buttons.erase()
                       // Ctrl+Z next takes the erase back: the sheet has the keys again.

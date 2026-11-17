@@ -70,11 +70,14 @@ export interface PaperMarks {
 export const CORNELL = { header: 0.1, cue: 0.3, summary: 0.82 }
 
 /** Where the paper's marks are, on a sheet of `sheet` reference units. Pure. */
-export function paperMarks(paper: Paper, sheet: Size): PaperMarks {
+export function paperMarks(paper: Paper, sheet: Size, view?: Rect): PaperMarks {
   const none: PaperMarks = { dots: [], dotRadius: 0, lines: [] }
   const s = pitchOf(paper.kind, paper.spacing)
   if (s <= 0 || sheet.width <= 0 || sheet.height <= 0) return none
   const { width: W, height: H } = sheet
+  const left = Math.min(0, view?.x ?? 0), top = Math.min(0, view?.y ?? 0)
+  const right = Math.max(W, view ? view.x + view.width : W), bottom = Math.max(H, view ? view.y + view.height : H)
+  const start = (first: number, low: number, step: number) => low < 0 ? first + Math.floor((low - first) / step) * step : first
   const dots: Point[] = []
   const lines: Segment[] = []
   const across = (from: number, to: number, step: number, fn: (v: number) => void) => {
@@ -82,25 +85,25 @@ export function paperMarks(paper: Paper, sheet: Size): PaperMarks {
   }
   switch (paper.kind) {
     case "dots":
-      across(s / 2, W - s / 4, s, (x) => across(s / 2, H - s / 4, s, (y) => dots.push({ x, y })))
+      across(start(s / 2, left, s), right - s / 4, s, (x) => across(start(s / 2, top, s), bottom - s / 4, s, (y) => dots.push({ x, y })))
       return { dots, dotRadius: s * 0.06, lines }
     case "isometric": {
       // A triangular lattice: rows sqrt(3)/2 of the pitch apart, every other row shifted half a pitch.
       const row = s * Math.sqrt(3) / 2
-      let j = 0
-      across(row / 2, H - row / 4, row, (y) => {
-        const shift = j % 2 === 1 ? s / 2 : 0
-        across(s / 2 + shift, W - s / 4, s, (x) => dots.push({ x, y }))
+      let j = top < 0 ? Math.floor((top - row / 2) / row) : 0
+      across(row / 2 + j * row, bottom - row / 4, row, (y) => {
+        const shift = Math.abs(j % 2) === 1 ? s / 2 : 0
+        across(start(s / 2 + shift, left, s), right - s / 4, s, (x) => dots.push({ x, y }))
         j++
       })
       return { dots, dotRadius: s * 0.06, lines }
     }
     case "lines":
-      across(2 * s, H - s / 2, s, (y) => lines.push({ x0: 0, y0: y, x1: W, y1: y, strong: false }))
+      across(start(2 * s, top, s), bottom - s / 2, s, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
       return { dots, dotRadius: 0, lines }
     case "grid":
-      across(s, W - s / 2, s, (x) => lines.push({ x0: x, y0: 0, x1: x, y1: H, strong: false }))
-      across(s, H - s / 2, s, (y) => lines.push({ x0: 0, y0: y, x1: W, y1: y, strong: false }))
+      across(start(s, left, s), right - s / 2, s, (x) => lines.push({ x0: x, y0: top, x1: x, y1: bottom, strong: false }))
+      across(start(s, top, s), bottom - s / 2, s, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
       return { dots, dotRadius: 0, lines }
     case "cornell": {
       const top = H * CORNELL.header, bottom = H * CORNELL.summary, cue = W * CORNELL.cue
@@ -126,7 +129,7 @@ export function paintPaper(context: CanvasRenderingContext2D, paper: Paper, shee
   context.setTransform(1, 0, 0, 1, 0, 0)
   context.fillStyle = colours.paper
   context.fillRect(0, 0, px.width, px.height)
-  const marks = paperMarks(paper, sheet)
+  const marks = paperMarks(paper, sheet, view)
   const dx = px.width / Math.max(1e-6, view.width), dy = px.height / Math.max(1e-6, view.height)
   const X = (x: number): number => Math.round((x - view.x) * dx)
   const Y = (y: number): number => Math.round((y - view.y) * dy)

@@ -6,7 +6,7 @@ function encode(doc,{kind='notepad',extra={}}={}){
  if(!['notepad','drawing','workspace'].includes(kind)||typeof doc.text!=='string')throw Error('Invalid Notepad document.');
  const files={'document.md':Buffer.from(doc.text,'utf8')};
  for(const [name,value] of Object.entries(doc.assets||{})){if(!assetName(name))throw Error('Invalid image path: '+name);files[name]=Buffer.from(value,'base64');}
- for(const [name,value] of Object.entries(extra)){if(!['drawing.json','workspace.json'].includes(name))throw Error('Invalid attachment');files[name]=Buffer.from(JSON.stringify(value));}
+ for(const [name,value] of Object.entries(extra)){if(!['drawing.json','workspace.json','recovery.json'].includes(name))throw Error('Invalid attachment');files[name]=Buffer.from(JSON.stringify(value));}
  const sizes=Object.values(files).map(b=>b.length);if(sizes.length>9999||sizes.some(n=>n>50*1024*1024)||sizes.reduce((a,b)=>a+b,0)>199*1024*1024)throw Error('This Notepad is too large. Use fewer or smaller images.');
  const manifest={format:'notemind',version:1,kind,id:doc.id||randomUUID(),title:doc.title||'',created:doc.created||new Date().toISOString(),meta:doc.meta||{},modified:new Date().toISOString(),content:'document.md',files:Object.fromEntries(Object.entries(files).map(([name,data])=>[name,{bytes:data.length,sha256:hash(data)}]))};
  return pack({'manifest.json':Buffer.from(JSON.stringify(manifest,null,2)),...files});

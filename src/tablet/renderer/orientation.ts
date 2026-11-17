@@ -17,12 +17,14 @@ function load(): Orientation {
 }
 
 let current: Orientation = load()
+let orientationVersion = 0
 const listeners = new Set<() => void>()
 
 export const orientation = (): Orientation => current
 export const currentTurns = (): Turns => turnsOf(current)
 
 function publish(next: Orientation): void {
+  orientationVersion++
   if (next === current) return
   current = next
   listeners.forEach((listener) => listener())
@@ -101,8 +103,9 @@ if (typeof window !== "undefined") {
   })
 }
 
-const receiveOrientation=value=>{if(value==null)return;const next=parseOrientation(value);localStorage.setItem(ORIENTATION_KEY,String(next));publish(next)};
-window.notemind.preferenceGet('orientation').then(receiveOrientation).catch(()=>{});
+const receiveOrientation=value=>{if(value==null)return;const next=parseOrientation(value);try{localStorage.setItem(ORIENTATION_KEY,String(next))}catch{}publish(next)};
+const initialOrientationVersion=orientationVersion;
+window.notemind.preferenceGet('orientation').then(value=>{if(orientationVersion===initialOrientationVersion)receiveOrientation(value)}).catch(()=>{});
 window.notemind.onPreference(({key,value})=>{if(key==='orientation')receiveOrientation(value)});
 
 const receivePadChromeOrientation = value => {

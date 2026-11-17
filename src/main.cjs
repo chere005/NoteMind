@@ -172,7 +172,7 @@ async function openPath(file, recover = true) {
   if(['.docx','.pdf','.png','.jpg','.jpeg','.webp','.gif','.bmp','.svg','.avif'].includes(ext))return {preview:{path:file,name:path.basename(file)}};
   if (!['.nm', '.wm', '.md', '.txt', '.py'].includes(ext)) throw Error('Unsupported file type.');
 
-  const bytes = await fs.readFile(file);
+  const bytes = await require('./read-limited.cjs').readLimited(file,200*1024*1024,'Open Notepads up to 200 MB.');
 
   if(ext==='.md')return notesStore.register({...await require('./markdown-files.cjs').read(file,bytes.toString('utf8')),revision:digest(bytes)});
   if (!['.nm','.wm'].includes(ext)) return notesStore.register({ path: file, text: bytes.toString('utf8'), assets: {},revision:digest(bytes) });

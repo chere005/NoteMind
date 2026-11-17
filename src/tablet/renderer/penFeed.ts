@@ -221,7 +221,8 @@ export function createDispatcher(env: DispatchEnv, hooks: { onTip?(): void; onTh
       let count = 0
       for (const s of samples) {
         try {
-          if (!rect) {
+          // A proximity-leave report need not carry valid position fields. End at the last real sample.
+          if (!rect || !s.inRange) {
             if (!s.inRange) { for (const ev of synth.step(s)) { emit(ev, last.x, last.y); count++ } }
             continue
           }

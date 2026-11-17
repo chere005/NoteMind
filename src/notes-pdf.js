@@ -4,7 +4,8 @@
  const options=()=>({pageSize:'A4',orientation:'portrait',margin:'normal',pageNumbers:false,clean:false,open:false,...stored()});
  const choose=(label,name,list)=>'<label>'+label+' <select data-k="'+name+'">'+list.map(([value,text])=>'<option value="'+value+'">'+text+'</option>').join('')+'</select></label>';
  const toggle=(label,name)=>'<label class="pdf-toggle"><input type="checkbox" data-k="'+name+'"> '+label+'</label>';
- function dialog(){
+ const captureDocument=()=>structuredClone({...doc,text:currentText()});
+ function dialog(snapshot=captureDocument()){
   return new Promise(resolve=>{
    const d=document.createElement('dialog');d.className='shell-dialog pdf-dialog';
    d.innerHTML='<h2>Export as PDF</h2><div class="pdf-layout"><div class="pdf-controls">'
@@ -27,7 +28,7 @@
     sheet.style.cssText='width:'+width+'px;height:'+height+'px;transform:scale('+scale+')';
     const m=geometry.margins,printable=height-px(m.top)-px(m.bottom);
     iframe.style.cssText='left:'+px(m.left)+'px;top:'+px(m.top)+'px;width:'+(width-px(m.left)-px(m.right))+'px;height:'+printable+'px';
-    if(!html.has(next.clean))html.set(next.clean,window.notemind.printHtml({...doc,text:currentText()},{clean:next.clean}));
+    if(!html.has(next.clean))html.set(next.clean,window.notemind.printHtml(snapshot,{clean:next.clean}));
     let preview;try{preview=await html.get(next.clean);}catch(error){html.delete(next.clean);throw error;}
     if(mine!==serial)return;
     note.textContent='First page. Page breaks are set when you export.';
@@ -41,14 +42,14 @@
    let result=null;
    d.querySelector('[data-cancel]').onclick=()=>d.close();
    d.querySelector('[data-go]').onclick=()=>{result=request(read());d.close();};
-   d.onclose=()=>{resolve(result);d.remove();};
+   d.onclose=()=>{serial++;resolve(result);d.remove();};
    document.body.append(d);d.showModal();draw().catch(showError);
   });
  }
  async function exportPdf(){
-  const chosen=await dialog();if(!chosen)return;
+  const snapshot=captureDocument(),chosen=await dialog(snapshot);if(!chosen)return;
   $('status').textContent='Exporting…';
-  const file=await window.notemind.exportDocument({...doc,text:currentText()},'pdf',chosen);
+  const file=await window.notemind.exportDocument(snapshot,'pdf',chosen);
   $('status').textContent=file?'Exported '+file:'Ready';
  }
  window.addEventListener('notemind-command',e=>{if(e.detail==='exportPDF')action(exportPdf);});

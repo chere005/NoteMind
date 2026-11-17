@@ -201,6 +201,7 @@
     focus(host.rows[startRow].children[startColumn]);changed();return true;
   }
   rich.addEventListener('keydown',event=>{
+    if(event.isComposing)return;
     const entry=target(anchor());if(!entry)return;
     if(selected && event.altKey && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();event.stopImmediatePropagation();move(selected.axis,selected.index,selected.index+(['ArrowUp','ArrowLeft'].includes(event.key)?-1:1));return;}
     if(selected&&['Backspace','Delete'].includes(event.key)){event.preventDefault();event.stopImmediatePropagation();clearContents();return;}

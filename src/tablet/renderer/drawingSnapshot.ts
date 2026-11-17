@@ -2,11 +2,11 @@ import type { InkStroke } from './tabletPage'
 import { colourOfPaper, inkOn, paintPaper, parsePaper, type Paper } from './tabletPaper'
 
 type Region = { x: number; y: number; width: number; height: number }
-type Source = { name: string; aspect: number; strokes: InkStroke[]; backdrop?: string | null; paper: Paper; target?: any }
+type Source = { name: string; aspect: number; strokes: InkStroke[]; backdrop?: string | null; paper: Paper; target?: any; viewport?: Region }
 
 /** Committed strokes are immutable; retain their identities while freezing the export's sheet and selection. */
 export function snapshotDrawing(source: Source, selection: Region | null = null) {
-  return { ...source, strokes: source.strokes.slice(), paper: { ...source.paper }, selection: selection ? { ...selection } : null, region: { ...(selection || { x: 0, y: 0, width: 1, height: 1 }) }, target: source.target ? { ...source.target } : null }
+  return { ...source, strokes: source.strokes.slice(), paper: { ...source.paper }, selection: selection ? { ...selection } : null, region: { ...(selection || source.viewport || { x: 0, y: 0, width: 1, height: 1 }) }, target: source.target ? { ...source.target } : null }
 }
 
 const attribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')

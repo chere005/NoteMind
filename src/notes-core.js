@@ -1,6 +1,6 @@
 (() => {
  const api=window.notemind.notes;
- let ready=false,timer=null,queue=Promise.resolve(),indexTimer=null,startupRun=null;
+ let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),startupRun=null;
  const automaticTitle=text=>text.split(/\r?\n/).map(s=>s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim()).find(Boolean)?.slice(0,100)||'Untitled';
  const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
@@ -33,7 +33,7 @@
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
  async function flush(){if(startupRun&&!ready)await startupRun;ensureActiveTab();return serial(async()=>{for(const tab of [...tabs])await persist(tab);await session();updateTitle();window.notemind.dirty(false);});}
- function changed(tab){tab.placeholder=false;window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimer);indexTimer=setTimeout(()=>{if(ready&&tabs.includes(tab)&&tab.doc.id&&Object.keys(tab.doc.assets).some(n=>NoteMindDocument.mime(n)))void api.indexImages(snapshot(tab)).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500);}
+ function changed(tab){tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n));tab.placeholder=false;window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimers.get(tab));indexTimers.set(tab,setTimeout(()=>{indexTimers.delete(tab);if(ready&&tabs.includes(tab)&&tab.doc.id&&tab.hadImageAssets)void api.indexImages(snapshot(tab),{background:true}).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500));}
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
   await persist(tab,false);const snap=snapshot(tab),edit=tab.editVersion||0;
   const saved=await window.notemind.save({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;

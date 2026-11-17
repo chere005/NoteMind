@@ -4,6 +4,7 @@
   else root.NoteMindGraphics = api;
 })(typeof window === 'undefined' ? this : window, function () {
   const finite = n => typeof n === 'number' && Number.isFinite(n);
+  const validExtent = r => r && [r.x,r.y,r.width,r.height].every(finite) && r.x<=0 && r.y<=0 && r.width>=1 && r.height>=1 && r.x+r.width>=1 && r.y+r.height>=1;
   const inside = (p, b) => p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height;
   const bounds = new WeakMap();
   const selected = (s, b) => {
@@ -13,6 +14,7 @@
   };
   function validate(sheet) {
     if (!sheet || !finite(sheet.aspect) || sheet.aspect < .1 || sheet.aspect > 10 || !Array.isArray(sheet.strokes)) throw Error('Invalid graphics pane.');
+    if (sheet.extent != null && !validExtent(sheet.extent)) throw Error('Invalid graphics paper extent.');
     if (sheet.backdrop != null && (typeof sheet.backdrop !== 'string' || !/^data:image\/(png|jpeg|webp|gif|bmp|avif|svg\+xml);base64,[a-z0-9+/=\r\n]+$/i.test(sheet.backdrop))) throw Error('Invalid graphics background.');
     let points = 0;
     for (const s of sheet.strokes) {
@@ -25,7 +27,7 @@
   function encode(sheet) {
     validate(sheet);
     return JSON.stringify({ format: 'notemind-graphics', version: 1, name: sheet.name || 'Drawing', aspect: sheet.aspect,
-      paper: sheet.paper, backdrop: sheet.backdrop || null,
+      paper: sheet.paper, backdrop: sheet.backdrop || null, extent: sheet.extent,
       strokes: sheet.strokes.map(s => [s.colorHex, s.width, s.points.flatMap(p => [p.x, p.y]), ...(s.pressures ? [s.pressures] : [])]) });
   }
   function decode(raw) {
@@ -38,7 +40,7 @@
       for (let i = 0; i < row[2].length; i += 2) points.push({ x: row[2][i], y: row[2][i + 1] });
       return { colorHex: row[0], width: row[1], points, ...(row[3] ? { pressures: row[3] } : {}) };
     });
-    return validate({ name: data.name || 'Drawing', aspect: data.aspect, paper: data.paper, backdrop: data.backdrop || null, strokes });
+    return validate({ name: data.name || 'Drawing', aspect: data.aspect, paper: data.paper, backdrop: data.backdrop || null, strokes, ...(data.extent ? { extent: data.extent } : {}) });
   }
   function transform(strokes, from, to) {
     if (!(from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0)) return strokes;

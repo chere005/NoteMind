@@ -14,7 +14,12 @@ module.exports = function installFeatures(window, projectService) {
  const preferenceFile=key=>path.join(home,'preferences',key+'.json');
  const readPreference=async key=>{if(!preferenceKeys.includes(key))throw Error('Invalid preference');try{return JSON.parse(await fs.readFile(preferenceFile(key),'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
  ipcMain.handle('preference-get',(_,key)=>readPreference(key));
- ipcMain.handle('preference-set',async(_,key,value)=>{if(!preferenceKeys.includes(key))throw Error('Invalid preference');await fs.mkdir(path.dirname(preferenceFile(key)),{recursive:true});const temp=preferenceFile(key)+'.'+require('node:crypto').randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify(value));await fs.rename(temp,preferenceFile(key));}finally{await fs.unlink(temp).catch(()=>{});}});
+ const preferenceWrites=new Map();
+ ipcMain.handle('preference-set',async(_,key,value)=>{
+  if(!preferenceKeys.includes(key))throw Error('Invalid preference');
+  const next=(preferenceWrites.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{await fs.mkdir(path.dirname(preferenceFile(key)),{recursive:true});const temp=preferenceFile(key)+'.'+require('node:crypto').randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify(value));await fs.rename(temp,preferenceFile(key));}finally{await fs.unlink(temp).catch(()=>{});}});
+  preferenceWrites.set(key,next);try{await next;}finally{if(preferenceWrites.get(key)===next)preferenceWrites.delete(key);}
+ });
  app.whenReady().then(async()=>{await fs.mkdir(path.join(home,'preferences'),{recursive:true});const watcher=require('node:fs').watch(path.join(home,'preferences'),(_,file)=>{const key=String(file).replace(/\.json$/,'');if(!preferenceKeys.includes(key))return;readPreference(key).then(value=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('preference-changed',{key,value});}).catch(()=>{});});app.on('will-quit',()=>watcher.close());});
  ipcMain.handle('workspace-list',()=>registry.migrate());
  ipcMain.handle('workspace-put',(_,workspace,remove)=>registry.put(workspace,remove));

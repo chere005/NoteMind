@@ -14,10 +14,10 @@
 
   let deletedPaths=[];let searchIndex=-1;let drafts=[],activeId=null,activeNoteId=null;let editing=false;window.addEventListener('sidebar-edit',e=>{editing=e.detail;render()});
   let registryReady=false;
-  let libraryRecords=[],librarySettings={sort:'manual',smartFolders:[]},libraryFilter=null,libraryHits=[],scanTimer;
+  let libraryRecords=[],librarySettings={sort:'manual',smartFolders:[]},libraryFilter=null,libraryHits=[],scanTimer,libraryFilterRun=0;
   window.addEventListener('notes-library',e=>{libraryRecords=e.detail.records;librarySettings=e.detail.settings;if(search){byId('sidebarSearch').dispatchEvent(new Event('input'));return;}if(libraryFilter)void applyLibraryFilter(libraryFilter);else render();});
   window.addEventListener('notes-files-changed',()=>void refresh());
-  async function applyLibraryFilter(filter){libraryFilter=filter;libraryHits=await window.notemind.notes.list(filter);render();}
+  async function applyLibraryFilter(filter){const current=++libraryFilterRun;libraryFilter=filter;const hits=await window.notemind.notes.list(filter);if(current!==libraryFilterRun||libraryFilter!==filter)return;libraryHits=hits;render();}
   function draftActions(record){return [
     {label:'Open',run:()=>window.NoteMindNotes.openRecord(record)},
     {label:'Save As…',run:()=>window.NoteMindNotes.saveDraft(record)},
@@ -237,7 +237,7 @@
 
     if (search) { if (!searchResults.length) { const empty = document.createElement('div'); empty.className = 'empty-tree'; empty.textContent = 'No matching Notepads.'; tree.append(empty); } else for (const item of searchResults) item.path?row(item,0):libraryRow(item); return; }
 
-    if(libraryFilter){const back=document.createElement('button');back.className='library-filter-back';back.title='Show all Notepads in this workspace';back.textContent='‹ All workspace Notepads';back.onclick=()=>{libraryFilter=null;render();};tree.append(back);for(const record of libraryHits)libraryRow(record);if(!libraryHits.length){const empty=document.createElement('div');empty.className='empty-tree';empty.textContent='No matching Notepads.';tree.append(empty);}return;}
+    if(libraryFilter){const back=document.createElement('button');back.className='library-filter-back';back.title='Show all Notepads in this workspace';back.textContent='‹ All workspace Notepads';back.onclick=()=>{libraryFilterRun++;libraryFilter=null;render();};tree.append(back);for(const record of libraryHits)libraryRow(record);if(!libraryHits.length){const empty=document.createElement('div');empty.className='empty-tree';empty.textContent='No matching Notepads.';tree.append(empty);}return;}
     const pinned=libraryRecords.filter(r=>r.meta?.pinned);
     if(pinned.length){const title=document.createElement('div');title.className='library-section';title.textContent='Pinned';tree.append(title);for(const record of pinned)libraryRow(record);}
     for(const folder of librarySettings.smartFolders){const item=document.createElement('div');item.className='tree-row section-row smart-folder-row';item.innerHTML=iconMarkup('folder',15,'row-icon')+'<span class="name"></span>';item.querySelector('.name').textContent=folder.name;item.tabIndex=0;item.setAttribute('role','treeitem');item.onclick=()=>applyLibraryFilter({smartId:folder.id});item.onkeydown=e=>{if(e.key==='Enter')item.click();};item.oncontextmenu=e=>{e.preventDefault();e.stopPropagation();showMenu([{label:'Edit Smart Folder…',run:()=>window.NoteMindLibrary.smartFolder(folder)},{label:'Remove Smart Folder',run:()=>window.notemind.notes.settings({remove:folder.id})}],e.clientX,e.clientY);};tree.append(item);}

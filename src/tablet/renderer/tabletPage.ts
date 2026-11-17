@@ -17,6 +17,7 @@
 
 import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
+import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -219,7 +220,7 @@ export function landStrokes(strokes: InkStroke[], options: {
  * One change to the sheet, so that two views of it can keep the same strokes AND the same undo history by
  * replaying the same operations in the same order.
  */
-export interface SheetState { strokes: InkStroke[]; past: InkStroke[][]; future: InkStroke[][] }
+export interface SheetState { strokes: InkStroke[]; past: InkStroke[][]; future: InkStroke[][]; extent?: Rect }
 
 export type SheetOp =
   | { op: "mark" }
@@ -241,6 +242,10 @@ export class TabletPage {
    */
   aspect: number
   strokes: InkStroke[] = []
+  /** Canonical paper retained by actual ink; resizing a view never changes it or any stroke. */
+  extent: Rect = { ...UNIT_SHEET }
+  /** The most recently displayed full paper, for capture. Not part of the undo history. */
+  viewport: Rect = { ...UNIT_SHEET }
   /** The media file of a picture shown under the ink (right-click a picture ▸ Edit with Tablet, tabletBackdrop.ts), or null. Not ink. */
   backdrop: string | null = null
   /** The file the NOTE shows for this picture now (after a Save to Original replaced it); null: the backdrop itself. In memory only. */
@@ -252,6 +257,16 @@ export class TabletPage {
   private applying = false
 
   constructor(aspect = 16 / 9) { this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9 }
+
+  restoreExtent(extent?: Rect): void {
+    this.extent = includeInk(validExtent(extent) ? { ...extent } : { ...UNIT_SHEET }, this.strokes)
+    this.viewport = { ...this.extent }
+  }
+
+  fitViewport(size: Size): Rect {
+    this.viewport = sheetViewport(this.aspect, this.extent, size)
+    return this.viewport
+  }
 
   get canUndo(): boolean { return this.past.length > 0 }
   get canRedo(): boolean { return this.future.length > 0 }
@@ -300,12 +315,14 @@ export class TabletPage {
 
   add(stroke: InkStroke): void {
     this.silently(() => this.mark())
+    this.extent = includeInk(this.extent, [stroke])
     this.strokes = [...this.strokes, stroke]
     this.emit({ op: "add", stroke })
   }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */
   replace(next: InkStroke[]): void {
     this.silently(() => this.mark())
+    this.extent = includeInk(this.extent, next)
     this.strokes = next
     this.emit({ op: "replace", strokes: next })
   }
@@ -349,11 +366,12 @@ export class TabletPage {
   }
 
   /** The whole state INCLUDING history, to bring another view into step (it is cloned in one piece, so shared strokes stay shared). */
-  exportState(): SheetState { return { strokes: this.strokes, past: this.past, future: this.future } }
+  exportState(): SheetState { return { strokes: this.strokes, past: this.past, future: this.future, extent: this.extent } }
   importState(state: SheetState): void {
     this.strokes = state.strokes
     this.past = state.past
     this.future = state.future
+    this.restoreExtent(state.extent)
     this.emit(null)
   }
 }
@@ -427,10 +445,10 @@ export function hitBox(box: Rect, point: Point, size: Size, grab = 10): BoxHit {
 }
 
 /** The box moved by (dx, dy) fractions, kept on the sheet. */
-export function moveBox(box: Rect, dx: number, dy: number): Rect {
+export function moveBox(box: Rect, dx: number, dy: number, bounds: Rect = UNIT_SHEET): Rect {
   return {
-    x: Math.min(1 - box.width, Math.max(0, box.x + dx)),
-    y: Math.min(1 - box.height, Math.max(0, box.y + dy)),
+    x: Math.min(bounds.x + bounds.width - box.width, Math.max(bounds.x, box.x + dx)),
+    y: Math.min(bounds.y + bounds.height - box.height, Math.max(bounds.y, box.y + dy)),
     width: box.width, height: box.height,
   }
 }
@@ -439,19 +457,19 @@ export function moveBox(box: Rect, dx: number, dy: number): Rect {
  * `origin` with the corner `handle` dragged to `to`: the opposite corner stays, the box turns the other way
  * if it is dragged across it, stays on the sheet, and is never smaller than `min` px either way.
  */
-export function resizeBox(origin: Rect, handle: BoxHandle, to: Point, size: Size, min = 8): Rect {
+export function resizeBox(origin: Rect, handle: BoxHandle, to: Point, size: Size, min = 8, bounds: Rect = UNIT_SHEET): Rect {
   const anchor = boxCorner(origin, OPPOSITE[handle])
   const minW = min / Math.max(1, size.width), minH = min / Math.max(1, size.height)
-  const axis = (a: number, t: number, least: number): [number, number] => {
-    const target = clamp01(t)
+  const axis = (a: number, t: number, least: number, low: number, high: number): [number, number] => {
+    const target = Math.min(high, Math.max(low, t))
     const direction = target >= a ? 1 : -1
     const length = Math.max(least, Math.abs(target - a))
     let from = direction === 1 ? a : a - length
-    from = Math.min(1 - length, Math.max(0, from))
+    from = Math.min(high - length, Math.max(low, from))
     return [from, length]
   }
-  const [x, width] = axis(anchor.x, to.x, minW)
-  const [y, height] = axis(anchor.y, to.y, minH)
+  const [x, width] = axis(anchor.x, to.x, minW, bounds.x, bounds.x + bounds.width)
+  const [y, height] = axis(anchor.y, to.y, minH, bounds.y, bounds.y + bounds.height)
   return { x, y, width, height }
 }
 

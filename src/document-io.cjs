@@ -23,7 +23,7 @@ async function importPDF(bytes,{mode='both',password,language='auto',signal,onPr
   const name='assets/page-'+page.page+'.png';if(mode!=='text')assets[name]=page.image;parts.push('## Page '+page.page+'\n\n'+(mode!=='text'?'![Page '+page.page+']('+name+')\n\n':'')+(mode!=='images'?text:''));
  }return {path:null,text:parts.join('\n\n---\n\n'),assets,warnings:[]};
 }
-async function importFile(file,options={}){checkAbort(options.signal);const bytes=await fs.readFile(file,options.signal?{signal:options.signal}:undefined);checkAbort(options.signal);if(bytes.length>150*1024*1024)throw Error('Import files up to 150 MB.');const ext=path.extname(file).toLowerCase();let result;if(ext==='.docx')result=await importWord(bytes,{signal:options.signal});else if(ext==='.pdf')result=await importPDF(bytes,options);else throw Error('Choose a Word .docx or PDF document.');checkAbort(options.signal);return {...result,title:path.basename(file,ext),imported:true,sourcePath:file};}
+async function importFile(file,options={}){checkAbort(options.signal);const bytes=await require('./read-limited.cjs').readLimited(file,150*1024*1024,'Import files up to 150 MB.',{signal:options.signal});checkAbort(options.signal);const ext=path.extname(file).toLowerCase();let result;if(ext==='.docx')result=await importWord(bytes,{signal:options.signal});else if(ext==='.pdf')result=await importPDF(bytes,options);else throw Error('Choose a Word .docx or PDF document.');checkAbort(options.signal);return {...result,title:path.basename(file,ext),imported:true,sourcePath:file};}
 async function exportFile(doc,file,options={}){
  const ext=path.extname(file).toLowerCase();let bytes;
  doc=await require('./print-images.cjs').preparePrint(doc,options.clean,(...args)=>call('image',...args));
@@ -32,7 +32,7 @@ async function exportFile(doc,file,options={}){
  else throw Error('Choose .docx or .pdf.');const temp=file+'.'+crypto.randomUUID()+'.tmp';try{await fs.writeFile(temp,bytes,{flag:'wx'});await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{})}return file;
 }
 async function previewFile(file,password){
- const bytes=await fs.readFile(file);if(bytes.length>150*1024*1024)throw Error('Open files up to 150 MB.');const ext=path.extname(file).toLowerCase();
+ const bytes=await require('./read-limited.cjs').readLimited(file,150*1024*1024,'Open files up to 150 MB.');const ext=path.extname(file).toLowerCase();
  if(ext==='.pdf')return {kind:'pdf',pages:await call('pdf',bytes.toString('base64'),password)};
  if(ext==='.docx'){const doc=await importWord(bytes),w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});try{await w.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(printHtml(doc)));await w.webContents.executeJavaScript('Promise.all([document.fonts.ready,...Array.from(document.images,i=>i.decode())])');const pdf=await w.webContents.printToPDF({printBackground:true,pageSize:'A4'});return {kind:'docx',pages:await call('pdf',pdf.toString('base64')),converted:doc,html:render(doc.text,doc.assets)};}finally{w.destroy();}}
  const type=mime(file);if(!type)throw Error('Choose a PDF, Word document, or image.');const image=await call('image',bytes.toString('base64'),type);return {kind:'image',pages:[{...image,image:image.data,page:1,text:'',blocks:[]}]};

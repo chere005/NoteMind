@@ -22,7 +22,7 @@ export const sameBox = (one: Rect, other: Rect): boolean =>
  * The box a double click makes. `was`: the box when the double click began (null: none); `picture`: where the picture is on the sheet
  * (null: there is none, or it has not loaded).
  */
-export function doubleClickBox(was: Rect | null, picture: Rect | null): Rect {
-  if (!picture || sameBox(picture, WHOLE_SHEET)) return WHOLE_SHEET
-  return was && sameBox(was, picture) ? WHOLE_SHEET : picture
+export function doubleClickBox(was: Rect | null, picture: Rect | null, whole: Rect = WHOLE_SHEET): Rect {
+  if (!picture || sameBox(picture, whole)) return whole
+  return was && sameBox(was, picture) ? whole : picture
 }

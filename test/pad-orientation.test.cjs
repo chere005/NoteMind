@@ -45,3 +45,13 @@ test('a late startup preference answer cannot undo a new menu-bar rotation choic
  state.setPadChromeOrientation(true);resolve(false);await Promise.resolve();
  assert.equal(state.padChromeOrientation(),true);
 });
+
+test('a late startup answer cannot undo a new tablet orientation or a newer shared choice',async()=>{
+ const code=bundle('src/tablet/renderer/orientation.ts');
+ for(const remote of [false,true]){
+  let resolve;const pending=new Promise(done=>resolve=done),stored=new Map(),listeners=[];
+  const state=load(code,{localStorage:{getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value)},window:{addEventListener(){},notemind:{preferenceGet:key=>key==='orientation'?pending:Promise.resolve(null),preferenceSet:()=>Promise.resolve(),onPreference:fn=>listeners.push(fn)}}});
+  if(remote)for(const listener of listeners)listener({key:'orientation',value:2});else state.setOrientation(1);
+  resolve(0);await Promise.resolve();assert.equal(state.orientation(),remote?2:1);assert.equal(stored.get('notemind.orientation'),remote?'2':'1');
+ }
+});

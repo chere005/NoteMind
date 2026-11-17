@@ -27,8 +27,8 @@
   if(!input.value){count.textContent='';button('prev').disabled=button('next').disabled=true;return;}
   if(!visual)matches=scan(source.value).map(([start,end])=>({start,end}));
   else{
-   const nodes=[],walker=document.createTreeWalker(rich,NodeFilter.SHOW_TEXT,{acceptNode:n=>n.parentElement.closest('[data-editor-control]')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});let text='',node;
-   while((node=walker.nextNode())){nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
+   const nodes=[],walker=document.createTreeWalker(rich,NodeFilter.SHOW_TEXT|NodeFilter.SHOW_ELEMENT,{acceptNode:n=>(n.nodeType===1?n:n.parentElement).closest('[data-editor-control]')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});let text='',node,block=null;
+   while((node=walker.nextNode())){if(node.nodeType===1){if(node.tagName==='BR')text+='\n';continue;}const owner=node.parentElement.closest('p,h1,h2,h3,h4,h5,h6,li,td,th,pre,blockquote,div,section')||rich;if(nodes.length&&owner!==block&&!text.endsWith('\n'))text+='\n';block=owner;nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
    for(const [at,stop] of scan(text)){const start=nodes.find(n=>n.end>at),end=nodes.find(n=>n.end>=stop);if(start&&end){const range=document.createRange();range.setStart(start.node,at-start.start);range.setEnd(end.node,stop-end.start);matches.push(range);}}
    if(CSS.highlights)CSS.highlights.set('note-find',new Highlight(...matches));
   }
@@ -51,10 +51,10 @@
  function useSelection(){const text=selectedText();if(!text||text.includes('\n'))return;if(bar.hidden)open();input.value=text;index=-1;refresh();move(0);}
  // One match replaced; the next one comes forward.
  function replaceCurrent(){
-  refresh();if(!matches.length)return;if(index<0)index=0;const m=matches[index],text=replacement.value;
-  if(!visual)source.setRangeText(text,m.start,m.end,'end');
-  else{const selection=getSelection();rich.focus();selection.removeAllRanges();selection.addRange(m);document.execCommand(text?'insertText':'delete',false,text);richChanged=true;}
-  markDirty();refresh();move(0);
+  refresh();if(!matches.length)return;if(index<0)index=0;const m=matches[index],text=replacement.value;let after;
+  if(!visual){source.setRangeText(text,m.start,m.end,'end');after=m.start+text.length;}
+  else{const selection=getSelection();rich.focus();selection.removeAllRanges();selection.addRange(m);document.execCommand(text?'insertText':'delete',false,text);after=selection.getRangeAt(0).cloneRange();after.collapse(false);richChanged=true;}
+  markDirty();refresh();index=matches.findIndex(match=>visual?match.compareBoundaryPoints(Range.START_TO_START,after)>=0:match.start>=after);if(index<0)index=0;show();
  }
  // Every match, back to front so earlier spans stay valid; one step of Undo.
  function replaceAll(){

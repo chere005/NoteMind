@@ -1,10 +1,11 @@
 const fs=require('node:fs/promises'),path=require('node:path'),{randomUUID}=require('node:crypto');
 
 async function withFileLock(file,run){
- const lock=file+'.notemind-lock',candidate=lock+'-'+randomUUID();let acquired=false;
+ const lock=file+'.notemind-lock',candidate=lock+'-'+randomUUID();let acquired=false,ownerStat;
  await fs.mkdir(path.dirname(file),{recursive:true});
  await fs.writeFile(candidate,JSON.stringify({pid:process.pid}),{flag:'wx'});
  try{
+  ownerStat=await fs.stat(candidate);
   for(let n=0;n<250;n++){
    try{await fs.link(candidate,lock);acquired=true;break;}
    catch(error){
@@ -12,13 +13,13 @@ async function withFileLock(file,run){
     const stat=await fs.stat(lock).catch(()=>null);let dead=false;
     try{const owner=JSON.parse(await fs.readFile(lock,'utf8'));if(!Number.isInteger(owner.pid)||owner.pid<=0)throw Error('Invalid owner');try{process.kill(owner.pid,0);}catch(e){if(e.code==='ESRCH')dead=true;}}
     catch{dead=!!stat&&Date.now()-stat.mtimeMs>1000;}
-    if(dead)await fs.unlink(lock).catch(()=>{});
+    if(dead&&stat){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===stat.ino&&current.dev===stat.dev)await fs.unlink(lock).catch(()=>{});}
     await new Promise(resolve=>setTimeout(resolve,20));
    }
   }
   if(!acquired)throw Error('This file is being saved in another window. Your draft is safe.');
   return await run();
- }finally{await fs.unlink(candidate).catch(()=>{});if(acquired)await fs.unlink(lock).catch(()=>{});}
+ }finally{await fs.unlink(candidate).catch(()=>{});if(acquired){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===ownerStat?.ino&&current.dev===ownerStat?.dev)await fs.unlink(lock).catch(()=>{});}}
 }
 
 async function readExisting(file){try{return await fs.readFile(file);}catch(error){if(error.code==='ENOENT')return null;throw error;}}

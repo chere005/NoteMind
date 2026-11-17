@@ -115,12 +115,13 @@ async function readProject(file,known){
 // Opening an older `.wm` workspace converts it: `<stem>.wmpr` is written beside it and the old file is left as it was.
 async function convertLegacy(file,buffer){
  const old=decode(buffer),stem=path.join(path.dirname(path.resolve(file)),path.basename(file,path.extname(file)));
+ const sameLinks=project=>['folders','files','excluded'].every(key=>{const links=value=>[...new Set(projects.resolvePaths(value[key]||[],project.file).map(physicalReference))].sort();return JSON.stringify(links(project))===JSON.stringify(links(old));});
  let target=stem+'.wmpr';
  for(let n=2;;n++){
-  try{const text=await fs.readFile(target,'utf8');if(projects.parse(text))return {...await readProject(target),id:old.id};}catch(e){if(e.code!=='ENOENT')throw e;break;}
+  try{const text=await fs.readFile(target,'utf8');if(projects.parse(text)){const existing=await readProject(target);if(existing.extra?.notemindLegacy?.id===old.id||sameLinks(existing))return {...existing,id:old.id};}}catch(e){if(e.code!=='ENOENT')throw e;break;}
   target=stem+' '+n+'.wmpr';
  }
- const converted={...old,name:path.basename(target,'.wmpr'),file:target};
+ const converted={...old,name:path.basename(target,'.wmpr'),file:target,extra:{...old.extra,notemindLegacy:{id:old.id}}};
  await save(target,converted);
  return converted;
 }

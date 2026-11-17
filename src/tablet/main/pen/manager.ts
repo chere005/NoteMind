@@ -314,14 +314,15 @@ export function createFeedManager(deps: ManagerDeps): FeedManagerEx {
   const startDevice = async (name: "wintab-data" | "inject-tablet", backend: PenBackend): Promise<void> => {
     if (running.has(name)) return
     const gen = generation
-    hook(name, backend, gen)
+    const run = hook(name, backend, gen)
     let timer: unknown = null
     const result = await Promise.race([
       backend.start(context()).catch((e: unknown) => ({ ok: false as const, reason: `Wintab start failed: ${(e as Error)?.message ?? String(e)}`, retry: "later" as const })),
       new Promise<{ ok: false; reason: string; retry: "later" }>((resolve) => { timer = setTimer(() => resolve({ ok: false, reason: "Wintab did not start within 4 s", retry: "later" }), LIVENESS.START_TIMEOUT_MS) }),
     ])
     if (timer !== null) clearTimer(timer)
-    if (gen !== generation || disposed) { try { backend.stop() } catch { /* ignore */ } return }
+    // stopOne already released a stale start. The same backend may now belong to a replacement run.
+    if (gen !== generation || disposed || running.get(name) !== run) return
     if (result.ok) {
       wintabNote = null
       retries = 0

@@ -42,7 +42,7 @@
 
  // Markdown pane: a quote continues on Return, and Backspace in the indentation takes one level.
  source.addEventListener('keydown',e=>{
-  if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||source.selectionStart!==source.selectionEnd)return;
+  if(e.isComposing||e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||source.selectionStart!==source.selectionEnd)return;
   const at=source.selectionStart,from=source.value.lastIndexOf('\n',at-1)+1,line=source.value.slice(from,at);
   if(e.key==='Enter'&&!e.shiftKey&&!window.NoteMindWriting.insideFence(source.value,at)){const quote=line.match(/^(\s*>+ ?)(.*)$/);if(!quote)return;e.preventDefault();if(!quote[2].trim())source.setRangeText('',from,at,'end');else source.setRangeText('\n'+quote[1],at,at,'end');markDirty();}
   if(e.key==='Backspace'&&/^ +$/.test(line)){e.preventDefault();const remove=((line.length-1)%4)+1;source.setRangeText('',at-remove,at,'end');markDirty();}
@@ -52,7 +52,7 @@
  const pairs={'(':')','[':']','{':'}','"':'"',"'":"'",'`':'`'},closers=new Set(Object.values(pairs));
  const insideSourceFence=at=>window.NoteMindWriting.insideFence(source.value,at);
  source.addEventListener('keydown',e=>{
-  if(e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
+  if(e.isComposing||e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
   const start=source.selectionStart,end=source.selectionEnd;if(!insideSourceFence(start))return;
   const value=source.value,next=value[end],previous=value[start-1];
   if(closers.has(e.key)&&e.key===next&&start===end){e.preventDefault();source.setSelectionRange(end+1,end+1);return;}
@@ -63,7 +63,7 @@
   if(e.key==='Backspace'&&start===end&&pairs[previous]===next&&previous){e.preventDefault();source.setRangeText('',start-1,start+1,'end');markDirty();}
  });
  rich.addEventListener('keydown',e=>{
-  if(e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
+  if(e.isComposing||e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
   const selection=getSelection();if(!selection.rangeCount)return;const range=selection.getRangeAt(0),element=range.startContainer.nodeType===1?range.startContainer:range.startContainer.parentElement;
   if(!element?.closest('pre'))return;
   const code=element.closest('pre > code');let text=range.startContainer.nodeType===3?range.startContainer.data:'',offset=range.startOffset;if(code){const prefix=document.createRange();prefix.selectNodeContents(code);prefix.setEnd(range.startContainer,range.startOffset);text=code.textContent;offset=prefix.toString().length;}const next=text[offset],previous=text[offset-1];
