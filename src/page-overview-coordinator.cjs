@@ -78,7 +78,7 @@ async function loadOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1
   }
 }
 function smallExistingPreview(page) {
-  const preview = page.preview, expected = page.signature ?? page.revision ?? page.geometryRevision;
+  const preview = page.preview, expected = page.revision ?? page.signature ?? page.geometryRevision;
   if (expected == null || !preview || preview.revision !== expected || typeof preview.data !== "string" || preview.data.length > 512 * 1024 || !/^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]*={0,2}$/i.test(preview.data)) return null;
   try {
     const data = preview.data.slice(preview.data.indexOf(",") + 1), bytes = typeof Uint8Array.fromBase64 === "function" ? Uint8Array.fromBase64(data) : Uint8Array.from(atob(data), (c) => c.charCodeAt(0)), size = require("image-size").imageSize(bytes);
@@ -119,18 +119,19 @@ class OverviewCoordinator {
     }
   }
   key(page) {
-    let revision = page.geometryRevision ?? page.revision ?? page.signature;
-    if (revision == null) {
-      revision = this.fallbackKeys.get(page);
-      if (!revision) {
-        revision = "local-" + ++this.serial;
-        this.fallbackKeys.set(page, revision);
+    let revisions = [page.geometryRevision ?? null, page.revision ?? null, page.signature ?? null];
+    if (revisions.every((value) => value === null)) {
+      let fallback = this.fallbackKeys.get(page);
+      if (!fallback) {
+        fallback = "local-" + ++this.serial;
+        this.fallbackKeys.set(page, fallback);
       }
+      revisions = [null, fallback, null];
     }
-    if (typeof revision !== "string" && typeof revision !== "number" || String(revision).length > 256) throw Error("Invalid overview revision.");
+    for (const revision of revisions) if (revision !== null && (typeof revision !== "string" && typeof revision !== "number" || typeof revision === "number" && !Number.isFinite(revision) || String(revision).length > 256)) throw Error("Invalid overview revision.");
     const meta = thumbnailMetadata(page.metadata || page), paper = meta.paper || {}, extent = meta.extent || {}, backdrop = page.backdropHash ?? page.backdropId ?? null;
     if (backdrop !== null && (typeof backdrop !== "string" || backdrop.length > 256)) throw Error("Invalid overview background identity.");
-    return JSON.stringify([page.pageId, revision, backdrop, meta.aspect ?? 1, paper.kind, paper.spacing, paper.colour, extent.x, extent.y, extent.width, extent.height]);
+    return JSON.stringify([page.pageId, revisions, backdrop, meta.aspect ?? 1, paper.kind, paper.spacing, paper.colour, extent.x, extent.y, extent.width, extent.height]);
   }
   setPages(pages) {
     validPages(pages);
