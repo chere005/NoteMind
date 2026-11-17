@@ -138,7 +138,7 @@ class ArchiveCodec{
  ensureWorker(){
   if(this.worker)return this.worker;
   const worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));this.worker=worker;this.epoch++;
-  worker.on('message',packet=>{if(this.worker!==worker||packet.id!==this.active?.id)return;const job=this.active;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
+  worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
    try{
     if(packet.missingAssets){if(!job.assetPacket||(job.attempts||0)>=2)throw Error('Archive asset references expired repeatedly.');this.assets.retry(job.assetPacket,packet.missingAssets);job.attempts=(job.attempts||0)+1;this.postJob(worker,job);return;}
     if(packet.workerBytes>this.maxWorkerBytes&&!rawOps.has(job.op)){this.rollovers++;this.stopWorker();}
@@ -172,7 +172,7 @@ class ArchiveCodec{
  }
  assetStats(){return {...this.assets.stats(),uploads:this.assets.uploads,worker:this.workerAssetStats,epoch:this.epoch,rollovers:this.rollovers,raw:this.workerRawStats,validation:this.workerValidationStats,discardedReadBytes:this.discardedReadBytes||0};}
  finish(job,error,value){
-  if(this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.args=null;job.assetPacket=null;error?job.reject(error):job.resolve(value);this.pump();
+  if(!job||this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.args=null;job.assetPacket=null;error?job.reject(error):job.resolve(value);this.pump();
  }
  workerFailed(worker,error){
   if(worker!==this.worker)return;this.stopWorker(true);const job=this.active;if(job)this.finish(job,error);else this.pump();
