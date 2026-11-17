@@ -33,3 +33,8 @@ test('compact worker rejects corrupt saved camera settings before opening any im
  const {processCompactCameraPage}=load('src/camera-worker.ts',{TextDecoder,AbortController,setTimeout,clearTimeout,setImmediate}),bytes=new Uint8Array(24),backdropBytes=new Uint8Array([1]);
  await assert.rejects(processCompactCameraPage({bytes,backdropBytes,metadata:{name:'Corrupt',camera:{rotation:45,aspect:'NaN'}}}),/Invalid saved camera page settings/);
 });
+test('PNG encoding cancellation aborts its FileReader and never starts an already-cancelled read',async()=>{
+ const readers=[],controller=new AbortController(),{pngBlobDataURL}=load('src/tablet/renderer/cameraProcessing.ts',{Blob,AbortController,FileReader:class{constructor(){readers.push(this)}readAsDataURL(){this.started=true}abort(){this.aborted=true;this.onabort()}}});
+ const pending=pngBlobDataURL(new Blob(['png']),{signal:controller.signal});assert.equal(readers[0].started,true);controller.abort();await assert.rejects(pending,{name:'AbortError'});assert.equal(readers[0].aborted,true);await assert.rejects(pngBlobDataURL(new Blob(['png']),{signal:controller.signal}),{name:'AbortError'});assert.equal(readers.length,1);
+ const success=new AbortController(),encoded=pngBlobDataURL(new Blob(['png']),{signal:success.signal});readers[1].result='data:image/png;base64,eA==';readers[1].onload();assert.equal(await encoded,'data:image/png;base64,eA==');success.abort();assert.equal(readers[1].aborted,undefined);
+});

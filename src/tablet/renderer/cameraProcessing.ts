@@ -3,7 +3,11 @@ import type {InkView} from './cameraInkGeometry'
 import type {InkStroke} from './tabletPage'
 
 const abort=()=>Object.assign(Error('Camera capture cancelled.'),{name:'AbortError'})
-export function pngBlobDataURL(blob:Blob):Promise<string>{return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error||Error('Could not read the captured picture.'));reader.onabort=()=>reject(abort());reader.readAsDataURL(blob)})}
+export function pngBlobDataURL(blob:Blob,{signal}: {signal?:AbortSignal}={}):Promise<string>{return new Promise((resolve,reject)=>{
+ if(signal?.aborted){reject(abort());return}const reader=new FileReader();let settled=false
+ const finish=(error:any,value?:string)=>{if(settled)return;settled=true;signal?.removeEventListener('abort',cancel);error?reject(error):resolve(value!)},cancel=()=>{reader.abort();finish(abort())}
+ reader.onload=()=>finish(null,String(reader.result));reader.onerror=()=>finish(reader.error||Error('Could not read the captured picture.'));reader.onabort=()=>finish(abort());signal?.addEventListener('abort',cancel,{once:true});try{reader.readAsDataURL(blob)}catch(error){finish(error)}
+})}
 
 type Result={blob:Blob;thumbnail?:Blob}
 type Prepared={request:any;transfers:Transferable[];cleanup?:()=>void}
