@@ -59,8 +59,7 @@ function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeByte
     if(encode!==graphics.encodeBytesAsync){const copy=ownOverviewBytes(new Uint8Array(bytes.byteLength));packet={metadata:captured.metadata,bytes:copy,owned:true};for(let at=0;at<copy.length;at+=65536){check(signal);copy.set(new Uint8Array(bytes.buffer,bytes.byteOffset+at,Math.min(65536,copy.length-at)),at);await yieldControl();}bytes=copy;}
     packet ||= {metadata:captured.metadata,bytes:ownOverviewBytes(bytes),owned:true};
     const background = await backdropBytes(captured.backdrop, maxBytes - bytes.byteLength, { signal, yieldControl });
-    check(signal);
-    if(background)packet.backdropBytes=background;published=true;return packet;}finally{if(!published)discardOverviewPacket(packet);release();}
+    if(background)packet.backdropBytes=background;check(signal);published=true;return packet;}finally{if(!published)discardOverviewPacket(packet);release();}
   };
 }
 module.exports = { captureOverviewPage, createOverviewLoader };

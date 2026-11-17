@@ -8,3 +8,9 @@ test('custom encoded bytes stay borrowed while the private overview copy retires
  const {discardOverviewPacket}=require('../src/overview-packet.cjs'),current=row(),borrowed=graphics.encodeBytes({...current.page,name:current.name,paper:current.paper,backdrop:null}),before=borrowed.slice(),load=createOverviewLoader({getPage:()=>current,loadSaved:async()=>{},encode:async()=>borrowed,yieldControl:async()=>{}}),packet=await load('A');assert.notEqual(packet.bytes.buffer,borrowed.buffer);assert.deepEqual(packet.bytes,borrowed);discardOverviewPacket(packet);assert.equal(packet.bytes.byteLength,0);assert.equal(packet.backdropBytes.byteLength,0);assert.deepEqual(borrowed,before);
  const controller=new AbortController(),cancelled=createOverviewLoader({getPage:()=>current,loadSaved:async()=>{},encode:async()=>borrowed,yieldControl:async()=>controller.abort()});await assert.rejects(cancelled('A',{signal:controller.signal}),{name:'AbortError'});assert.deepEqual(borrowed,before);
 });
+test('abort between background completion and loader handoff retires both private output owners',async t=>{
+ const current=row(),borrowed=graphics.encodeBytes({...current.page,name:current.name,paper:current.paper,backdrop:null}),before=borrowed.slice(),controller=new AbortController(),encodeInto=TextEncoder.prototype.encodeInto;let background,pauses=0;
+ t.mock.method(TextEncoder.prototype,'encodeInto',function(text,destination){background=destination.buffer;return Reflect.apply(encodeInto,this,[text,destination]);});
+ const load=createOverviewLoader({getPage:()=>current,loadSaved:async()=>{},encode:async()=>borrowed,yieldControl:()=>{if(++pauses===2)queueMicrotask(()=>queueMicrotask(()=>controller.abort()));}});
+ await assert.rejects(load('A',{signal:controller.signal}),{name:'AbortError'});assert.equal(pauses,2);assert.ok(background);assert.equal(background.byteLength,0);assert.deepEqual(borrowed,before);
+});
