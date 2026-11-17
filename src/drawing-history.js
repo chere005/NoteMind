@@ -188,6 +188,82 @@ class DrawingHistoryBudget {
     const base = this.state(previous);
     if (next.length === previous.length - 1 && Number.isInteger(index) && index >= 0 && index < previous.length) this.states.set(next, { array: next, tree: this.remove(base.tree, index), current: 0, history: 0, memory: this.resource(next, 32 + next.length * 8) });
   }
+  async prepareSparse(previous, next, change, {valid = () => true, pause = yieldTask} = {}) {
+    if (!Array.isArray(previous) || !Array.isArray(next) || change?.source !== previous || !(change.replacements instanceof Map) || !Array.isArray(change.duplicates)) return undefined;
+    if (this.states.has(next)) return this.states.get(next);
+    const indexes = new Uint32Array(change.replacements.size), values = new Array(indexes.length), duplicateIndexes = new Uint32Array(change.duplicates.length), duplicates = new Array(duplicateIndexes.length);
+    let at = 0, last = -1, start = clock();
+    const checkpoint = () => clock() - start >= 3 ? Promise.resolve(pause()).then(() => { start = clock(); }) : null;
+    const replacement = (stroke, original) => stroke === null || stroke && /^#[a-f0-9]{6}$/i.test(stroke.colorHex) && Number.isFinite(stroke.width) && stroke.width > 0 && stroke.points === original.points && stroke.pressures === original.pressures;
+    for (const [index, stroke] of change.replacements) {
+      if (!Number.isInteger(index) || index <= last || index >= previous.length || !replacement(stroke, previous[index])) return undefined;
+      indexes[at] = index; values[at++] = stroke; last = index;
+      if (stroke && stroke !== previous[index]) Object.freeze(stroke);
+      {const pending=checkpoint();if(pending)await pending;}if(!valid())return null;
+    }
+    if (at !== indexes.length) return undefined;
+    at = 0;
+    if (duplicates.length && !change.duplicateIndexes?.[Symbol.iterator]) return undefined;
+    for (const index of change.duplicateIndexes || []) {
+      const stroke = change.duplicates[at];
+      if (at >= duplicates.length || !Number.isInteger(index) || index < 0 || index >= previous.length || !stroke || !replacement(stroke, previous[index])) return undefined;
+      duplicateIndexes[at] = index; duplicates[at++] = stroke;
+      if (stroke !== previous[index]) Object.freeze(stroke);
+      {const pending=checkpoint();if(pending)await pending;}if(!valid())return null;
+    }
+    if (at !== duplicates.length) return undefined;
+    // Prove every untouched occurrence and captured append tail before avoiding
+    // the arbitrary-array union fallback. No point/pressure registry is built.
+    let output = 0, cursor = 0;
+    for (let index = 0; index < previous.length; index++) {
+      const stroke = cursor < indexes.length && indexes[cursor] === index ? values[cursor++] : previous[index];
+      if (stroke !== null && next[output++] !== stroke) return undefined;
+      {const pending=checkpoint();if(pending)await pending;}if(!valid())return null;
+    }
+    for (const stroke of duplicates) {if (next[output++] !== stroke) return undefined;const pending=checkpoint();if(pending)await pending;if(!valid())return null;}
+    if (output !== next.length || !valid()) return output === next.length ? null : undefined;
+    Object.freeze(next);
+    const base = this.state(previous), cancelled = {};
+    cursor = 0;
+    const visit = async (node, offset) => {
+      if (!node || cursor >= indexes.length || indexes[cursor] >= offset + node.count) return node;
+      if (!valid()) throw cancelled;
+      let children, changed = false;
+      if (!node.level) {
+        children = [];
+        for (let local = 0; local < node.children.length; local++) {
+          const old = node.children[local], index = offset + local, stroke = cursor < indexes.length && indexes[cursor] === index ? values[cursor++] : old;
+          changed ||= stroke !== old;
+          if (stroke !== null) children.push(stroke);
+        }
+        if (changed) this.materializeLeaf(node);
+      } else {
+        children = []; let position = offset;
+        for (const child of node.children) {
+          const nextChild = await visit(child, position); position += child.count;
+          changed ||= nextChild !== child;
+          if (nextChild) children.push(nextChild);
+        }
+      }
+      {const pending=checkpoint();if(pending)await pending;}if(!valid())throw cancelled;
+      return changed ? children.length ? this.node(children, node.level) : null : node;
+    };
+    try {
+      let tree = await visit(base.tree, 0);
+      for (let index = 0; index < duplicates.length; index++) {
+        let node = base.tree, position = duplicateIndexes[index];
+        while (node?.level) { let child = 0; while (position >= node.children[child].count) position -= node.children[child++].count; node = node.children[child]; }
+        if (node) this.materializeLeaf(node);
+        const pushed = this.push(tree, this.prime(duplicates[index]));
+        tree = pushed.overflow ? this.node([pushed.node, pushed.overflow], pushed.node.level + 1) : pushed.node;
+        {const pending=checkpoint();if(pending)await pending;}if(!valid())throw cancelled;
+      }
+      if (!valid()) return null;
+      if(this.states.has(next))return this.states.get(next);
+      const state = {array:next, tree, current:0, history:0, memory:this.resource(next,32+next.length*8)};
+      this.states.set(next,state); return state;
+    } catch (error) { if (error === cancelled) return null; throw error; }
+  }
   holdNode(node, kind, delta) {
     if (!node) return;
     if (node.aggregate && node.aggregateEpoch !== this.aggregateEpoch) this.materializeLeaf(node);
@@ -421,15 +497,16 @@ class DrawingHistory {
     return this.array;
   }
   peek(redo = false) { return this.record?.[redo ? 'future' : 'past'].at(-1)?.state.array || null; }
-  async change(array, action, {signal, valid = () => true, yieldControl = yieldTask} = {}) {
+  async change(array, action, {signal, valid = () => true, yieldControl = yieldTask, sparse} = {}) {
     const record = this.ensure(), original = this.array, previous = record.current, revision = this.revision;
     let pauseError = null;
     const pause = async () => { try { await yieldControl(); } catch (error) { pauseError = error; await yieldTask(); } };
     const current = () => !pauseError && !signal?.aborted && valid() && this.record === record && !record.released && this.array === original && this.revision === revision;
     if (!current()) return false;
-    const state = await this.budget.stateAsync(array, pause);
+    const prepared = sparse ? await this.budget.prepareSparse(original,array,sparse,{valid:current,pause}) : undefined;
+    const state = prepared === undefined ? await this.budget.stateAsync(array, pause) : prepared;
     if (pauseError) throw pauseError;
-    if (!current()) return false;
+    if (!state || !current()) return false;
     const pins = [], budget = this.budget;
     budget.pendingPreparations++;
     try {
