@@ -20,6 +20,7 @@ import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Re
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 import { recordStrokeAppend } from '../../stroke-signature.js'
 import { strokeBox } from '../../stroke-bounds.js'
+import { DrawingHistory } from '../../drawing-history.js'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -228,6 +229,7 @@ export function landStrokes(strokes: InkStroke[], options: {
  * replaying the same operations in the same order.
  */
 export interface SheetState { strokes: InkStroke[]; past: InkStroke[][]; future: InkStroke[][]; extent?: Rect }
+export interface GeometryChangeOptions { signal?: AbortSignal; valid?: () => boolean; yieldControl?: () => Promise<void> }
 
 export type SheetOp =
   | { op: "mark" }
@@ -257,13 +259,22 @@ export class TabletPage {
   backdrop: string | null = null
   /** The file the NOTE shows for this picture now (after a Save to Original replaced it); null: the backdrop itself. In memory only. */
   target: string | null = null
-  private past: InkStroke[][] = []
-  private future: InkStroke[][] = []
+  private history = new DrawingHistory()
+  private geometryLeases = 0
+  private disposeRequested = false
   private opListeners = new Set<(op: SheetOp) => void>()
   private changeListeners = new Set<() => void>()
   private applying = false
 
-  constructor(aspect = 16 / 9) { this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9 }
+  constructor(aspect = 16 / 9) {
+    this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
+    Object.defineProperty(this, 'history', { enumerable: false })
+    Object.defineProperty(this, 'strokes', {
+      enumerable: true,
+      get: () => this.history.current,
+      set: (strokes: InkStroke[]) => this.history.setCurrent(strokes),
+    })
+  }
 
   restoreExtent(extent?: Rect): void {
     this.extent = includeInk(validExtent(extent) ? { ...extent } : { ...UNIT_SHEET }, this.strokes)
@@ -275,8 +286,8 @@ export class TabletPage {
     return this.viewport
   }
 
-  get canUndo(): boolean { return this.past.length > 0 }
-  get canRedo(): boolean { return this.future.length > 0 }
+  get canUndo(): boolean { return this.history.canUndo }
+  get canRedo(): boolean { return this.history.canRedo }
 
   /** Hear every change as an operation (not the ones this page is told to apply). */
   onOp(listener: (op: SheetOp) => void): () => void {
@@ -308,9 +319,7 @@ export class TabletPage {
 
   /** A change is about to be made: this is what Undo returns to. */
   mark(): void {
-    this.past.push(this.strokes)
-    if (this.past.length > 100) this.past.shift()
-    this.future = []
+    this.history.mark()
     this.emit({ op: "mark" })
   }
 
@@ -324,8 +333,9 @@ export class TabletPage {
     this.silently(() => this.mark())
     this.extent = includeInk(this.extent, [stroke])
     const previous = this.strokes
-    this.strokes = [...previous, stroke]
-    recordStrokeAppend(previous, this.strokes, stroke)
+    const next = [...previous, stroke]
+    recordStrokeAppend(previous, next, stroke)
+    this.strokes = next
     this.emit({ op: "add", stroke })
   }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */
@@ -335,29 +345,44 @@ export class TabletPage {
     this.strokes = next
     this.emit({ op: "replace", strokes: next })
   }
+  /** Prepare a large replacement in yielding tasks, then announce one atomic edit. */
+  async replaceAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
+    return this.history.change(next, () => this.replace(next), options)
+  }
+  /** Hydration is not an edit and must not create an Undo frame. */
+  async loadGeometryAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
+    return this.history.change(next, () => { this.strokes = next; this.emit(null) }, options)
+  }
   clear(): void { if (this.strokes.length > 0) this.replace([]) }
   /** Remove one stroke WITHOUT marking: an erase gesture marks once, at its first hit. */
   removeAt(index: number): void {
-    this.strokes = this.strokes.filter((_, i) => i !== index)
+    if (!Number.isInteger(index) || index < 0 || index >= this.strokes.length) return
+    const next = this.strokes.filter((_, i) => i !== index)
+    this.history.prepareRemoval(next, index)
+    this.strokes = next
     this.emit({ op: "removeAt", index })
   }
 
   undo(): boolean {
-    const back = this.past.pop()
+    const back = this.history.step()
     if (!back) return false
-    this.future.push(this.strokes)
-    this.strokes = back
     this.emit({ op: "undo" })
     return true
   }
 
   redo(): boolean {
-    const forward = this.future.pop()
+    const forward = this.history.step(true)
     if (!forward) return false
-    this.past.push(this.strokes)
-    this.strokes = forward
     this.emit({ op: "redo" })
     return true
+  }
+  async undoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    const next = this.history.peek()
+    return next ? this.history.change(next, () => this.undo(), options) : false
+  }
+  async redoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    const next = this.history.peek(true)
+    return next ? this.history.change(next, () => this.redo(), options) : false
   }
 
   /** Do what another view of the sheet did. Not announced again. */
@@ -375,13 +400,50 @@ export class TabletPage {
   }
 
   /** The whole state INCLUDING history, to bring another view into step (it is cloned in one piece, so shared strokes stay shared). */
-  exportState(): SheetState { return { strokes: this.strokes, past: this.past, future: this.future, extent: this.extent } }
+  exportState(): SheetState { return { ...this.history.export(), extent: this.extent } }
   importState(state: SheetState): void {
-    this.strokes = state.strokes
-    this.past = state.past
-    this.future = state.future
+    this.history.import(state)
     this.restoreExtent(state.extent)
     this.emit(null)
+  }
+
+  /** Release undo-only memory while retaining this page's current ink. */
+  clearHistory(): void { this.history.clear(); this.emit(null) }
+
+  get geometryRetained(): boolean { return this.geometryLeases > 0 }
+  retainGeometry(): () => void {
+    this.geometryLeases++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.geometryLeases--
+      if (!this.geometryLeases && this.disposeRequested) this.dispose()
+    }
+  }
+
+  /** Drop a clean inactive model after its catalog has been marked unloaded. */
+  unloadGeometry(): boolean {
+    if (this.geometryRetained) return false
+    this.history.dispose()
+    this.backdrop = null
+    this.target = null
+    this.emit(null)
+    return true
+  }
+  async unloadGeometryAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    return this.history.change([], () => this.unloadGeometry(), {...options, valid: () => !this.geometryRetained && (options.valid?.() ?? true)})
+  }
+
+  /** An unloaded page must never retain geometry through its undo history. */
+  dispose(): void {
+    if (this.geometryRetained) { this.disposeRequested = true; return }
+    this.disposeRequested = false
+    this.history.dispose()
+    this.opListeners.clear()
+    this.changeListeners.clear()
+    this.backdrop = null
+    this.target = null
   }
 }
 
