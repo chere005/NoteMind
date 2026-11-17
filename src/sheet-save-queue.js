@@ -14,7 +14,7 @@ class SheetSaveQueue{
   const hadSession=!!this.session,sheets=state.sheets||[],owned=state.ownedIdentities===true;
   if(!Array.isArray(sheets)||!owned&&(!Array.isArray(state.strokeIds)||state.strokeIds.length!==sheets.length)||!Array.isArray(state.backdropIds)||state.backdropIds.length!==sheets.length)throw Error('Invalid drawing persistence identities.');
   if(merge&&this.ownedSession&&this.ownedSession!==state.session)throw Error('Drawing page belongs to another persistence session.');
-  const expected=sheets.reduce((count,sheet)=>count+(sheet.strokes?.length||0),0),seenStrokes=new SheetIdSet(expected),seenBackdrops=new Set(),weights=[],members=[];
+  const expected=sheets.reduce((count,sheet)=>count+(sheet.strokes?.length||0),0),seenStrokes=new SheetIdSet(expected),seenBackdrops=new Set(),backdrops=[],weights=[],members=[];
   let work=0;for(let index=0;index<sheets.length;index++){
    const sheet=sheets[index],ids=owned?null:state.strokeIds[index];if(!Array.isArray(sheet?.strokes))throw Error('Invalid drawing stroke identities.');const member=new SheetIdSet(sheet.strokes.length);let modelBytes=0;
    if(!Array.isArray(sheet.strokes)||!owned&&(!Array.isArray(ids)&&!(ids instanceof Float64Array)||ids.length!==sheet.strokes.length))throw Error('Invalid drawing stroke identities.');
@@ -23,12 +23,25 @@ class SheetSaveQueue{
     if(!Number.isSafeInteger(value)||value<=0||privateId!=null&&privateId!==value)throw Error('Invalid drawing stroke identity.');
     modelBytes+=128+(stroke.points?.length||0)*(stroke.pressures?80:72);if(privateId==null)this.strokeIds.set(stroke,value);seenStrokes.add(value);member.add(value);this.nextStroke=Math.max(this.nextStroke,value+1);if(++work%8192===0)yield;
    }
-   const backdrop=state.backdropIds[index];if(sheet.backdrop){if(!Number.isSafeInteger(backdrop)||backdrop<=0)throw Error('Invalid drawing background identity.');this.backdropIds.set(sheet.backdrop,backdrop);seenBackdrops.add(backdrop);this.nextBackdrop=Math.max(this.nextBackdrop,backdrop+1);}weights[index]=modelBytes+(sheet.backdrop?.length||0)*2;members[index]=member;
+   const backdrop=state.backdropIds[index];if(sheet.backdrop){if(!Number.isSafeInteger(backdrop)||backdrop<=0)throw Error('Invalid drawing background identity.');backdrops.push([sheet.backdrop,backdrop]);seenBackdrops.add(backdrop);}weights[index]=modelBytes+(sheet.backdrop?.length||0)*2;members[index]=member;
   }
+  let nextKnown=seenStrokes;
+  if(merge)for(;;){
+   const previous=this.knownStrokes,revision=previous.revision;
+   if(!previous.size){nextKnown=seenStrokes;break;}
+   nextKnown=new SheetIdSet(previous.size+seenStrokes.size);
+   for(const value of previous.steps()){if(value===null)yield;else nextKnown.add(value);}
+   for(const value of seenStrokes.steps()){if(value===null)yield;else nextKnown.add(value);}
+   // Saves and other lazy pages may publish while we yield; never roll their IDs back.
+   if(this.knownStrokes===previous&&previous.revision===revision)break;
+  }
+  if(merge&&this.ownedSession&&this.ownedSession!==state.session)throw Error('Drawing page belongs to another persistence session.');
+  // All yielding work is private. Publish the complete seed only in this final turn.
   const epoch=merge?++this.seedEpoch:0;
+  for(const [backdrop,id]of backdrops){this.backdropIds.set(backdrop,id);this.nextBackdrop=Math.max(this.nextBackdrop,id+1);}
   for(let at=0;at<sheets.length;at++)if(sheets[at].pageId){this.pageHeads.set(sheets[at].pageId,{geometryRevision:sheets[at].geometryRevision||null,signature:state.signatures?.[at]||sheets[at].signature,metadataSignature:semanticMetadata(sheets[at]),strokes:sheets[at].strokes,backdrop:sheets[at].backdrop||null,durable:state.durabilityConfirmed!==false,modelBytes:weights[at]});if(merge)this.freshStrokes.set(sheets[at].pageId,{epoch,ids:members[at]});}
   this.ownedSession=state.session;this.ownedPersisted=merge?this.ownedPersisted||state.persisted!==false:state.persisted!==false;this.session=state.session;this.version=merge&&hadSession?this.version:state.version;this.nextStroke=Math.max(this.nextStroke,state.nextStroke||1);this.serverNextStroke=Math.max(this.serverNextStroke,state.nextStroke||this.nextStroke);this.nextBackdrop=Math.max(this.nextBackdrop,state.nextBackdrop||1);
-  if(merge){if(this.knownStrokes.size===0)this.knownStrokes=seenStrokes;else for(const value of seenStrokes.steps()){if(value===null)yield;else this.knownStrokes.add(value);}for(const id of seenBackdrops){this.knownBackdrops.add(id);this.freshBackdrops.set(id,epoch);}}else{this.knownStrokes=seenStrokes;this.knownBackdrops=seenBackdrops;}
+  this.knownStrokes=nextKnown;if(merge){for(const id of seenBackdrops){this.knownBackdrops.add(id);this.freshBackdrops.set(id,epoch);}}else this.knownBackdrops=seenBackdrops;
   this.full=false;if(!merge)this.persisted=state.sheets?this.identity(state.sheets):null;return state.sheets;
  }
  seed(state){const steps=this.seedSteps(state);let next;do{next=steps.next();}while(!next.done);return next.value;}
