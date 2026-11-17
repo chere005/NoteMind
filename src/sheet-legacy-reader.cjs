@@ -5,7 +5,8 @@ const {StrokeBinaryBuilder,GeometryBatcher}=require('./sheet-geometry.cjs'),{has
 const MAX_BACKGROUND=150*1024*1024,MAX_PAGES=10000;
 class ValueBoundary{
  constructor(visit){this.visit=visit;this.depth=0;this.started=false;this.done=false;}
- token(token){const result=this.visit(token),finish=()=>{const name=token.name;if(name==='startObject'||name==='startArray'){this.depth++;this.started=true;}else if(name==='endObject'||name==='endArray'){this.depth--;if(!this.depth)this.done=true;}else if(!this.depth&&(name==='endString'||name==='numberValue'||name==='nullValue'||name==='trueValue'||name==='falseValue'))this.done=true;};if(result?.then)return result.then(finish);finish();}
+ after(token){const name=token.name;if(name==='startObject'||name==='startArray'){this.depth++;this.started=true;}else if(name==='endObject'||name==='endArray'){this.depth--;if(!this.depth)this.done=true;}else if(!this.depth&&(name==='endString'||name==='numberValue'||name==='nullValue'||name==='trueValue'||name==='falseValue'))this.done=true;}
+ token(token){const result=this.visit(token);if(result?.then)return result.then(()=>this.after(token));this.after(token);}
 }
 async function visitPages(file,visitor,onBytes){
  let depth=0,page=null,key=null,active=null,pages=0,root=false;

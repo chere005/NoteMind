@@ -15,7 +15,7 @@ class CanonicalJSON{
   else if(name==='startObject'||name==='startArray'){this.before();this.write(name==='startObject'?'{':'[');this.stack.push({kind:name==='startObject'?'object':'array',count:0,keys:new Set()});}
   else if(name==='endObject'||name==='endArray'){this.write(name==='endObject'?'}':']');this.stack.pop();}
   else if(name==='startString'){this.before();this.string=true;this.write('"');}
-  else if(name==='stringChunk'){if(!this.string)throw Error('Invalid drawing JSON string.');let value=this.surrogate+token.value;this.surrogate='';if(value.length&&/[\uD800-\uDBFF]/.test(value.at(-1))){this.surrogate=value.at(-1);value=value.slice(0,-1);}this.write(JSON.stringify(value).slice(1,-1));}
+  else if(name==='stringChunk'){if(!this.string)throw Error('Invalid drawing JSON string.');let value=this.surrogate+token.value;this.surrogate='';if(value.charCodeAt(value.length-1)>=0xd800&&value.charCodeAt(value.length-1)<=0xdbff){this.surrogate=value.at(-1);value=value.slice(0,-1);}this.write(JSON.stringify(value).slice(1,-1));}
   else if(name==='endString'){if(this.surrogate){this.write(JSON.stringify(this.surrogate).slice(1,-1));this.surrogate='';}this.string=false;this.write('"');}
   else if(name==='numberValue'){this.before();this.write(JSON.stringify(Number(token.value)));}
   else if(name==='nullValue'||name==='trueValue'||name==='falseValue'){this.before();this.write(JSON.stringify(token.value));}
@@ -38,5 +38,5 @@ class JSONValue{
  }
 }
 const sha=()=>createHash('sha256');
-function textSHA(){const hash=sha();let parts=[],length=0,surrogate='';const flush=()=>{if(length)hash.update(parts.join(''));parts=[];length=0;};return {update(piece){piece=surrogate+piece;surrogate='';if(piece.length&&/[\uD800-\uDBFF]/.test(piece.at(-1))){surrogate=piece.at(-1);piece=piece.slice(0,-1);}parts.push(piece);length+=piece.length;if(length>=8192)flush();return this;},digest(){if(surrogate){parts.push(surrogate);length++;surrogate='';}flush();return hash.digest('hex');}};}
+function textSHA(){const hash=sha();let parts=[],length=0,surrogate='';const flush=()=>{if(length)hash.update(parts.join(''));parts=[];length=0;};return {update(piece){piece=surrogate+piece;surrogate='';if(piece.charCodeAt(piece.length-1)>=0xd800&&piece.charCodeAt(piece.length-1)<=0xdbff){surrogate=piece.at(-1);piece=piece.slice(0,-1);}parts.push(piece);length+=piece.length;if(length>=8192)flush();return this;},digest(){if(surrogate){parts.push(surrogate);length++;surrogate='';}flush();return hash.digest('hex');}};}
 module.exports={legacyTokens,legacyTokenBatches,CanonicalJSON,JSONValue,MAX_LEGACY_BYTES,MAX_METADATA_BYTES,sha,textSHA};
