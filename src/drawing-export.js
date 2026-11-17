@@ -43,7 +43,7 @@ class DrawingExporter {
  send(packet,transfers){return new Promise((resolve,reject)=>{try{const worker=this.getWorker();this.responses.set(packet.id,{resolve,reject});worker.postMessage(packet,transfers);}catch(error){this.responses.delete(packet.id);reject(error);}});}
  cancelInk(session){try{this.worker?.postMessage({inkCancel:session});}catch{}}
  async raster(request,{signal}={}){
-  if(this.disposed)throw closed();const buffers=new Set();for(const value of [request.order,request.additions,request.addIds])if(ArrayBuffer.isView(value))buffers.add(value.buffer);const bytes=[...buffers].reduce((n,value)=>n+value.byteLength,0);
+  if(this.disposed)throw closed();const buffers=new Set();for(const value of [request.order,request.additions,request.addIds,...(request.patches||[]).map(patch=>patch.insert)])if(ArrayBuffer.isView(value))buffers.add(value.buffer);const bytes=[...buffers].reduce((n,value)=>n+value.byteLength,0);
   if(this.rasterCount>=2||this.rasterBytes+bytes>256*1024*1024)throw Error('Drawing paint is busy.');this.rasterCount++;this.rasterBytes+=bytes;
   const id=this.nextId++;let timer,abort;try{
    if(signal?.aborted)throw Error('Drawing paint cancelled.');
