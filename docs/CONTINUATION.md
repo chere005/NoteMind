@@ -1,5 +1,12 @@
 # Continuation
 
+- During active work, give Sean a brief whole-roadmap update at least hourly and whenever he requests status; report completed/active work, dependencies/blockers and revised estimate without creating task-tracking automations.
+- Approved later feature scope: all selection editing/duplication/recolor/width/delete, tool presets/quick switching, zoom/pan/precision, page overview/reordering, cancellable page-by-page large PDF/scan import and essential right-pane PDF reference with editable Wacom markup. Use isolated feature worktrees, integrate one feature at a time, then another bugs/UI-UX/performance panel and final fresh whole-app audits.
+
+- Active 0.37 work: remaining correctness fixes first, measured pipeline bottlenecks and performance fixes next; installed 0.35 stays untouched and 0.36 candidate remains available.
+- Required completion gates: independent bugs/UI-UX/performance three-way review and fixes, then three fresh whole-app audits and fixes, then final full validation/build; no known actionable findings left unaddressed.
+- Final requested deliverable: a Claude handoff note in chat identifying exact commit/build, completed scope, before/after workloads/results, audit/test evidence and explicit remaining limitations for independent review.
+
 - 0.36.0 passes 297 Node tests and 43 packaged checks and is a separately validated candidate; do not replace the installed app as part of audit work. Findings, reproductions, performance evidence and remaining work are in `docs/BUG-AUDIT.md`.
 - Tablet paper fills both measured stage dimensions with a uniform canonical viewport; margin ink and backdrop alignment survive autosave, editable insertion and export without reshaping existing strokes.
 - Draft archives embed generation-matched recovery state; pending drawing saves, pen restarts, preferences, image indexes, filters, version previews and exports retain initiating-state ownership.

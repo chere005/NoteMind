@@ -1,0 +1,15 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{html,images,TEXT_LIMIT}=require('../src/print-preview.cjs'),{printHtml}=require('../src/documents.cjs');
+function fixture(){const assets={};for(let i=0;i<100;i++)assets['assets/page-'+i+'.svg']=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2400"><rect width="1800" height="2400" fill="white"/>'+ ' '.repeat(100000)+i+'</svg>').toString('base64');return{text:Object.keys(assets).map((name,index)=>'# Page '+index+'\n\n![Page]('+name+')').join('\n\n'),assets,meta:{}};}
+test('one hundred large page images produce a bounded layout preview while full output retains every original page',()=>{
+ const doc=fixture(),preview=html(doc);assert.ok(preview.length<100000);assert.equal((preview.match(/data-asset=/g)||[]).length,100);assert.equal((preview.match(/width="1800" height="2400"/g)||[]).length,100);assert.ok(!preview.includes(doc.assets['assets/page-0.svg']));assert.match(preview,/img-src data: blob:/);const full=printHtml(doc);assert.equal((full.match(/data:image\/svg\+xml;base64,/g)||[]).length,100);assert.ok(full.includes(doc.assets['assets/page-99.svg']));assert.ok(!full.includes('notemind-preview-truncated'));assert.equal(Object.keys(doc.assets).length,100);
+});
+test('only the requested visible-page images are converted and thumbnail pixels stay bounded',async()=>{
+ const doc=fixture(),subset={...doc,assets:Object.fromEntries(Object.entries(doc.assets).slice(0,2))},calls=[];const result=await images(subset,{clean:true},async(...args)=>{calls.push(args);return {data:Buffer.from('thumbnail').toString('base64')};});assert.equal(calls.length,2);assert.ok(calls.every(call=>call[2]===true&&call[3]<=512));assert.deepEqual(Object.keys(result.assets),Object.keys(subset.assets));assert.equal(doc.assets['assets/page-0.svg'],subset.assets['assets/page-0.svg']);assert.notEqual(result.assets['assets/page-0.svg'],doc.assets['assets/page-0.svg']);
+ const many=[];await images(doc,{},async(...args)=>{many.push(args[3]);return {data:''};});assert.ok(100*many[0]**2<=4*1024*1024);
+});
+test('long text preview truncation never truncates full print output',()=>{
+ const text='Start '+ 'x'.repeat(TEXT_LIMIT)+' Final preserved tail',doc={text,assets:{},meta:{}},preview=html(doc),full=printHtml(doc);assert.match(preview,/notemind-preview-truncated/);assert.ok(!preview.includes('Final preserved tail'));assert.ok(full.includes('Final preserved tail'));assert.equal(doc.text,text);
+});
+test('attachment thumbnails follow the bounded image callback instead of embedding base64',()=>{
+ const data=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"/>').toString('base64'),doc={text:'[PDF](assets/document.pdf)',assets:{'assets/document.pdf':'cGRm','assets/thumbnail.png':data},meta:{attachments:{'assets/document.pdf':{thumbnail:'assets/thumbnail.png',title:'PDF'}}}};const preview=html(doc);assert.ok(!preview.includes(data));assert.match(preview,/data-asset="assets\/thumbnail.png"/);assert.match(preview,/width="600" height="900"/);
+});

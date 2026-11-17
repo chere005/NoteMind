@@ -18,6 +18,7 @@
 import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
+import { recordStrokeAppend } from '../../stroke-signature.js'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -316,7 +317,9 @@ export class TabletPage {
   add(stroke: InkStroke): void {
     this.silently(() => this.mark())
     this.extent = includeInk(this.extent, [stroke])
-    this.strokes = [...this.strokes, stroke]
+    const previous = this.strokes
+    this.strokes = [...previous, stroke]
+    recordStrokeAppend(previous, this.strokes, stroke)
     this.emit({ op: "add", stroke })
   }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */

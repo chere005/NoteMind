@@ -1,0 +1,42 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),raw=require('node:fs'),os=require('node:os'),path=require('node:path'),{fork}=require('node:child_process');
+const {runWithNativeLock,nativeLockCapability}=require('../src/native-file-lock.cjs');
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-native-lock-')),file=path.join(root,'note.nm'),registry=path.join(root,'locks');await fs.writeFile(file,'original');t.after(()=>fs.rm(root,{recursive:true,force:true}));return {root,file,registry};}
+function child(t,file,registry,mode){const p=fork(path.join(__dirname,'helpers/native-lock-child.cjs'),[file,registry,mode||'hold'],{stdio:['ignore','pipe','pipe','ipc']}),messages=[];let stderr='';p.stderr.on('data',chunk=>stderr+=chunk);p.on('message',message=>messages.push(message));t.after(async()=>{if(p.exitCode===null&&p.signalCode===null)p.kill('SIGKILL');if(p.exitCode===null&&p.signalCode===null)await new Promise(resolve=>p.once('exit',resolve));});const wait=type=>new Promise((resolve,reject)=>{const found=messages.find(m=>m.type===type);if(found){resolve(found);return;}const timer=setTimeout(()=>finish(Error('Timed out waiting for '+type+': '+stderr)),4000),receive=m=>{if(m.type==='error')finish(Error(m.message));else if(m.type===type)finish(null,m)},exit=()=>finish(Error('Lock child exited before '+type+': '+stderr));function finish(error,value){clearTimeout(timer);p.removeListener('message',receive);p.removeListener('exit',exit);error?reject(error):resolve(value);}p.on('message',receive);p.once('exit',exit);});return {p,messages,wait};}
+
+test('native locks exclude independent processes across atomic document replacement and retain their registry inode',async t=>{
+ assert.equal(nativeLockCapability().available,true);const f=await fixture(t),before=await fs.stat(f.file),first=child(t,f.file,f.registry,'replace');await first.wait('entered');assert.equal(await fs.readFile(f.file,'utf8'),'replacement');if(process.platform!=='win32')assert.notEqual((await fs.stat(f.file)).ino,before.ino);
+ const entries=await fs.readdir(f.registry).catch(()=>[]),inode=entries.length?await fs.stat(path.join(f.registry,entries[0])):null;
+ const second=child(t,f.file,f.registry);await second.wait('attempting');await pause(60);assert.equal(second.messages.some(m=>m.type==='entered'),false);first.p.send('release');await first.wait('released');await second.wait('entered');second.p.send('release');await second.wait('released');
+ if(inode){assert.equal(entries.length,1);const after=await fs.stat(path.join(f.registry,entries[0]));assert.equal(after.ino,inode.ino);assert.equal(after.dev,inode.dev);assert.equal((await fs.readdir(f.registry)).length,1);}
+});
+test('kernel releases a dead process lock without stale-file deletion',async t=>{
+ const f=await fixture(t),first=child(t,f.file,f.registry);await first.wait('entered');const second=child(t,f.file,f.registry);await second.wait('attempting');await pause(40);assert.equal(second.messages.some(m=>m.type==='entered'),false);first.p.kill('SIGKILL');await second.wait('entered');second.p.send('release');await second.wait('released');
+});
+test('physical aliases share a native lock',async t=>{
+ const f=await fixture(t),alias=path.join(f.root,'alias.nm');try{await fs.symlink(f.file,alias);}catch(error){if(process.platform==='win32'&&error.code==='EPERM')return;throw error;}
+ const first=child(t,f.file,f.registry);await first.wait('entered');const second=child(t,alias,f.registry);await second.wait('attempting');await pause(40);assert.equal(second.messages.some(m=>m.type==='entered'),false);first.p.send('release');await first.wait('released');await second.wait('entered');second.p.send('release');await second.wait('released');
+});
+test('Windows recursive mutex semantics cannot admit overlapping asynchronous JS owners',async t=>{
+ const f=await fixture(t),calls=[],names=[],bindings={backend:'win32-mutex',create:(_a,_b,name)=>{names.push(name.toString('utf16le'));return names.length;},wait:handle=>{calls.push(['wait',handle]);return 0},release:handle=>{calls.push(['release',handle]);return 1},close:handle=>calls.push(['close',handle])};let releaseFirst,active=0,overlap=false;
+ const gate=new Promise(resolve=>releaseFirst=resolve),options={...f,platform:'win32',bindings},first=runWithNativeLock(f.file,async()=>{active++;await gate;active--},options);await pause(0);const second=runWithNativeLock(f.file,async()=>{if(active)overlap=true},{...options,registry:path.join(f.root,'another-profile')});await pause(20);assert.equal(calls.filter(c=>c[0]==='wait').length,1);releaseFirst();await Promise.all([first,second]);assert.equal(overlap,false);assert.equal(names[0],names[1]);assert.ok(names[0].startsWith('Global\\NoteMindFileLock-v1-'));assert.ok(names[0].endsWith('\0'));assert.equal(calls.filter(c=>c[0]==='release').length,2);assert.equal(calls.filter(c=>c[0]==='close').length,2);
+});
+test('a timed-out JS waiter keeps later owners behind the current mutex owner',async t=>{
+ const f=await fixture(t);let release,active=false,entered=false;const bindings={backend:'win32-mutex',create:()=>1,wait:()=>0,release:()=>1,close(){}},options={...f,platform:'win32',bindings},first=runWithNativeLock(f.file,async()=>{active=true;await new Promise(resolve=>release=resolve);active=false},options);await pause(0);
+ await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('must not enter'),{...options,maxWaitMs:10}),{code:'NOTEMIND_LOCK_BUSY'});const third=runWithNativeLock(f.file,()=>{assert.equal(active,false);entered=true},options);await pause(20);assert.equal(entered,false);release();await Promise.all([first,third]);assert.equal(entered,true);
+});
+test('busy and failed native attempts close handles and never run their callback',async t=>{
+ const f=await fixture(t),fds=[],bindings={backend:'flock',flock:(fd)=>{fds.push(fd);return -1},errno:()=>35};await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('busy callback'),{...f,bindings,maxWaitMs:15,pollMs:2}),{code:'NOTEMIND_LOCK_BUSY'});assert.throws(()=>raw.fstatSync(fds[0]),{code:'EBADF'});
+ bindings.errno=()=>13;await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('failed callback'),{...f,bindings}),{code:'NOTEMIND_NATIVE_LOCK_FAILED'});assert.throws(()=>raw.fstatSync(fds.at(-1)),{code:'EBADF'});
+ const calls=[],win={backend:'win32-mutex',create:()=>7,wait:()=>258,release:()=>assert.fail('not owned'),close:handle=>calls.push(handle)};await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('busy mutex'),{...f,bindings:win,maxWaitMs:10,pollMs:2}),{code:'NOTEMIND_LOCK_BUSY'});assert.deepEqual(calls,[7]);
+});
+test('unsupported capability is explicit and callback failures release the kernel lock',async t=>{
+ const f=await fixture(t),capabilities=[];assert.deepEqual(nativeLockCapability({bindings:null}),{available:false,backend:'portable',reason:'Native file locking was explicitly disabled.'});assert.equal(await runWithNativeLock(f.file,()=>42,{bindings:null,onCapability:value=>capabilities.push(value)}),42);assert.equal(capabilities[0].available,false);await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('no native fallback'),{bindings:null,requireNative:true}),{code:'NOTEMIND_NATIVE_LOCK_UNAVAILABLE'});
+ await assert.rejects(runWithNativeLock(f.file,()=>{throw Error('callback failed')},{...f,requireNative:true}),/callback failed/);assert.equal(await runWithNativeLock(f.file,()=>43,{...f,requireNative:true}),43);
+});
+test('Windows abandoned ownership is acquired and all failed wait handles close without fallback',async t=>{
+ const f=await fixture(t),calls=[],binding={backend:'win32-mutex',create:()=>7,wait:()=>128,release:handle=>{calls.push(['release',handle]);return 1},close:handle=>calls.push(['close',handle]),lastError:()=>5};
+ assert.equal(await runWithNativeLock(f.file,()=>44,{...f,platform:'win32',bindings:binding}),44);assert.deepEqual(calls,[['release',7],['close',7]]);
+ calls.length=0;binding.wait=()=>0xffffffff;await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('failed wait callback'),{...f,platform:'win32',bindings:binding}),{code:'NOTEMIND_NATIVE_LOCK_FAILED'});assert.deepEqual(calls,[['close',7]]);
+ calls.length=0;binding.create=()=>null;await assert.rejects(runWithNativeLock(f.file,()=>assert.fail('failed create callback'),{...f,platform:'win32',bindings:binding}),{code:'NOTEMIND_NATIVE_LOCK_FAILED'});assert.deepEqual(calls,[]);
+});

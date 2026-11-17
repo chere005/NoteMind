@@ -68,47 +68,61 @@ export interface PaperMarks {
 
 /** Cornell's frame, as fractions of the sheet: the title strip, the cue column, the summary strip. */
 export const CORNELL = { header: 0.1, cue: 0.3, summary: 0.82 }
+export const PAPER_MARK_BUDGET = 32768
 
 /** Where the paper's marks are, on a sheet of `sheet` reference units. Pure. */
-export function paperMarks(paper: Paper, sheet: Size, view?: Rect): PaperMarks {
+export function paperMarks(paper: Paper, sheet: Size, view?: Rect, minimumPitch = 0): PaperMarks {
   const none: PaperMarks = { dots: [], dotRadius: 0, lines: [] }
   const s = pitchOf(paper.kind, paper.spacing)
   if (s <= 0 || sheet.width <= 0 || sheet.height <= 0) return none
   const { width: W, height: H } = sheet
-  const left = Math.min(0, view?.x ?? 0), top = Math.min(0, view?.y ?? 0)
-  const right = Math.max(W, view ? view.x + view.width : W), bottom = Math.max(H, view ? view.y + view.height : H)
-  const start = (first: number, low: number, step: number) => low < 0 ? first + Math.floor((low - first) / step) * step : first
+  const left = view?.x ?? 0, top = view?.y ?? 0
+  const right = view ? view.x + view.width : W, bottom = view ? view.y + view.height : H
+  if (![left, top, right, bottom, right - left, bottom - top, minimumPitch].every(Number.isFinite)) throw Error('The paper area exceeds the supported numeric range.')
+  const nx = Math.max(1, (right - left) / s + 2), ny = Math.max(1, (bottom - top) / s + 2)
+  const dotted = paper.kind === 'dots' || paper.kind === 'isometric'
+  // Skip whole lattice intervals when marks become subpixel. Keep their original phase;
+  // zooming back in restores the same ruling without changing any ink coordinates.
+  const density = dotted ? Math.exp((Math.log(nx) + Math.log(ny) - Math.log(PAPER_MARK_BUDGET)) / 2) : (nx + ny) / PAPER_MARK_BUDGET
+  const stride = Math.max(1, Math.ceil(minimumPitch / s), Math.ceil(density), Math.ceil(Math.max(nx, ny) / PAPER_MARK_BUDGET))
+  const pitch = s * stride
+  if (!Number.isFinite(pitch)) throw Error('The paper area exceeds the supported numeric range.')
+  const start = (first: number, low: number, step: number) => {
+    const firstVisible = first + Math.floor((low - first) / step) * step
+    return low < 0 ? firstVisible : Math.max(first, firstVisible)
+  }
   const dots: Point[] = []
   const lines: Segment[] = []
+  let remaining = PAPER_MARK_BUDGET
   const across = (from: number, to: number, step: number, fn: (v: number) => void) => {
-    for (let v = from; v <= to + 1e-9; v += step) fn(v)
+    const count = Math.min(PAPER_MARK_BUDGET, Math.max(0, Math.floor((to - from) / step + 1e-9) + 1))
+    for (let i = 0; i < count && remaining > 0; i++) { remaining--;fn(from + i * step) }
   }
   switch (paper.kind) {
     case "dots":
-      across(start(s / 2, left, s), right - s / 4, s, (x) => across(start(s / 2, top, s), bottom - s / 4, s, (y) => dots.push({ x, y })))
+      across(start(s / 2, left, pitch), right - s / 4, pitch, (x) => across(start(s / 2, top, pitch), bottom - s / 4, pitch, (y) => dots.push({ x, y })))
       return { dots, dotRadius: s * 0.06, lines }
     case "isometric": {
       // A triangular lattice: rows sqrt(3)/2 of the pitch apart, every other row shifted half a pitch.
       const row = s * Math.sqrt(3) / 2
-      let j = top < 0 ? Math.floor((top - row / 2) / row) : 0
-      across(row / 2 + j * row, bottom - row / 4, row, (y) => {
+      across(start(row / 2, top, row * stride), bottom - row / 4, row * stride, (y) => {
+        const j = Math.round((y - row / 2) / row)
         const shift = Math.abs(j % 2) === 1 ? s / 2 : 0
-        across(start(s / 2 + shift, left, s), right - s / 4, s, (x) => dots.push({ x, y }))
-        j++
+        across(start(s / 2 + shift, left, pitch), right - s / 4, pitch, (x) => dots.push({ x, y }))
       })
       return { dots, dotRadius: s * 0.06, lines }
     }
     case "lines":
-      across(start(2 * s, top, s), bottom - s / 2, s, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
+      across(start(2 * s, top, pitch), bottom - s / 2, pitch, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
       return { dots, dotRadius: 0, lines }
     case "grid":
-      across(start(s, left, s), right - s / 2, s, (x) => lines.push({ x0: x, y0: top, x1: x, y1: bottom, strong: false }))
-      across(start(s, top, s), bottom - s / 2, s, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
+      across(start(s, left, pitch), right - s / 2, pitch, (x) => lines.push({ x0: x, y0: top, x1: x, y1: bottom, strong: false }))
+      across(start(s, top, pitch), bottom - s / 2, pitch, (y) => lines.push({ x0: left, y0: y, x1: right, y1: y, strong: false }))
       return { dots, dotRadius: 0, lines }
     case "cornell": {
       const top = H * CORNELL.header, bottom = H * CORNELL.summary, cue = W * CORNELL.cue
       // The ruling of the notes area, between the title strip and the summary strip, right of the cue column.
-      across(top + s, bottom - s / 2, s, (y) => lines.push({ x0: cue, y0: y, x1: W, y1: y, strong: false }))
+      across(start(top + s, Math.max(top, view?.y ?? top), pitch), Math.min(bottom - s / 2, view ? view.y + view.height : bottom), pitch, (y) => lines.push({ x0: cue, y0: y, x1: W, y1: y, strong: false }))
       lines.push({ x0: 0, y0: top, x1: W, y1: top, strong: true })
       lines.push({ x0: 0, y0: bottom, x1: W, y1: bottom, strong: true })
       lines.push({ x0: cue, y0: top, x1: cue, y1: bottom, strong: true })
@@ -129,8 +143,8 @@ export function paintPaper(context: CanvasRenderingContext2D, paper: Paper, shee
   context.setTransform(1, 0, 0, 1, 0, 0)
   context.fillStyle = colours.paper
   context.fillRect(0, 0, px.width, px.height)
-  const marks = paperMarks(paper, sheet, view)
   const dx = px.width / Math.max(1e-6, view.width), dy = px.height / Math.max(1e-6, view.height)
+  const marks = paperMarks(paper, sheet, view, 3 * ratio / Math.max(Number.MIN_VALUE, Math.min(dx, dy)))
   const X = (x: number): number => Math.round((x - view.x) * dx)
   const Y = (y: number): number => Math.round((y - view.y) * dy)
   for (const strong of [false, true]) {

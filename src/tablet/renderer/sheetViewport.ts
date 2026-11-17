@@ -30,7 +30,7 @@ export function includeInk(extent: Rect, strokes: { points: Point[] }[]): Rect {
 
 export const validExtent = (value: unknown): value is Rect => {
   const rect = value as Rect | null
-  return !!rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+  return !!rect && [rect.x, rect.y, rect.width, rect.height, rect.x + rect.width, rect.y + rect.height].every(value => Number.isFinite(value * 10000))
     && rect.x <= 0 && rect.y <= 0 && rect.width >= 1 && rect.height >= 1
     && rect.x + rect.width >= 1 && rect.y + rect.height >= 1
 }

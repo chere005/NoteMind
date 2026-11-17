@@ -8,7 +8,7 @@ test('the real quit-flush path saves an unfinished stroke synchronously and a la
   const model = [{ name: 'Pending', page: h.page }], cached = [{ name: 'Pending', aspect: h.page.aspect, strokes: h.page.strokes }];
   let flush, finished, written;
   const context = {
-    liveSheets: { current: model }, latestSheets: { current: cached }, saves: { current: Promise.resolve() }, saveTimer: { current: null },
+    sheetSaver:{current:null}, liveSheets: { current: model }, latestSheets: { current: cached }, saves: { current: Promise.resolve() }, saveTimer: { current: null },
     persistence: { current: { loaded: true, loadFailed: false } }, paper: () => ({ kind: 'blank', spacing: 'medium', colour: 'white' }),
     useEffect: fn => fn(), clearTimeout,
     CustomEvent: class { constructor(type, options) { this.type = type;this.detail = options.detail; } },

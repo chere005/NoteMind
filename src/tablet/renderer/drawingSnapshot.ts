@@ -34,20 +34,49 @@ export function svgDrawing(snapshot: ReturnType<typeof snapshotDrawing>, withPap
   const {region,aspect,backdrop,strokes} = snapshot
   if(!withPaper&&!strokes.length&&!backdrop)return null
   const w=1000,h=1000/aspect,paper=parsePaper(snapshot.paper)
-  const paths=strokes.map(stroke=>stroke.points.map((point,index)=>{
-    const previous=stroke.points[Math.max(0,index-1)],pressure=stroke.pressures?.[index]??.5
-    const thickness=stroke.width*(.2+1.6*Math.max(0,Math.min(1,pressure))),colour=withPaper?inkOn(paper,stroke.colorHex):stroke.colorHex
-    return `<path d="M${(previous.x*w).toFixed(2)} ${(previous.y*h).toFixed(2)} L${(point.x*w).toFixed(2)} ${(point.y*h).toFixed(2)}" fill="none" stroke="${attribute(colour)}" stroke-width="${thickness}" stroke-linecap="round"/>`
-  }).join('')).join('')
+  const paths=strokes.map(stroke=>{
+    const runs=new Map<number,string[]>(),colour=withPaper?inkOn(paper,stroke.colorHex):stroke.colorHex
+    stroke.points.forEach((point,index)=>{
+      const previous=stroke.points[Math.max(0,index-1)],pressure=stroke.pressures?.[index]??.5,thickness=stroke.width*(.2+1.6*Math.max(0,Math.min(1,pressure)))
+      let segments=runs.get(thickness);if(!segments){segments=[];runs.set(thickness,segments)}
+      segments.push(`M${(previous.x*w).toFixed(2)} ${(previous.y*h).toFixed(2)} L${(point.x*w).toFixed(2)} ${(point.y*h).toFixed(2)}`)
+    })
+    return [...runs].map(([thickness,segments])=>`<path d="${segments.join(' ')}" fill="none" stroke="${attribute(colour)}" stroke-width="${thickness}" stroke-linecap="round"/>`).join('')
+  }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${region.x*w} ${region.y*h} ${region.width*w} ${region.height*h}">${withPaper?paperSvg(paper,{width:w,height:h},region):''}${backdrop?`<image href="${attribute(backdrop)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/>`:''}${paths}</svg>`
+}
+
+export const denseDrawing = (snapshot: ReturnType<typeof snapshotDrawing>): boolean =>
+  (snapshot.backdrop?.length || 0) > 8*1024*1024 || snapshot.strokes.reduce((count,stroke)=>count+stroke.points.length,0)>=50000
+
+/** A bounded display preview; the independent sidecar always retains exact editable geometry. */
+export function pngDrawingSvg(snapshot: ReturnType<typeof snapshotDrawing>, png: string): string {
+  if(!/^data:image\/png;base64,[a-z0-9+/=\r\n]+$/i.test(png))throw Error('Invalid drawing preview.')
+  const {region,aspect}=snapshot,w=1000,h=1000/aspect,x=region.x*w,y=region.y*h,width=region.width*w,height=region.height*h
+  if(![x,y,width,height].every(Number.isFinite)||!(width>0&&height>0))throw Error('The drawing area exceeds the supported numeric range.')
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${width} ${height}"><image href="${png}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="none"/></svg>`
+}
+
+export async function canvasPng(canvas: HTMLCanvasElement): Promise<string> {
+  const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error('Could not encode the drawing preview.')),'image/png'))
+  const bytes=new Uint8Array(await blob.arrayBuffer())
+  if(typeof (bytes as any).toBase64==='function')return 'data:image/png;base64,'+(bytes as any).toBase64()
+  const pieces:string[]=[];for(let i=0;i<bytes.length;i+=32768)pieces.push(String.fromCharCode(...bytes.subarray(i,i+32768)))
+  return 'data:image/png;base64,'+btoa(pieces.join(''))
 }
 
 export async function rasterDrawing(snapshot: ReturnType<typeof snapshotDrawing>, withPaper: boolean, deps: any) {
   const { region, aspect, backdrop, strokes, paper } = snapshot, w = 1000, h = 1000 / aspect
-  const canvas = deps.canvas();canvas.width = Math.max(1, Math.round(region.width * w));canvas.height = Math.max(1, Math.round(region.height * h))
+  const rawWidth = region.width * w, rawHeight = region.height * h
+  if (!(rawWidth > 0 && rawHeight > 0) || ![rawWidth, rawHeight, region.x * w, region.y * h].every(Number.isFinite)) throw Error('The drawing area exceeds the supported numeric range.')
+  // Bound raster allocation independently of how far the paper has expanded. A uniform
+  // scale retains every stroke/backdrop coordinate and only changes export resolution.
+  const maxPixels=Math.min(16*1024*1024,deps.maxPixels||16*1024*1024),maxDimension=Math.min(8192,deps.maxDimension||8192)
+  const scale = Math.min(1, maxDimension / Math.max(rawWidth, rawHeight), Math.sqrt(maxPixels) / Math.sqrt(rawWidth) / Math.sqrt(rawHeight))
+  const canvas = deps.canvas();canvas.width = Math.max(1, Math.floor(rawWidth * scale));canvas.height = Math.max(1, Math.floor(rawHeight * scale))
   const ctx = canvas.getContext('2d'), sheet = { width: w, height: h }, area = { x: region.x * w, y: region.y * h, width: region.width * w, height: region.height * h }, size = { width: canvas.width, height: canvas.height }
   if (withPaper) deps.paintPaper(ctx, paper, sheet, area, size)
-  if (backdrop) { const image = await deps.backdropReady(backdrop);if (image) deps.paintBackdrop(ctx, image, sheet, area, size) }
+  if (backdrop) { const image = await deps.backdropReady(backdrop);if (!image) throw Error('Could not load the drawing background.');deps.paintBackdrop(ctx, image, sheet, area, size) }
   ctx.save();ctx.scale(canvas.width / area.width, canvas.height / area.height);ctx.translate(-area.x, -area.y)
   deps.paintStrokes(ctx, strokes, (point: any) => ({ x: point.x * w, y: point.y * h }), 1, undefined, 0, withPaper ? (colour: string) => deps.inkOn(paper, colour) : undefined)
   ctx.restore();return canvas

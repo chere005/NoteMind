@@ -14,3 +14,29 @@ test('JPEG EXIF orientation reserves the displayed dimensions before pixels deco
   assert.deepEqual(imageDimensions(Buffer.concat([prefix,exif,frame])),orientation>=5?{width:100,height:200}:{width:200,height:100});
  }
 });
+function lazyScene(options={}){
+ let next=0,created=0,revoked=[],decoded=[],images=[],assets={},viewport={top:0,bottom:400};
+ const cache=create({lazy:true,margin:0,maxBytes:options.maxBytes??70,maxEntries:options.maxEntries??2048,schedule:()=>{},viewport:()=>viewport,decode:data=>{decoded.push(data.length);return Buffer.from(data,'base64');},urls:{createObjectURL:()=>{created++;return 'blob:test-'+(++next);},revokeObjectURL:url=>revoked.push(url)},...options});
+ const host={hidden:false,querySelectorAll:()=>images,contains:img=>images.includes(img)};
+ function asset(i,padding=0){const data=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"/>'+ ' '.repeat(padding)+i).toString('base64'),name='assets/'+i+'.svg';assets[name]=data;return{name,data,type:'image/svg+xml'};}
+ function image(value,top=0){const attrs={src:cache.url(value.name,value.data,value.type)},img={dataset:{asset:value.name},width:600,height:900,top,isConnected:true,getAttribute:key=>attrs[key]??null,removeAttribute:key=>delete attrs[key],getBoundingClientRect(){return{top:this.top,bottom:this.top+300,width:200,height:300};},decode:async()=>{}};Object.defineProperty(img,'src',{get:()=>attrs.src,set:value=>attrs.src=value});images.push(img);return img;}
+ cache.mount(host,()=>assets);
+ return{cache,asset,image,host,get created(){return created},get revoked(){return revoked},get decoded(){return decoded},get assets(){return assets},set assets(value){assets=value},set images(value){images=value},get images(){return images},set viewport(value){viewport=value}};
+}
+test('lazy previews reserve dimensions for one hundred distinct large assets without materializing their pixels',()=>{
+ const scene=lazyScene();try{for(let i=0;i<100;i++){const value=scene.asset(i,100000);assert.match(scene.cache.url(value.name,value.data,value.type),/^data:image\/svg\+xml/);assert.deepEqual(scene.cache.size(value.name,value.data,value.type),{width:600,height:900});}assert.equal(scene.created,0);assert.ok(Math.max(...scene.decoded)<=Math.ceil(65536/3)*4);assert.equal(scene.cache.stats().blobBytes,0);}finally{scene.cache.clear();}
+});
+test('scrolling releases offscreen image sources and bounds unpinned blob bytes',()=>{
+ const scene=lazyScene();try{const a=scene.image(scene.asset(1)),b=scene.image(scene.asset(2),1000);scene.cache.refresh();assert.match(a.src,/^blob:/);assert.match(b.src,/^data:/);assert.equal(scene.created,1);a.top=-1000;b.top=0;scene.cache.refresh();assert.match(a.src,/^data:/);assert.match(b.src,/^blob:/);assert.equal(scene.created,2);assert.equal(scene.revoked.length,1);assert.ok(scene.cache.stats().blobBytes<=70);}finally{scene.cache.clear();}
+});
+test('tab returns reuse bounded cached URLs and closed tab data is pruned after its DOM detaches',()=>{
+ const scene=lazyScene({maxBytes:1024});try{const av=scene.asset(1),bv=scene.asset(2),a=scene.image(av);scene.cache.retainMany([{[av.name]:av.data},{[bv.name]:bv.data}]);scene.cache.refresh();const first=a.src;scene.images=[];scene.cache.refresh();const b=scene.image(bv);scene.cache.refresh();scene.images=[];scene.cache.refresh();const again=scene.image(av);scene.cache.refresh();assert.equal(again.src,first);assert.equal(scene.created,2);scene.cache.retainMany([{[av.name]:av.data}]);assert.equal(scene.cache.stats().entries,1);assert.ok(scene.revoked.includes(b.src) || scene.revoked.length===1);scene.cache.retainMany([]);scene.images=[];scene.cache.refresh();assert.equal(scene.cache.stats().entries,0);}finally{scene.cache.clear();}
+});
+test('an explicit image action waits for real pixels, pins its source, and rejects an obsolete image',async()=>{
+ const scene=lazyScene();try{const img=scene.image(scene.asset(1),1000);let ready;img.decode=()=>new Promise(resolve=>{ready=resolve});let called=false;const work=scene.cache.withImage(img,()=>{called=true;assert.match(img.src,/^blob:/)});assert.match(img.src,/^blob:/);scene.cache.refresh();assert.match(img.src,/^blob:/);assert.equal(called,false);ready();await work;scene.cache.refresh();assert.equal(called,true);assert.match(img.src,/^data:/);
+ let ready2;img.decode=()=>new Promise(resolve=>{ready2=resolve});const stale=scene.cache.withImage(img,()=>assert.fail('stale image must never be drawn'));scene.images=[];scene.cache.refresh();ready2();await assert.rejects(stale,/no longer open/);assert.equal(scene.cache.stats().active,0);
+ }finally{scene.cache.clear();}
+});
+test('simultaneous aliases share one image blob until the last visible alias leaves',()=>{
+ const scene=lazyScene();try{const value=scene.asset(1),a=scene.image(value),b=scene.image(value,10);scene.cache.refresh();assert.equal(scene.created,1);assert.equal(a.src,b.src);a.top=-1000;scene.cache.refresh();assert.match(a.src,/^data:/);assert.match(b.src,/^blob:/);assert.equal(scene.revoked.length,0);b.top=-1000;scene.cache.refresh();assert.equal(scene.revoked.length,0);assert.equal(scene.cache.stats().active,0);}finally{scene.cache.clear();}
+});

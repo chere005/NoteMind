@@ -1,5 +1,5 @@
 (() => {
- const api=window.notemind.notes;
+ const api=window.NoteMindDocumentSync?.api(window.notemind.notes)||window.notemind.notes;
  let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),startupRun=null;
  const automaticTitle=text=>text.split(/\r?\n/).map(s=>s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim()).find(Boolean)?.slice(0,100)||'Untitled';
  const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
@@ -13,7 +13,7 @@
   else{const same=tab.doc.text===target.text,start=same&&target.start!==null?target.start:tab.doc.text.length,end=same&&target.end!==null?target.end:start;tab.doc.text=tab.doc.text.slice(0,start)+text+tab.doc.text.slice(end);tab.dirty=true;changed(tab);updateTitle();target.text=tab.doc.text;target.start=target.end=start+text.length;target.range=null;}
   return true;
  }
- function insertAssetFor(target,name,data,sheet=null){const tab=insertionTab(target);if(tab===activeTab){restoreInsertion(target);const inserted=insertAsset(name,data,sheet);if(inserted){target.text=currentText();target.start=target.end=!visual?source.selectionEnd:null;try{target.range=getSelection()?.rangeCount?getSelection().getRangeAt(0).cloneRange():null;}catch{}}return inserted;}const assets={[name]:data};if(sheet)assets[name+'.json']=btoa(unescape(encodeURIComponent(NoteMindGraphics.encode(sheet))));return insertMarkdownFor(target,'\n\n!['+(sheet?'Drawing':'Image')+']('+name+')\n\n',{assets,graphic:name});}
+ function insertAssetFor(target,name,data,sheet=null){const tab=insertionTab(target);if(tab===activeTab){restoreInsertion(target);const inserted=insertAsset(name,data,sheet);if(inserted){target.text=currentText();target.start=target.end=!visual?source.selectionEnd:null;try{target.range=getSelection()?.rangeCount?getSelection().getRangeAt(0).cloneRange():null;}catch{}}return inserted;}const assets={[name]:data};if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);return insertMarkdownFor(target,'\n\n!['+(sheet?'Drawing':'Image')+']('+name+')\n\n',{assets,graphic:name});}
  async function session(){await api.session({tabs:tabs.filter(t=>!t.placeholder).map(t=>({id:t.doc.id,path:t.doc.path,visual:t.visual,scroll:t===activeTab?window.NoteMindScroll?.anchor():t.scroll})),active:activeTab?.doc.id});}
  async function persist(tab,saveFile=true){
   if(tab.placeholder)return;
@@ -27,7 +27,8 @@
    tab.doc.revision=saved.revision;
    if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
    else await api.draft(snapshot(tab));
-   if(tab===activeTab)$('status').textContent='Autosaved';tab.saveError=null;
+   if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
+   tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
   }catch(error){tab.saveError=error.message;if(tab===activeTab)$('status').textContent='Draft recovered locally · '+error.message;}}
   else if(tab===activeTab&&tab.dirty)$('status').textContent='Draft saved';
  }
@@ -36,10 +37,10 @@
  function changed(tab){tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n));tab.placeholder=false;window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimers.get(tab));indexTimers.set(tab,setTimeout(()=>{indexTimers.delete(tab);if(ready&&tabs.includes(tab)&&tab.doc.id&&tab.hadImageAssets)void api.indexImages(snapshot(tab),{background:true}).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500));}
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
   await persist(tab,false);const snap=snapshot(tab),edit=tab.editVersion||0;
-  const saved=await window.notemind.save({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;
+  const saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;
   tab.doc.path=saved.path;tab.doc.id=saved.id;tab.doc.revision=saved.revision;
   if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
-  tab.placeholder=false;await api.draft(snapshot(tab));await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));$('status').textContent='Saved';return true;
+  tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)await api.draft(snapshot(tab));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
  function changedView(){decorate();window.NoteMindHistory?.initialize(activeTab);schedule(400);}

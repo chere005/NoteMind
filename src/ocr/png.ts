@@ -10,6 +10,8 @@ export interface Rgba {
 }
 
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+const MAX_PIXELS = 16_000_000, MAX_DIMENSION = 32768, MAX_FILTERED_BYTES = 128 * 1024 * 1024
+const PASSES: [number, number, number, number][] = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
 
 export const isPng = (bytes: Uint8Array): boolean => SIGNATURE.every((value, at) => bytes[at] === value)
 
@@ -57,26 +59,43 @@ export function decodePng(bytes: Uint8Array): Rgba {
   let palette: Uint8Array | null = null
   let alphaTable: Uint8Array | null = null
   const idat: Uint8Array[] = []
+  let hasHeader = false, hasEnd = false
   while (at + 8 <= bytes.length) {
     const length = view.getUint32(at)
     const type = String.fromCharCode(bytes[at + 4]!, bytes[at + 5]!, bytes[at + 6]!, bytes[at + 7]!)
+    if (length > bytes.length - at - 12) throw new Error("PNG: truncated chunk")
+    if (!hasHeader && type !== "IHDR") throw new Error("PNG: missing first header")
     const body = bytes.subarray(at + 8, at + 8 + length)
     at += 12 + length
     if (type === "IHDR") {
+      if (hasHeader || length !== 13) throw new Error("PNG: invalid header")
+      hasHeader = true
       const header = new DataView(body.buffer, body.byteOffset, body.byteLength)
       width = header.getUint32(0); height = header.getUint32(4)
       depth = body[8]!; colour = body[9]!; interlace = body[12]!
+      if (body[10] !== 0 || body[11] !== 0 || interlace > 1) throw new Error("PNG: unsupported encoding")
     } else if (type === "PLTE") palette = body
     else if (type === "tRNS") alphaTable = body
     else if (type === "IDAT") idat.push(body)
-    else if (type === "IEND") break
+    else if (type === "IEND") { if (length !== 0) throw new Error("PNG: invalid end chunk"); hasEnd = true;break }
   }
+  if (!hasEnd) throw new Error("PNG: truncated image")
   if (width <= 0 || height <= 0) throw new Error("PNG: no header")
+  if (width > MAX_DIMENSION || height > MAX_DIMENSION || width * height > MAX_PIXELS) throw new Error("PNG: image is too large for text recognition")
   const channels = colour === 0 ? 1 : colour === 2 ? 3 : colour === 3 ? 1 : colour === 4 ? 2 : colour === 6 ? 4 : 0
   if (channels === 0) throw new Error(`PNG: unknown colour type ${colour}`)
+  const depths = colour === 0 ? [1, 2, 4, 8, 16] : colour === 3 ? [1, 2, 4, 8] : [8, 16]
+  if (!depths.includes(depth)) throw new Error("PNG: unsupported bit depth")
   const bitsPerPixel = channels * depth
   const bpp = Math.max(1, bitsPerPixel >> 3)
-  const data = new Uint8Array(inflateSync(Buffer.concat(idat)))
+  const passBytes = (w: number, h: number) => (Math.ceil(w * bitsPerPixel / 8) + 1) * h
+  const expected = interlace === 0 ? passBytes(width, height) : PASSES.reduce((sum, [x0, y0, dx, dy]) => {
+    const w = Math.ceil((width - x0) / dx), h = Math.ceil((height - y0) / dy)
+    return sum + (w > 0 && h > 0 ? passBytes(w, h) : 0)
+  }, 0)
+  if (!Number.isSafeInteger(expected) || expected > MAX_FILTERED_BYTES) throw new Error("PNG: decoded image is too large for text recognition")
+  const data = inflateSync(Buffer.concat(idat), { maxOutputLength: expected })
+  if (data.length !== expected) throw new Error("PNG: incomplete image data")
   const out = new Uint8Array(width * height * 4)
   const max = (1 << Math.min(depth, 8)) - 1
 
@@ -122,9 +141,8 @@ export function decodePng(bytes: Uint8Array): Rgba {
     place(unfilter(data, 0, width, height, bpp, bitsPerPixel).rows, width, height, (x, y) => y * width + x)
   } else {
     // Adam7: seven passes, each a small image of its own.
-    const passes = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
     let offset = 0
-    for (const [x0, y0, dx, dy] of passes as [number, number, number, number][]) {
+    for (const [x0, y0, dx, dy] of PASSES) {
       const w = Math.ceil((width - x0) / dx), h = Math.ceil((height - y0) / dy)
       if (w <= 0 || h <= 0) continue
       const { rows, next } = unfilter(data, offset, w, h, bpp, bitsPerPixel)

@@ -1,15 +1,17 @@
 const {pack,unpack}=require('./zip.cjs');
 const {createHash,randomUUID}=require('node:crypto');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+const {ENTRY_BYTES,TOTAL_BYTES,validateEntry}=require('./archive-limits.cjs');
 const assetName=name=>/^assets\/[\w./ -]+$/.test(name)&&!name.split('/').some(p=>p==='..'||p==='.'||!p);
 function encode(doc,{kind='notepad',extra={}}={}){
  if(!['notepad','drawing','workspace'].includes(kind)||typeof doc.text!=='string')throw Error('Invalid Notepad document.');
  const files={'document.md':Buffer.from(doc.text,'utf8')};
  for(const [name,value] of Object.entries(doc.assets||{})){if(!assetName(name))throw Error('Invalid image path: '+name);files[name]=Buffer.from(value,'base64');}
  for(const [name,value] of Object.entries(extra)){if(!['drawing.json','workspace.json','recovery.json'].includes(name))throw Error('Invalid attachment');files[name]=Buffer.from(JSON.stringify(value));}
- const sizes=Object.values(files).map(b=>b.length);if(sizes.length>9999||sizes.some(n=>n>50*1024*1024)||sizes.reduce((a,b)=>a+b,0)>199*1024*1024)throw Error('This Notepad is too large. Use fewer or smaller images.');
+ const sizes=Object.values(files).map(b=>b.length);try{for(const [name,bytes]of Object.entries(files))validateEntry(name,bytes);}catch{throw Error('This Notepad is too large. Use fewer or smaller images.');}if(sizes.length>9999||sizes.reduce((a,b)=>a+b,0)>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');
  const manifest={format:'notemind',version:1,kind,id:doc.id||randomUUID(),title:doc.title||'',created:doc.created||new Date().toISOString(),meta:doc.meta||{},modified:new Date().toISOString(),content:'document.md',files:Object.fromEntries(Object.entries(files).map(([name,data])=>[name,{bytes:data.length,sha256:hash(data)}]))};
- return pack({'manifest.json':Buffer.from(JSON.stringify(manifest,null,2)),...files});
+ const index=Buffer.from(JSON.stringify(manifest,null,2));if(index.length>ENTRY_BYTES||sizes.reduce((a,b)=>a+b,index.length)>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');
+ return pack({'manifest.json':index,...files});
 }
 function decode(bytes){
  const files=unpack(bytes);let manifest=null;

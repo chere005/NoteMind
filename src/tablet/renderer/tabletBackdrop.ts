@@ -30,47 +30,73 @@ export function parseBackdrop(raw: unknown): string | null {
 }
 
 /** The picture drawn onto a canvas of `px` that shows the part `view` of a sheet of `units` reference units (as `paintPaper` is). */
-export function paintBackdrop(context: CanvasRenderingContext2D, image: CanvasImageSource & { naturalWidth: number; naturalHeight: number },
+export function paintBackdrop(context: CanvasRenderingContext2D, image: CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number },
   units: Size, view: Rect, px: Size): void {
-  if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return
-  const on = backdropRect(units.width / units.height, image.naturalWidth / image.naturalHeight)
+  const width=image.naturalWidth??image.width??0,height=image.naturalHeight??image.height??0
+  if (width <= 0 || height <= 0) return
+  const on = backdropRect(units.width / units.height, width / height)
   const dx = px.width / Math.max(1e-6, view.width), dy = px.height / Math.max(1e-6, view.height)
   context.drawImage(image,
     (on.x * units.width - view.x) * dx, (on.y * units.height - view.y) * dy, on.width * units.width * dx, on.height * units.height * dy)
 }
 
-const images = new Map<string, HTMLImageElement>()
-
-/** The picture when it is loaded, else null and `onLoad` is called when it is (once per file: the image is kept). */
-export function backdropImage(file: string, onLoad: () => void): HTMLImageElement | null {
-  const held = images.get(file)
-  // (one that failed before - the pane's copy was not there yet - is tried again)
-  if (held && held.complete && held.naturalWidth === 0) images.delete(file)
-  else if (held) {
-    if (held.complete && held.naturalWidth > 0) return held
-    held.addEventListener("load", onLoad, { once: true })
-    return null
+const MAX_DECODED_BYTES = 64 * 1024 * 1024, MAX_READY = 8, MAX_LOADING = 4, MAX_PENDING = 32
+type Entry = { file: string; status: 'queued' | 'loading' | 'ready' | 'failed'; image: HTMLImageElement | null; bytes: number; callbacks: Set<(image: HTMLImageElement) => void>; promise: Promise<HTMLImageElement | null>; resolve: (image: HTMLImageElement | null) => void }
+const images = new Map<string, Entry>(), pending: Entry[] = []
+let loading = 0
+function trimImages(): void {
+  let bytes = 0, count = 0
+  for (const entry of images.values()) if (entry.status === 'ready') { bytes += entry.bytes;count++ }
+  for (const [file, entry] of images) {
+    if (bytes <= MAX_DECODED_BYTES && count <= MAX_READY) break
+    if (entry.status !== 'ready') continue
+    // An exporter may still own this image. Removing the cache reference never cancels it.
+    images.delete(file);bytes -= entry.bytes;count--
   }
-  const image = new Image()
-  image.crossOrigin = "anonymous"
-  image.addEventListener("load", onLoad, { once: true })
-  image.addEventListener("error", () => { images.delete(file); console.error('NoteMind: could not load the picture') })
-  image.src = file
-  images.set(file, image)
-  return null
+}
+function pumpImages(): void {
+  while (loading < MAX_LOADING && pending.length) {
+    const entry = pending.shift()!
+    if (images.get(entry.file) !== entry || entry.status !== 'queued') continue
+    entry.status = 'loading';loading++
+    const image = new Image();entry.image = image;image.crossOrigin = 'anonymous'
+    let timer: ReturnType<typeof setTimeout>
+    const finish = (ready: boolean): void => {
+      if (entry.status !== 'loading') return
+      ready = ready && image.naturalWidth > 0 && image.naturalHeight > 0
+      entry.status = ready ? 'ready' : 'failed';loading--
+      clearTimeout(timer);image.removeEventListener('load', loaded);image.removeEventListener('error', failed)
+      images.delete(entry.file)
+      if (ready) { entry.bytes = image.naturalWidth * image.naturalHeight * 4;images.set(entry.file, entry) }
+      const callbacks = ready ? [...entry.callbacks] : [];entry.callbacks.clear()
+      entry.resolve(ready ? image : null);trimImages();pumpImages()
+      for (const callback of callbacks) callback(image)
+    }
+    const loaded = (): void => finish(true), failed = (): void => finish(false)
+    image.addEventListener('load', loaded);image.addEventListener('error', failed)
+    timer = setTimeout(() => { finish(false);image.src = '' }, 5000)
+    image.src = entry.file
+  }
+}
+function imageRequest(file: string): Entry | null {
+  const held = images.get(file)
+  if (held) { if (held.status === 'ready') { images.delete(file);images.set(file, held) }return held }
+  if (loading + pending.length >= MAX_PENDING) return null
+  let resolve: Entry['resolve']
+  const promise = new Promise<HTMLImageElement | null>(complete => { resolve = complete })
+  const entry: Entry = { file, status: 'queued', image: null, bytes: 0, callbacks: new Set(), promise, resolve: resolve! }
+  images.set(file, entry);pending.push(entry);pumpImages();return entry
 }
 
-/** The picture, loaded (a moment's wait at most); null when it will not load. */
+/** A bounded decoded-image cache; pending callers share one load and one timeout. */
+export function backdropImage(file: string, onLoad: (image: HTMLImageElement) => void): HTMLImageElement | null {
+  const entry = imageRequest(file)
+  if (!entry) return null
+  if (entry.status === 'ready') return entry.image
+  entry.callbacks.add(onLoad);return null
+}
+
+/** Failure is explicit, so exports cannot quietly drop the background. */
 export function backdropReady(file: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const guard = setTimeout(() => resolve(null), 5000)
-    const check = (): boolean => {
-      const image = backdropImage(file, check)
-      if (!image) return false
-      clearTimeout(guard)
-      resolve(image)
-      return true
-    }
-    check()
-  })
+  return imageRequest(file)?.promise || Promise.resolve(null)
 }

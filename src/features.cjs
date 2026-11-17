@@ -48,14 +48,16 @@ module.exports = function installFeatures(window, projectService) {
   await fs.writeFile(result.filePath,Buffer.from(data,'base64'));return result.filePath;
  });
  ipcMain.handle('save-pane',async(_, sheet, svg, file)=>{
+  const graphics=require('./graphics-pane.js');let sidecar;
+  if(sheet&&Object.hasOwn(sheet,'encodedGraphics')){const value=sheet.encodedGraphics;if(Object.keys(sheet).length!==1||typeof value!=='string'||!value.length||value.length%4!==0||value.length>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4||Buffer.from(value.slice(0,12),'base64').subarray(0,8).toString('ascii')!==graphics.BINARY_MAGIC||!/^[a-z0-9+/]*={0,2}$/i.test(value.slice(-4)))throw Error('Invalid encoded drawing sheet.');sidecar=value;}else sidecar=graphics.encodeBase64(sheet);
   const result=file?{filePath:file,canceled:false}:await dialog.showSaveDialog(win(),{defaultPath:'Drawing.nm',filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;
   const dest=result.filePath, temp=dest+'.'+require('node:crypto').randomUUID()+'.tmp';
-  const data=require('./notepad-format.cjs').encode({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':Buffer.from(require('./graphics-pane.js').encode(sheet)).toString('base64')},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});
+  const data=require('./notepad-format.cjs').encode({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});
   try{await fs.writeFile(temp,data,{flag:'wx'});await fs.rename(temp,dest);}finally{await fs.unlink(temp).catch(()=>{});}return dest;
  });
  ipcMain.handle('open-pane',async()=>{
   const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;
-  const data=require('./notepad-format.cjs').decode(await fs.readFile(result.filePaths[0])).files,info=data['drawing.json']?JSON.parse(data['drawing.json'].toString('utf8')):{},name=info.sheet||(data['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');if(!data[name])throw Error('This Notepad does not contain an editable drawing sheet.');return {file:result.filePaths[0],sheet:require('./graphics-pane.js').decode(data[name].toString('utf8'))};
+  const data=require('./notepad-format.cjs').decode(await fs.readFile(result.filePaths[0])).files,info=data['drawing.json']?JSON.parse(data['drawing.json'].toString('utf8')):{},name=info.sheet||(data['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');if(!data[name])throw Error('This Notepad does not contain an editable drawing sheet.');return {file:result.filePaths[0],sheet:require('./graphics-pane.js').decode(data[name])};
  });
  ipcMain.handle('python-select',async()=>{const r=await dialog.showOpenDialog(win(),{title:'Select Python interpreter',properties:['openFile']});if(r.canceled)return null;await fs.writeFile(path.join(app.getPath('userData'),'python.json'),JSON.stringify({executable:r.filePaths[0]}));return r.filePaths[0];});
 };

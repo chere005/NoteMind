@@ -1,11 +1,26 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {replaceIfUnchanged}=require('../src/guarded-write.cjs');
+const {createHash}=require('node:crypto');
+const revision=bytes=>({bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')});
 test('the final save guard preserves edits arriving after the initial read',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-guard-'));try{
   const file=path.join(root,'note.md');await fs.writeFile(file,'original');const previous=await fs.readFile(file);
   await fs.writeFile(file,'external edit');await assert.rejects(replaceIfUnchanged(file,'local edit',previous),/changed while/);
   assert.equal(await fs.readFile(file,'utf8'),'external edit');assert.deepEqual(await fs.readdir(root),['note.md']);
  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('large-file revision guards stream verification without reading the whole target again',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-digest-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const file=path.join(root,'note.nm'),original=Buffer.alloc(1024*1024,17);await fs.writeFile(file,original);
+ const read=fs.readFile;t.mock.method(fs,'readFile',async(target,...args)=>{assert.notEqual(target,file,'digest guard must not allocate another full-file buffer');return read(target,...args);});
+ await replaceIfUnchanged(file,'saved',revision(original));assert.equal(await read(file,'utf8'),'saved');
+ await assert.rejects(replaceIfUnchanged(file,'stale overwrite',revision(original)),/changed while/);assert.equal(await read(file,'utf8'),'saved');
+});
+test('digest guards reject a same-sized replacement published during streamed verification',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-stream-race-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const file=path.join(root,'note.nm'),original=Buffer.alloc(256*1024,17),replacement=path.join(root,'external.nm');await fs.writeFile(file,original);await fs.writeFile(replacement,Buffer.alloc(original.length,23));
+ const open=fs.open;let replaced=false;t.mock.method(fs,'open',async(target,...args)=>{const handle=await open(target,...args);if(target===file){const read=handle.read.bind(handle);handle.read=async(...parameters)=>{const result=await read(...parameters);if(!replaced){replaced=true;await fs.rename(replacement,file);}return result;};}return handle;});
+ await assert.rejects(replaceIfUnchanged(file,'stale overwrite',revision(original)),/changed while/);assert.equal((await fs.readFile(file))[0],23);
 });
 test('concurrent windows cannot both commit against the same old revision',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-windows-'));try{

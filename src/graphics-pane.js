@@ -4,7 +4,8 @@
   else root.NoteMindGraphics = api;
 })(typeof window === 'undefined' ? this : window, function () {
   const finite = n => typeof n === 'number' && Number.isFinite(n);
-  const validExtent = r => r && [r.x,r.y,r.width,r.height].every(finite) && r.x<=0 && r.y<=0 && r.width>=1 && r.height>=1 && r.x+r.width>=1 && r.y+r.height>=1;
+  const coordinate = n => finite(n) && Number.isFinite(n*10000);
+  const validExtent = r => r && [r.x,r.y,r.width,r.height,r.x+r.width,r.y+r.height].every(coordinate) && r.x<=0 && r.y<=0 && r.width>=1 && r.height>=1 && r.x+r.width>=1 && r.y+r.height>=1;
   const inside = (p, b) => p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height;
   const bounds = new WeakMap();
   const selected = (s, b) => {
@@ -18,7 +19,7 @@
     if (sheet.backdrop != null && (typeof sheet.backdrop !== 'string' || !/^data:image\/(png|jpeg|webp|gif|bmp|avif|svg\+xml);base64,[a-z0-9+/=\r\n]+$/i.test(sheet.backdrop))) throw Error('Invalid graphics background.');
     let points = 0;
     for (const s of sheet.strokes) {
-      if (!s || !/^#[0-9a-f]{6}$/i.test(s.colorHex) || !finite(s.width) || s.width <= 0 || !Array.isArray(s.points) || !s.points.every(p => p && finite(p.x) && finite(p.y)) || (s.pressures != null && (!Array.isArray(s.pressures) || s.pressures.length !== s.points.length || !s.pressures.every(finite)))) throw Error('Invalid graphics stroke.');
+      if (!s || !/^#[0-9a-f]{6}$/i.test(s.colorHex) || !coordinate(s.width) || s.width <= 0 || !Array.isArray(s.points) || !s.points.every(p => p && coordinate(p.x) && coordinate(p.y)) || (s.pressures != null && (!Array.isArray(s.pressures) || s.pressures.length !== s.points.length || !s.pressures.every(finite)))) throw Error('Invalid graphics stroke.');
       points += s.points.length;
       if (points > 2000000) throw Error('This graphics pane has too many points.');
     }
@@ -31,6 +32,10 @@
       strokes: sheet.strokes.map(s => [s.colorHex, s.width, s.points.flatMap(p => [p.x, p.y]), ...(s.pressures ? [s.pressures] : [])]) });
   }
   function decode(raw) {
+    if (typeof raw !== 'string' && (ArrayBuffer.isView(raw) || raw instanceof ArrayBuffer)) {
+      if (isBinary(raw)) return readBinary(raw,true);
+      raw = textOf(bytesOf(raw));
+    }
     const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (data?.format == null) return validate(data);
     if (data.format !== 'notemind-graphics' || data.version !== 1 || !Array.isArray(data.strokes)) throw Error('Unsupported graphics pane.');
@@ -41,6 +46,86 @@
       return { colorHex: row[0], width: row[1], points, ...(row[3] ? { pressures: row[3] } : {}) };
     });
     return validate({ name: data.name || 'Drawing', aspect: data.aspect, paper: data.paper, backdrop: data.backdrop || null, strokes, ...(data.extent ? { extent: data.extent } : {}) });
+  }
+  const BINARY_MAGIC = 'NMGFX2\r\n', MAX_BINARY_BYTES = 150*1024*1024, MAX_METADATA_BYTES = 70*1024*1024, MAX_POINTS = 2000000;
+  const bytesOf = value => value instanceof ArrayBuffer ? new Uint8Array(value) : ArrayBuffer.isView(value) ? new Uint8Array(value.buffer,value.byteOffset,value.byteLength) : (()=>{throw Error('Invalid binary graphics data.');})();
+  const utf8 = text => typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(text) : new Uint8Array(Buffer.from(text,'utf8'));
+  const textOf = bytes => typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8',{fatal:true}).decode(bytes) : Buffer.from(bytes).toString('utf8');
+  function isBinary(value) {
+    if (!(value instanceof ArrayBuffer) && !ArrayBuffer.isView(value)) return false;
+    const bytes=bytesOf(value);return bytes.length>=BINARY_MAGIC.length&&[...BINARY_MAGIC].every((char,index)=>bytes[index]===char.charCodeAt(0));
+  }
+  function binaryMeta(sheet) {
+    const metadata={name:sheet.name||'Drawing',aspect:sheet.aspect,paper:sheet.paper,backdrop:sheet.backdrop||null,extent:sheet.extent};
+    if(typeof metadata.name!=='string')throw Error('Invalid graphics name.');
+    validate({...metadata,strokes:[]});return metadata;
+  }
+  // Exact Float64 coordinates/pressure, with one small header per stroke. Preview pixels
+  // can be bounded independently; the editable source never rounds or drops points.
+  function encodeBytes(sheet) {
+    validate(sheet);if(sheet.strokes.length>MAX_POINTS)throw Error('This graphics pane has too many strokes.');
+    const metadata=utf8(JSON.stringify(binaryMeta(sheet)));if(metadata.length>MAX_METADATA_BYTES)throw Error('The graphics background is too large.');
+    let points=0,length=24+metadata.length;
+    for(const stroke of sheet.strokes){points+=stroke.points.length;length+=16+stroke.points.length*(stroke.pressures?24:16);}
+    if(length>MAX_BINARY_BYTES)throw Error('This graphics pane is too large.');
+    const bytes=new Uint8Array(length),view=new DataView(bytes.buffer);for(let i=0;i<BINARY_MAGIC.length;i++)bytes[i]=BINARY_MAGIC.charCodeAt(i);
+    view.setUint32(8,metadata.length,true);view.setUint32(12,sheet.strokes.length,true);view.setUint32(16,points,true);view.setUint32(20,length,true);bytes.set(metadata,24);let at=24+metadata.length;
+    for(const stroke of sheet.strokes){const colour=parseInt(stroke.colorHex.slice(1),16);let flags=stroke.pressures?1:0;for(let i=0;i<6;i++){const code=stroke.colorHex.charCodeAt(i+1);if(code>=65&&code<=70)flags|=1<<(i+1);}bytes[at]=colour>>>16;bytes[at+1]=(colour>>>8)&255;bytes[at+2]=colour&255;bytes[at+3]=flags;view.setFloat64(at+4,stroke.width,true);view.setUint32(at+12,stroke.points.length,true);at+=16;
+      for(let i=0;i<stroke.points.length;i++){view.setFloat64(at,stroke.points[i].x,true);view.setFloat64(at+8,stroke.points[i].y,true);at+=16;if(stroke.pressures){view.setFloat64(at,stroke.pressures[i],true);at+=8;}}
+    }return bytes;
+  }
+  async function encodeBytesAsync(sheet,{yieldControl=()=>globalThis.scheduler?.yield?.()||new Promise(resolve=>setTimeout(resolve,0)),signal}={}) {
+    const pause=async()=>{if(signal?.aborted){const error=Error('Drawing export cancelled.');error.name='AbortError';throw error;}await yieldControl();if(signal?.aborted){const error=Error('Drawing export cancelled.');error.name='AbortError';throw error;}};
+    await pause();
+    if(!sheet||!Array.isArray(sheet.strokes)||sheet.strokes.length>MAX_POINTS)throw Error('Invalid graphics pane.');
+    const meta=binaryMeta({...sheet,backdrop:null}),backdrop=sheet.backdrop==null?null:sheet.backdrop;
+    // Base64 backdrops are ASCII. Escape/encode their bounded chunks rather than
+    // JSON.stringify'ing a potentially 67 MB string on the input thread.
+    const prefix=utf8(JSON.stringify({name:meta.name,aspect:meta.aspect,paper:meta.paper}).slice(0,-1)+',"backdrop":'),suffix=utf8(meta.extent===undefined?'}':',"extent":'+JSON.stringify(meta.extent)+'}'),parts=[prefix];let metadataLength=prefix.length+suffix.length;
+    if(backdrop!==null){if(typeof backdrop!=='string'||!/^data:image\/(png|jpeg|webp|gif|bmp|avif|svg\+xml);base64,/i.test(backdrop))throw Error('Invalid graphics background.');const start=backdrop.indexOf(',')+1;if(start===backdrop.length)throw Error('Invalid graphics background.');parts.push(utf8('"'));metadataLength+=2;
+      for(let at=0;at<backdrop.length;at+=65536){const piece=backdrop.slice(at,at+65536);if(at+65536>start&&!/^[a-z0-9+/=\r\n]+$/i.test(piece.slice(Math.max(0,start-at))))throw Error('Invalid graphics background.');const encoded=utf8(JSON.stringify(piece).slice(1,-1));parts.push(encoded);metadataLength+=encoded.length;if(metadataLength>MAX_METADATA_BYTES)throw Error('The graphics background is too large.');await pause();}parts.push(utf8('"'));
+    }else{parts.push(utf8('null'));metadataLength+=4;}parts.push(suffix);
+    if(metadataLength>MAX_METADATA_BYTES)throw Error('The graphics background is too large.');
+    let points=0,length=24+metadataLength,work=0;
+    for(const stroke of sheet.strokes){if(!stroke||!/^#[0-9a-f]{6}$/i.test(stroke.colorHex)||!coordinate(stroke.width)||stroke.width<=0||!Array.isArray(stroke.points)||(stroke.pressures!=null&&(!Array.isArray(stroke.pressures)||stroke.pressures.length!==stroke.points.length)))throw Error('Invalid graphics stroke.');points+=stroke.points.length;length+=16+stroke.points.length*(stroke.pressures?24:16);if(points>MAX_POINTS)throw Error('This graphics pane has too many points.');if(length>MAX_BINARY_BYTES)throw Error('This graphics pane is too large.');if(++work%8192===0)await pause();}
+    const bytes=new Uint8Array(length),view=new DataView(bytes.buffer);for(let i=0;i<BINARY_MAGIC.length;i++)bytes[i]=BINARY_MAGIC.charCodeAt(i);view.setUint32(8,metadataLength,true);view.setUint32(12,sheet.strokes.length,true);view.setUint32(16,points,true);view.setUint32(20,length,true);let at=24;for(const part of parts){bytes.set(part,at);at+=part.length;}
+    for(const stroke of sheet.strokes){const colour=parseInt(stroke.colorHex.slice(1),16);let flags=stroke.pressures?1:0;for(let i=0;i<6;i++){const code=stroke.colorHex.charCodeAt(i+1);if(code>=65&&code<=70)flags|=1<<(i+1);}bytes[at]=colour>>>16;bytes[at+1]=(colour>>>8)&255;bytes[at+2]=colour&255;bytes[at+3]=flags;view.setFloat64(at+4,stroke.width,true);view.setUint32(at+12,stroke.points.length,true);at+=16;
+      for(let i=0;i<stroke.points.length;i++){const point=stroke.points[i];if(!point||!coordinate(point.x)||!coordinate(point.y)||(stroke.pressures&&!finite(stroke.pressures[i])))throw Error('Invalid graphics point.');view.setFloat64(at,point.x,true);view.setFloat64(at+8,point.y,true);at+=16;if(stroke.pressures){view.setFloat64(at,stroke.pressures[i],true);at+=8;}if(++work%8192===0)await pause();}if(++work%8192===0)await pause();
+    }await pause();return bytes;
+  }
+  function readBinary(value,materialize) {
+    const bytes=bytesOf(value);if(!isBinary(bytes)||bytes.length<24||bytes.length>MAX_BINARY_BYTES)throw Error('Invalid binary graphics data.');
+    const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),metadataLength=view.getUint32(8,true),strokeCount=view.getUint32(12,true),pointCount=view.getUint32(16,true);
+    if(view.getUint32(20,true)!==bytes.length||metadataLength>MAX_METADATA_BYTES||metadataLength>bytes.length-24||strokeCount>MAX_POINTS||pointCount>MAX_POINTS)throw Error('Invalid binary graphics size.');
+    const metadata=JSON.parse(textOf(bytes.subarray(24,24+metadataLength)));if(!metadata||typeof metadata!=='object'||typeof metadata.name!=='string')throw Error('Invalid binary graphics metadata.');binaryMeta(metadata);
+    let at=24+metadataLength,seen=0;const strokes=materialize?[]:null;
+    for(let index=0;index<strokeCount;index++){
+      if(at+16>bytes.length)throw Error('Truncated binary graphics stroke.');
+      const flags=bytes[at+3],hasPressure=flags&1,width=view.getFloat64(at+4,true),count=view.getUint32(at+12,true);let colour;
+      if(materialize){const hex=[bytes[at],bytes[at+1],bytes[at+2]].map(v=>v.toString(16).padStart(2,'0')).join('');colour='#'+[...hex].map((c,i)=>flags&(1<<(i+1))?c.toUpperCase():c).join('');}at+=16;
+      if(flags>127||!coordinate(width)||width<=0||count>pointCount-seen||at+count*(hasPressure?24:16)>bytes.length)throw Error('Invalid binary graphics stroke.');
+      seen+=count;const points=materialize?[]:null,pressures=materialize&&hasPressure?[]:null;
+      for(let point=0;point<count;point++){
+        const x=view.getFloat64(at,true),y=view.getFloat64(at+8,true);at+=16;if(!coordinate(x)||!coordinate(y))throw Error('Invalid binary graphics point.');if(points)points.push({x,y});
+        if(hasPressure){const pressure=view.getFloat64(at,true);at+=8;if(!finite(pressure))throw Error('Invalid binary graphics pressure.');if(pressures)pressures.push(pressure);}
+      }
+      if(strokes)strokes.push({colorHex:colour,width,points,...(pressures?{pressures}:{})});
+    }
+    if(seen!==pointCount||at!==bytes.length)throw Error('Invalid binary graphics length.');return materialize?{...metadata,strokes}:true;
+  }
+  const validateBinary = bytes => readBinary(bytes,false);
+  function bytesBase64(bytes) {
+    if(typeof bytes.toBase64==='function')return bytes.toBase64();
+    if(typeof Buffer!=='undefined')return Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength).toString('base64');
+    const parts=[];for(let i=0;i<bytes.length;i+=32768)parts.push(String.fromCharCode(...bytes.subarray(i,i+32768)));return btoa(parts.join(''));
+  }
+  function encodeBase64(sheet) {
+    let points=0;for(const stroke of sheet.strokes)points+=stroke.points.length;
+    return bytesBase64(points>=10000?encodeBytes(sheet):utf8(encode(sheet)));
+  }
+  function decodeBase64(data) {
+    let bytes;if(typeof Uint8Array.fromBase64==='function')bytes=Uint8Array.fromBase64(data);else if(typeof Buffer!=='undefined')bytes=new Uint8Array(Buffer.from(data,'base64'));else{const raw=atob(data);bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));}
+    return decode(bytes);
   }
   function transform(strokes, from, to) {
     if (!(from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0)) return strokes;
@@ -79,5 +164,5 @@
     }
     return { ...sheet, aspect: sheet.aspect * box.width / box.height, backdrop: null, strokes };
   }
-  return { encode, decode, validate, transform, crop, selected };
+  return { encode, decode, validate, transform, crop, selected, BINARY_MAGIC, MAX_BINARY_BYTES, isBinary, validateBinary, encodeBytes, encodeBytesAsync, bytesBase64, encodeBase64, decodeBase64 };
 });

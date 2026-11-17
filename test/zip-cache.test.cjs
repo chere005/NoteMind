@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),zlib=require('node:zlib'),crypto=require('node:crypto');
-const source=fs.readFileSync(require.resolve('../src/zip.cjs'),'utf8');
-function isolated(native=true){let calls=0;const module={exports:{}};vm.runInNewContext(source,{module,exports:module.exports,Buffer,Uint32Array,require:name=>name==='node:zlib'?{...zlib,crc32:native?zlib.crc32:undefined,deflateRawSync:bytes=>{calls++;return zlib.deflateRawSync(bytes)}}:require(name)});return {...module.exports,calls:()=>calls};}
+const source=fs.readFileSync(require.resolve('../src/zip.cjs'),'utf8'),relative=require('node:module').createRequire(require.resolve('../src/zip.cjs'));
+function isolated(native=true){let calls=0;const module={exports:{}};vm.runInNewContext(source,{module,exports:module.exports,Buffer,Uint32Array,require:name=>name==='node:zlib'?{...zlib,crc32:native?zlib.crc32:undefined,deflateRawSync:(bytes,options)=>{if(options?.level!==1)calls++;return zlib.deflateRawSync(bytes,options)}}:relative(name)});return {...module.exports,calls:()=>calls};}
 test('unchanged assets reuse compression across renamed archives; mutations and caller buffers stay isolated',()=>{
  const zip=isolated(),data=crypto.randomBytes(4096),original=Buffer.from(data);
  const first=zip.pack({'assets/one.bin':data});zip.pack({'assets/two.bin':data});assert.equal(zip.calls(),1);
@@ -19,6 +19,6 @@ test('compression cache evicts by entry count and refreshes recently used conten
  zip.pack({a:data[0]});assert.equal(zip.calls(),513);zip.pack({a:data[1]});assert.equal(zip.calls(),514);
 });
 test('compression cache cannot retain more than its byte budget',()=>{
- const zip=isolated(),a=crypto.randomBytes(17*1024*1024),b=crypto.randomBytes(17*1024*1024);
+ const zip=isolated(),a=crypto.randomBytes(17*1024*1024),b=crypto.randomBytes(17*1024*1024);for(const data of[a,b])for(const at of[0,Math.floor(data.length/2),data.length-4096])data.fill(0,at,at+4096);
  zip.pack({a});zip.pack({b});zip.pack({b});assert.equal(zip.calls(),2);zip.pack({a});assert.equal(zip.calls(),3);
 });

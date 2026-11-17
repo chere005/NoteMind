@@ -4,7 +4,7 @@
  const options=()=>({pageSize:'A4',orientation:'portrait',margin:'normal',pageNumbers:false,clean:false,open:false,...stored()});
  const choose=(label,name,list)=>'<label>'+label+' <select data-k="'+name+'">'+list.map(([value,text])=>'<option value="'+value+'">'+text+'</option>').join('')+'</select></label>';
  const toggle=(label,name)=>'<label class="pdf-toggle"><input type="checkbox" data-k="'+name+'"> '+label+'</label>';
- const captureDocument=()=>structuredClone({...doc,text:currentText()});
+ const captureDocument=()=>window.NoteMindDocumentSync?.capture({...doc,text:currentText()})||structuredClone({...doc,text:currentText()});
  function dialog(snapshot=captureDocument()){
   return new Promise(resolve=>{
    const d=document.createElement('dialog');d.className='shell-dialog pdf-dialog';
@@ -19,20 +19,22 @@
    for(const field of fields){if(field.type==='checkbox')field.checked=!!value[field.dataset.k];else field.value=value[field.dataset.k];}
    const read=()=>{const next={};for(const field of fields)next[field.dataset.k]=field.type==='checkbox'?field.checked:field.value;return next;};
    const request=next=>({pageSize:next.pageSize,landscape:next.orientation==='landscape',margin:next.margin,pageNumbers:next.pageNumbers,clean:next.clean,open:next.open});
-   const html=new Map();let serial=0;
+   const html=new Map(),pictures=new Map();let serial=0,leases=[];
+   const releasePreview=()=>{for(const lease of leases)lease.release();leases=[];};
    async function draw(){
-    const mine=++serial,next=read();note.textContent='Preparing preview…';try{localStorage.setItem('notemind.pdfExport',JSON.stringify(next));}catch{}
+    const mine=++serial,next=read();releasePreview();note.textContent='Preparing preview…';try{localStorage.setItem('notemind.pdfExport',JSON.stringify(next));}catch{}
     const geometry=await window.notemind.pdfGeometry(request(next));if(mine!==serial)return;
     const px=inches=>Math.round(inches*96),width=px(geometry.width),height=px(geometry.height),scale=Math.min(1,320/width);
     frame.style.width=Math.round(width*scale)+'px';frame.style.height=Math.round(height*scale)+'px';
     sheet.style.cssText='width:'+width+'px;height:'+height+'px;transform:scale('+scale+')';
     const m=geometry.margins,printable=height-px(m.top)-px(m.bottom);
     iframe.style.cssText='left:'+px(m.left)+'px;top:'+px(m.top)+'px;width:'+(width-px(m.left)-px(m.right))+'px;height:'+printable+'px';
-    if(!html.has(next.clean))html.set(next.clean,window.notemind.printHtml(snapshot,{clean:next.clean}));
-    let preview;try{preview=await html.get(next.clean);}catch(error){html.delete(next.clean);throw error;}
+    const key=window.NoteMindDocumentSync?'layout':next.clean;
+    if(!html.has(key))html.set(key,(window.NoteMindDocumentSync?window.NoteMindDocumentSync.call('printHtml',snapshot,{preview:true}):window.notemind.printHtml(snapshot,{clean:next.clean})));
+    let preview;try{preview=await html.get(key);}catch(error){html.delete(key);throw error;}
     if(mine!==serial)return;
     note.textContent='First page. Page breaks are set when you export.';
-    iframe.onload=()=>{try{const pages=Math.max(1,Math.ceil(iframe.contentDocument.documentElement.scrollHeight/printable));folio.textContent=next.pageNumbers?'1 / '+pages:'';}catch{folio.textContent=next.pageNumbers?'1':'';}};
+    iframe.onload=()=>{if(mine!==serial)return;const load=async()=>{const view=iframe.contentDocument,pages=Math.max(1,Math.ceil(view.documentElement.scrollHeight/printable));folio.textContent=next.pageNumbers?(view.querySelector('meta[name=notemind-preview-truncated]')?'1':'1 / '+pages):'';if(!window.NoteMindDocumentSync)return;const images=[...view.querySelectorAll('img[data-asset]')].filter(img=>{const r=img.getBoundingClientRect();return r.width>0&&r.bottom>0&&r.top<printable;}),names=[...new Set(images.map(img=>img.getAttribute('data-asset')))].filter(name=>typeof snapshot.assets[name]==='string'),pictureKey=JSON.stringify([next.clean,names]);if(!names.length)return;if(!pictures.has(pictureKey))pictures.set(pictureKey,window.NoteMindDocumentSync.call('previewImages',{id:snapshot.id,text:'',assets:Object.fromEntries(names.map(name=>[name,snapshot.assets[name]])),meta:{}},{clean:next.clean}));let prepared;try{prepared=await pictures.get(pictureKey);}catch(error){pictures.delete(pictureKey);throw error;}if(mine!==serial)return;const current=[];try{for(const img of images){const name=img.getAttribute('data-asset'),data=prepared.assets[name];if(!data)continue;const lease=NoteMindImagePreviews.lease(name,data,'image/png');current.push(lease);img.loading='eager';img.src=lease.url;}leases=current;await Promise.all(images.map(img=>img.decode()));if(mine!==serial)for(const lease of current)lease.release();}catch(error){for(const lease of current)lease.release();throw error;}};void load().catch(error=>{if(mine===serial)showError(error);});};
     iframe.srcdoc=preview;
     folio.style.cssText='bottom:'+Math.round(px(m.bottom)/2-6)+'px';
     folio.textContent=next.pageNumbers?'1':'';
@@ -42,14 +44,14 @@
    let result=null;
    d.querySelector('[data-cancel]').onclick=()=>d.close();
    d.querySelector('[data-go]').onclick=()=>{result=request(read());d.close();};
-   d.onclose=()=>{serial++;resolve(result);d.remove();};
+   d.onclose=()=>{serial++;releasePreview();html.clear();pictures.clear();iframe.onload=null;iframe.srcdoc='';resolve(result);d.remove();};
    document.body.append(d);d.showModal();draw().catch(showError);
   });
  }
  async function exportPdf(){
   const snapshot=captureDocument(),chosen=await dialog(snapshot);if(!chosen)return;
   $('status').textContent='Exporting…';
-  const file=await window.notemind.exportDocument(snapshot,'pdf',chosen);
+  const file=await (window.NoteMindDocumentSync?window.NoteMindDocumentSync.call('exportDocument',snapshot,'pdf',chosen):window.notemind.exportDocument(snapshot,'pdf',chosen));
   $('status').textContent=file?'Exported '+file:'Ready';
  }
  window.addEventListener('notemind-command',e=>{if(e.detail==='exportPDF')action(exportPdf);});

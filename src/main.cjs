@@ -17,7 +17,7 @@ const fileActions=require('./file-actions.cjs')(path.join(app.getPath('userData'
 let win, padController;
 const projectHome=process.env.NOTEMIND_HOME||app.getPath('userData'),projectService=require('./projects.cjs')(projectHome,process.env.NOTEMIND_WORKSPACES||path.join(projectHome,'workspaces'),path.join(process.env.NOTEMIND_DATA&&!process.env.NOTEMIND_HOME?projectHome:app.getPath('documents'),'NoteMind Projects'));
 const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
-const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents());
+const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc));
 const notepadFormat=require('./notepad-format.cjs');
 const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO});
 
@@ -27,6 +27,8 @@ let pen;
 const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({shell,helper:process.platform==='darwin'?path.join(__dirname,'helpers','wm-pen-display'):null,onError:error=>console.error('Input Monitoring:',error.message)});
 
 let sheetWrite = Promise.resolve();
+let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
+app.on('will-quit',()=>{void sheetPersistenceService?.dispose();});
 
 let cameraWrite = Promise.resolve();
 
@@ -158,6 +160,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
 });
 
+app.on('will-quit',()=>{void require('./archive-codec.cjs').dispose();});
 app.on('window-all-closed', () => { globalShortcut.unregisterAll();pen?.dispose(); app.quit(); });
 
 ipcMain.handle('dirty', (event,value,canDelete) => {const window=BrowserWindow.fromWebContents(event.sender);if(!window)return;window.isDirty=value;if(typeof canDelete==='boolean'){window.canDelete=canDelete;if(window===win){const item=Menu.getApplicationMenu()?.getMenuItemById('delete-note');if(item)item.enabled=canDelete;}}});
@@ -165,7 +168,7 @@ ipcMain.handle('dirty', (event,value,canDelete) => {const window=BrowserWindow.f
 async function openPath(file, recover = true) {
   try{file=await fs.realpath(file);}catch(error){if(error.code!=='ENOENT')throw error;file=path.resolve(file);}
   const ext = path.extname(file).toLowerCase();
-  if(recover&&['.nm','.wm','.md','.txt','.py'].includes(ext)){const known=(await notesStore.list({paths:[file]})).find(r=>r.path&&keyPath(r.path)===keyPath(file));if(known)try{const kept=await notesStore.loadDraft(known.id);if(kept.dirty&&kept.path&&keyPath(kept.path)===keyPath(file))return kept;}catch{}}
+  if(recover&&['.nm','.wm','.md','.txt','.py'].includes(ext)){const known=(await notesStore.list({paths:[file]})).find(r=>r.path&&keyPath(r.path)===keyPath(file));if(known)try{const kept=await notesStore.loadDraft(known.id);if(kept.dirty&&kept.path&&keyPath(kept.path)===keyPath(file)){return kept;}}catch{}}
 
 
   if(ext==='.wmpr')return {workspace:await projectService.open(file)};
@@ -177,26 +180,26 @@ async function openPath(file, recover = true) {
   if(ext==='.md')return notesStore.register({...await require('./markdown-files.cjs').read(file,bytes.toString('utf8')),revision:digest(bytes)});
   if (!['.nm','.wm'].includes(ext)) return notesStore.register({ path: file, text: bytes.toString('utf8'), assets: {},revision:digest(bytes) });
 
-  const parsed=notepadFormat.decode(bytes),files=parsed.files; if(files['workspace.json'])return {workspace:await projectService.open(file)}; if (!files['document.md']) throw Error('This file does not contain document.md.');
+  const parsed=await require('./archive-codec.cjs').decode(bytes,{files:'metadata'}),files=parsed.files; if(files['workspace.json'])return {workspace:await projectService.open(file)}; if (!files['document.md']) throw Error('This file does not contain document.md.');
 
-  const assets = {}; for (const [name, data] of Object.entries(files)) if (name.startsWith('assets/')) assets[name] = data.toString('base64');
+  const assets = parsed.assets;
 
   return notesStore.register({ path: file, text: parsed.text, assets, id:parsed.id, title:parsed.title,meta:parsed.meta,created:parsed.created,revision:digest(bytes) });
 
 }
 
-ipcMain.handle('open', async () => {
+ipcMain.handle('open', async event => {
 
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Documents', extensions: ['nm','wm', 'md', 'txt', 'py','docx','pdf','png','jpg','jpeg','webp','gif','bmp','svg','avif'] }] });
 
   if (result.canceled) return null;
   const opened = await openPath(result.filePaths[0]);
   if (opened && !opened.workspace) projectService.recents.remember(result.filePaths[0], 'file').catch(() => {});
-  return opened;
+  return notesIPC.seed(event,opened);
 
 });
 
-ipcMain.handle('open-path', (_, file) => openPath(file));
+ipcMain.handle('open-path', async(event, file) => notesIPC.seed(event,await openPath(file)));
 
 ipcMain.handle('choose-folder', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
 
@@ -258,28 +261,10 @@ ipcMain.handle('search-folder', async (_, folder, query) => {
 
 });
 
-ipcMain.handle('load-sheets', async () => {
-  await sheetWrite;
-
-  try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'sheets.json'), 'utf8')); }
-
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-
-});
-
-ipcMain.handle('save-sheets', async (_, data) => {
-
-  if (!Array.isArray(data)) throw Error('Invalid sheet data');
-
-  const content = JSON.stringify(data); if (Buffer.byteLength(content) > 100 * 1024 * 1024) throw Error('Sheet data is too large');
-
-  const file = path.join(app.getPath('userData'), 'sheets.json');
-
-  const write = async () => { const temp = `${file}.${require('node:crypto').randomUUID()}.tmp`; try { await fs.writeFile(temp, content, { flag: 'wx' }); await fs.rename(temp, file); } finally { await fs.unlink(temp).catch(() => {}); } };
-
-  const pending = sheetWrite.then(write, write); sheetWrite = pending.catch(() => {}); await pending;
-
-});
+ipcMain.handle('load-sheets', async () => {await sheetWrite;return sheetPersistence().load();});
+ipcMain.handle('load-sheet-state', async () => {await sheetWrite;return sheetPersistence().loadState();});
+ipcMain.handle('save-sheets', async (_,data) => {const pending=sheetPersistence().save(data);sheetWrite=pending.catch(()=>{});await pending;});
+ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
 ipcMain.handle('load-camera-pages', async () => { await cameraWrite; try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
 
@@ -322,10 +307,10 @@ ipcMain.handle('welcome-note',async(_,options)=>{
 });
 ipcMain.handle('quick-reference',async()=>{
   const file=path.join(projectHome,'NoteMind Quick Reference.nm'),version=app.getVersion();let current=null;
-  try{current=notepadFormat.decode(await fs.readFile(file)).meta?.quickReference;}catch{}
+  try{current=(await require('./archive-codec.cjs').decode(await fs.readFile(file),{files:false})).meta?.quickReference;}catch{}
   if(current!==version){
     const shortcuts=require('./shortcuts.cjs'),text=require('./quick-reference.cjs').markdown(shortcuts.markdown(shortcuts.list(Menu.getApplicationMenu())));
-    const bytes=notepadFormat.encode({text,assets:{},title:'NoteMind Quick Reference',meta:{quickReference:version}}),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';
+    const bytes=await require('./archive-codec.cjs').encode({text,assets:{},title:'NoteMind Quick Reference',meta:{quickReference:version}}),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';
     await fs.mkdir(path.dirname(file),{recursive:true});try{await fs.writeFile(temp,bytes,{flag:'wx'});await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
   }
   return file;
@@ -354,14 +339,17 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   if(!['.nm','.wm','.md'].includes(ext)&&Object.keys(doc.assets||{}).length)throw Error('Save as .nm to keep attachments.');
   let previous;try{previous=await fs.readFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
   if(!saveAs&&doc.revision&&(!previous||digest(previous)!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
-  doc=await notesStore.register({...doc,path:file},{meta:doc.meta});
-  if(previous){try{const old=['.nm','.wm'].includes(ext)?notepadFormat.decode(previous):ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}};await notesStore.version({...old,id:doc.id,title:doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}
+  const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId)delete doc.recoveryId;
+  if(previous){try{const old=['.nm','.wm'].includes(ext)?await require('./archive-codec.cjs').decode(previous,{files:false}):ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}};await notesStore.version({...old,id:doc.id,title:old.title||doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=require('./markdown-files.cjs').canonical(doc);
-  const bytes=['.nm','.wm'].includes(ext)?notepadFormat.encode(doc):Buffer.from(doc.text);
-  await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,previous??null,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});
+  const bytes=['.nm','.wm'].includes(ext)?await require('./archive-codec.cjs').encode(doc):Buffer.from(doc.text);
+  if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,digest(bytes));if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
+  const saveWarnings=[];try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,previous??null,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
   doc={...doc,path:file,revision:digest(bytes)};delete doc.otherOpenPaths;
-  await notesStore.version(doc,automatic?'Autosaved':'Saved');await notesStore.draft({...doc,dirty:false});notesIPC.send();return doc;
+  try{await notesStore.version(doc,automatic?'Autosaved':'Saved');}catch(error){saveWarnings.push('History: '+error.message);}
+  let recoverySaved=false;try{const kept=await notesStore.draft({...doc,dirty:false});if(kept?.recoveryId)doc.recoveryId=kept.recoveryId;recoverySaved=true;}catch(error){saveWarnings.push('Recovery: '+error.message);}
+  try{notesIPC.send();}catch(error){saveWarnings.push('Library: '+error.message);}return {...doc,saveWarnings,recoverySaved};
  };
  const next=(documentWrites.get(key)||Promise.resolve()).catch(()=>{}).then(write);documentWrites.set(key,next);try{return await next}finally{if(documentWrites.get(key)===next)documentWrites.delete(key);}
 }

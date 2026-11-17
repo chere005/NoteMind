@@ -15,18 +15,20 @@ let engine: Promise<Engine> | null = null
 
 parentPort!.on("message", async (job: Job) => {
   try {
-    engine ??= loadEngine(ort, path.join(folder, "models"), { threads, wasmFolder: path.join(folder, "ort") })
-    // A load that failed is tried again with the next picture.
-    const ready = await engine.catch((error: unknown) => { engine = null; throw error })
+    const started = performance.now()
     let image = job.pixels
     if (!image) {
       const bytes = job.bytes ?? new Uint8Array(await fs.readFile(job.file!))
       if (!isPng(bytes)) throw new Error("the bundled reader decodes PNG itself; other pictures come as pixels")
       image = decodePng(bytes)
     }
-
+    const decoded = performance.now()
+    engine ??= loadEngine(ort, path.join(folder, "models"), { threads, wasmFolder: path.join(folder, "ort") })
+    // Validate/decode before loading model sessions; the engine is reused for the next queued picture.
+    const ready = await engine.catch((error: unknown) => { engine = null; throw error })
+    const loaded = performance.now()
     const reading = await readPicture(ready, image, DEFAULT_TUNING, { japanese: job.japanese !== false })
-    parentPort!.postMessage({ id: job.id, lines: reading.lines, timing: reading.timing, japanese: ready.japanese !== undefined })
+    parentPort!.postMessage({ id: job.id, lines: reading.lines, timing: { ...reading.timing, decode: decoded - started, load: loaded - decoded }, japanese: ready.japanese !== undefined })
   } catch (error) {
     parentPort!.postMessage({ id: job.id, error: (error as Error).message ?? String(error) })
   }

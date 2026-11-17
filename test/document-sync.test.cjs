@@ -1,0 +1,41 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{randomUUID}=require('node:crypto');
+const {DocumentAssetSessions}=require('../src/document-asset-sessions.cjs'),{create}=require('../src/document-sync.js');
+const owner=()=>Object.assign(new EventEmitter(),{closed:false,isDestroyed(){return this.closed}}),doc=(assets={})=>({id:'note',text:'Original',assets,meta:{},path:'/notes/note.nm'}),asset=n=>Buffer.from('Picture '+n).toString('base64');
+function pair(options={}){const server=new DocumentAssetSessions(options),sender=owner(),requests=[],responses=[];let effects=0,operation=async value=>({...value,text:value.text+' saved'});const client=create({uuid:randomUUID,maxBytes:options.maxBytes,maxEntries:options.maxEntries,invoke:async packet=>{requests.push(structuredClone(packet));const response=await server.run(sender,packet,async value=>{effects++;return operation(value)});responses.push(structuredClone(response));return response;}});return {server,sender,client,requests,responses,get effects(){return effects},set operation(value){operation=value}};}
+test('seeded edits send complete immutable token manifests and no repeated asset bytes in either direction',async()=>{
+ const h=pair(),original=doc({'assets/one.png':asset(1),'assets/two.png':asset(2)}),seeded=h.client.seed(h.server.seed(h.sender,original));assert.ok(!('__notemindAssetTokens'in seeded));const saved=await h.client.call('draft',seeded);assert.deepEqual(saved.assets,original.assets);assert.deepEqual(h.requests[0].added,{});assert.deepEqual(h.responses[0].value.added,{});assert.ok(!('assets'in h.requests[0].document));assert.equal(h.effects,1);assert.equal(h.requests[0].assets['assets/one.png'],h.responses[0].value.assets['assets/one.png']);
+});
+test('new or changed assets transfer once, receive immutable canonical tokens and then use metadata only',async()=>{
+ const h=pair(),original=doc({'assets/one.png':asset(1)}),first=await h.client.call('draft',original);assert.equal(Object.keys(h.requests[0].added).length,1);assert.match(Object.keys(h.requests[0].added)[0],/^upload:/);assert.deepEqual(h.responses[0].value.added,{});await h.client.call('autosave',first);assert.deepEqual(h.requests[1].added,{});const second=await h.client.call('draft',{...first,assets:{...first.assets,'assets/two.png':asset(2)}});assert.equal(Object.keys(h.requests[2].added).length,1);assert.deepEqual(second.assets,{'assets/one.png':asset(1),'assets/two.png':asset(2)});
+});
+test('a missing token retries captured source bytes before any operation and replaces the expired token',async()=>{
+ const h=pair(),first=await h.client.call('draft',doc({'assets/a.png':asset(1)})),expired=h.requests[0].assets['assets/a.png'],canonical=h.responses[0].accepted[expired];h.server.remove(h.server.session(h.sender),canonical);const next=await h.client.call('autosave',first);assert.equal(h.effects,2);assert.equal(h.requests.length,3);assert.deepEqual(h.responses[1].missing,[canonical]);assert.deepEqual(h.requests[1].added,{});assert.equal(Object.keys(h.requests[2].added).length,1);assert.notEqual(h.requests[2].assets['assets/a.png'],canonical);assert.deepEqual(next.assets,first.assets);
+});
+test('canonical token bytes cannot be rebound, including after eviction, and malformed or orphan uploads have no effects',async()=>{
+ const h=pair(),seed=h.server.seed(h.sender,doc({'assets/a.png':asset(1)})),token=seed.__notemindAssetTokens.refs['assets/a.png'],packet={version:1,document:{text:'Bad'},assets:{'assets/a.png':token},added:{[token]:asset(2)}};
+ await assert.rejects(h.server.run(h.sender,packet,()=>assert.fail('must not run')),/Invalid transferred asset/);h.server.remove(h.server.session(h.sender),token);await assert.rejects(h.server.run(h.sender,packet,()=>assert.fail('must not run')),/Invalid transferred asset/);
+ for(const added of[{['upload:'+randomUUID()]:asset(1)},{['upload:'+token]:'not base64!'}])await assert.rejects(h.server.run(h.sender,{...packet,assets:{'assets/a.png':'upload:'+token},added},()=>assert.fail('must not run')),/Invalid transferred asset/);
+});
+test('tokens are scoped to their renderer and destruction releases the whole cache',async()=>{
+ const h=pair(),second=owner(),seed=h.server.seed(h.sender,doc({'assets/a.png':asset(1)})),token=seed.__notemindAssetTokens.refs['assets/a.png'];const result=await h.server.run(second,{version:1,document:{text:'Cross owner'},assets:{'assets/a.png':token},added:{}},()=>assert.fail('must not run'));assert.deepEqual(result.missing,[token]);h.sender.closed=true;h.sender.emit('destroyed');assert.equal(h.server.stats(h.sender).entries,0);assert.throws(()=>h.server.seed(h.sender,doc()),/closed/);
+});
+test('canonical renaming returns unchanged bytes by initiating snapshot token and changed bytes only once',async()=>{
+ const h=pair(),original=doc({'assets/one.png':asset(1)});h.operation=async value=>({...value,text:'![Renamed](assets/renamed.png)',assets:{'assets/renamed.png':value.assets['assets/one.png'],'assets/generated.png':asset(3)}});const saved=await h.client.call('save',original,true);assert.equal(saved.assets['assets/renamed.png'],asset(1));assert.equal(saved.assets['assets/generated.png'],asset(3));assert.equal(Object.keys(h.responses[0].value.added).length,1);h.operation=async value=>value;await h.client.call('autosave',saved);assert.deepEqual(h.requests[1].added,{});
+});
+test('parallel operations resolve their own assets even when replies arrive in reverse order',async()=>{
+ const server=new DocumentAssetSessions(),sender=owner(),pending=[];const client=create({uuid:randomUUID,invoke:packet=>server.run(sender,packet,value=>new Promise(resolve=>pending.push(()=>resolve(value))))});const a=client.call('draft',doc({'assets/a.png':asset(1)})),b=client.call('indexImages',doc({'assets/a.png':asset(2)}));assert.equal(pending.length,2);pending[1]();const bv=await b;pending[0]();const av=await a;assert.equal(av.assets['assets/a.png'],asset(1));assert.equal(bv.assets['assets/a.png'],asset(2));
+});
+test('bounded cache eviction never removes an asset required by the current request and retries are finite',async()=>{
+ const h=pair({maxBytes:24,maxEntries:2}),a=await h.client.call('draft',doc({'assets/a.png':asset(1)}));await h.client.call('draft',doc({'assets/b.png':asset(2),'assets/c.png':asset(3)}));assert.ok(h.server.stats(h.sender).bytes<=24);assert.ok(h.client.stats().bytes<=24);assert.deepEqual((await h.client.call('draft',a)).assets,a.assets);
+ let calls=0;const client=create({uuid:randomUUID,invoke:async packet=>{calls++;return {version:1,missing:Object.values(packet.assets)}}});await assert.rejects(client.call('draft',doc({'assets/a.png':asset(1)})),/busy/);assert.equal(calls,3);
+});
+test('retaining open tabs releases closed asset strings while pending immutable snapshots remain valid',async()=>{
+ const h=pair(),saved=await h.client.call('draft',doc({'assets/a.png':asset(1)}));assert.ok(h.client.stats().bytes);h.client.retainMany([]);assert.equal(h.client.stats().bytes,0);assert.deepEqual((await h.client.call('draft',saved)).assets,saved.assets);
+});
+test('oversized requests fail before side effects and do not evict or mutate existing canonical data',async()=>{
+ const h=pair({maxBytes:12}),saved=await h.client.call('draft',doc({'assets/a.png':asset(1)}));await assert.rejects(h.client.call('draft',doc({'assets/b.png':Buffer.alloc(32).toString('base64')})),/Invalid transferred asset|cache limit/);assert.equal(h.effects,1);assert.deepEqual((await h.client.call('draft',saved)).assets,saved.assets);
+});
+
+test('Markdown sidecar, URL-encoded and Unicode names survive token transport and canonical save rewrites',async()=>{
+ const h=pair(),names=['Images/日本語%20picture.png','Note-abc.assets/scan.png','./pictures/../drawing.svg','__proto__'],assets=Object.fromEntries(names.map((name,index)=>[name,asset(index)])),value=h.client.seed(h.server.seed(h.sender,doc(assets)));const saved=await h.client.call('draft',value);assert.deepEqual(Object.keys(saved.assets),names);for(const name of names)assert.equal(saved.assets[name],assets[name]);assert.deepEqual(h.requests[0].added,{});
+});

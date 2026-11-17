@@ -30,6 +30,7 @@ import { colourOfPaper, inkOn, paintPaper, usePaper } from "./tabletPaper"
 import { BoxActions, type BoxButtons } from "./BoxActions"
 import { elementPoint, elementSize } from "./padCoordinates"
 import { pagePixelSize, pointOnPage, pointOnView, rectOnView, UNIT_SHEET } from './sheetViewport'
+import { canvasPng, type snapshotDrawing } from './drawingSnapshot'
 import graphics from "../../graphics-pane.js"
 import "./tablet.css"
 
@@ -43,6 +44,8 @@ export interface SurfaceHandle {
   size(): Size
   /** A Bring in from the header: what it did is in the NOTE, so the next Ctrl+Z is the note's (as the box row's `leaveFor`). */
   leave(): void
+  /** Freeze the displayed pixels before encoding, if they represent this exact immutable snapshot. */
+  preview(snapshot: ReturnType<typeof snapshotDrawing>): Promise<string> | null
 }
 
 interface Props {
@@ -96,6 +99,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const [dpr, setDpr] = useState(() => (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1))
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const backdrop = useRef<HTMLCanvasElement | null>(null)
+  // The visible sheet owns its image independently of the bounded shared LRU.
+  const loadedBackdrop = useRef<{file:string;image:HTMLImageElement}|null>(null)
+  const paintedPaper = useRef<{backdrop:string|null;paper:string;viewport:Rect}|null>(null)
   const context = useRef<CanvasRenderingContext2D | null>(null)
   const size = useRef<Size>({ width: 0, height: 0 })
   const viewport = useRef<Rect>({ ...UNIT_SHEET })
@@ -243,6 +249,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   // The paper, on its own canvas under the ink: painted when the paper, the sheet's size or the display's scale changes (never per stroke).
   useLayoutEffect(() => {
     const element = backdrop.current
+    paintedPaper.current=null
     if (!element || fit.width <= 0 || fit.height <= 0) return
     const w = Math.max(1, Math.round(fit.width * dpr)), h = Math.max(1, Math.round(fit.height * dpr))
     if (element.width !== w || element.height !== h) { element.width = w; element.height = h }
@@ -252,8 +259,11 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const view = fit.viewport, area = { x: view.x * units.width, y: view.y * units.height, width: view.width * units.width, height: view.height * units.height }
     paintPaper(ctx, paper, units, area, { width: w, height: h }, dpr)
     // A picture sent here by Edit with Tablet is under the ink, on the paper (tabletBackdrop.ts).
-    const under = page.backdrop ? backdropImage(page.backdrop, () => setBackdropTick((n) => n + 1)) : null
+    if(loadedBackdrop.current?.file!==page.backdrop)loadedBackdrop.current=null
+    const file=page.backdrop
+    const under=file?(loadedBackdrop.current?.image||backdropImage(file,image=>{if(latest.current.page.backdrop===file){loadedBackdrop.current={file,image};setBackdropTick(n=>n+1)}})):null
     if (under) paintBackdrop(ctx, under, units, area, { width: w, height: h })
+    if(!page.backdrop||under)paintedPaper.current={backdrop:page.backdrop||null,paper:JSON.stringify([paper.kind,paper.spacing,paper.colour]),viewport:{...view}}
   }, [paper, page, page.backdrop, backdropTick, fit, dpr])
   // The ink's look follows the paper (dark paper lifts the default ink).
   useEffect(() => { schedule(true) }, [paper.colour, schedule])
@@ -330,6 +340,22 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     repaint: () => schedule(true),
     size: () => size.current,
     leave,
+    preview: snapshot => {
+      const current=latest.current,ink=canvas.current,paperLayer=backdrop.current,shown=viewport.current,painted=paintedPaper.current
+      if(!ink||!paperLayer||gesture.current||everything.current||frame.current!==null||snapshot.aspect!==current.page.aspect
+        ||snapshot.backdrop!==current.page.backdrop||snapshot.strokes.length!==current.page.strokes.length
+        ||snapshot.strokes.some((stroke,index)=>stroke!==current.page.strokes[index])
+        ||snapshot.paper.kind!==current.paper.kind||snapshot.paper.spacing!==current.paper.spacing||snapshot.paper.colour!==current.paper.colour
+        ||!painted||painted.backdrop!==(snapshot.backdrop||null)||painted.paper!==JSON.stringify([snapshot.paper.kind,snapshot.paper.spacing,snapshot.paper.colour])
+        ||painted.viewport.x!==shown.x||painted.viewport.y!==shown.y||painted.viewport.width!==shown.width||painted.viewport.height!==shown.height)return null
+      const region=snapshot.region,sx=(region.x-shown.x)/shown.width,sy=(region.y-shown.y)/shown.height,sw=region.width/shown.width,sh=region.height/shown.height
+      if(![sx,sy,sw,sh].every(Number.isFinite)||sx< -1e-9||sy< -1e-9||sw<=0||sh<=0||sx+sw>1+1e-9||sy+sh>1+1e-9)return null
+      const rawWidth=ink.width*sw,rawHeight=ink.height*sh,scale=Math.min(1,4096/Math.max(rawWidth,rawHeight),Math.sqrt(4*1024*1024)/Math.sqrt(rawWidth)/Math.sqrt(rawHeight))
+      const copy=ink.ownerDocument.createElement('canvas');copy.width=Math.max(1,Math.floor(rawWidth*scale));copy.height=Math.max(1,Math.floor(rawHeight*scale));const ctx=copy.getContext('2d');if(!ctx)return null
+      // Copy both layers now. Subsequent pen input or tab switches cannot change the encoded preview.
+      for(const layer of [paperLayer,ink])ctx.drawImage(layer,sx*layer.width,sy*layer.height,sw*layer.width,sh*layer.height,0,0,copy.width,copy.height)
+      return canvasPng(copy)
+    },
   }), [act, schedule])
 
   /** `unit`: on the sheet (on a bound sheet, at the region's edge); `raw`: where it really is; `inside`: in the region (always, on a plain sheet). */
@@ -556,7 +582,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const aspect = latest.current.page.aspect
     const current = latest.current.page
     if (!current.backdrop) return null
-    const image = backdropImage(current.backdrop, () => undefined)
+    const image = loadedBackdrop.current?.file===current.backdrop?loadedBackdrop.current.image:backdropImage(current.backdrop, () => undefined)
     return image && image.naturalWidth > 0 && image.naturalHeight > 0 ? backdropRect(aspect, image.naturalWidth / image.naturalHeight) : null
   }
 
