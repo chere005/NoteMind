@@ -33,3 +33,6 @@ test('mid-source cancellation and source digest changes leave the existing targe
   assert.deepEqual(await fs.readFile(file),old);assert.deepEqual(await fs.readdir(directory),['Existing.nm']);
  }
 });
+test('Notepad aggregate entry names retain the old reader-compatible range while the default Word ZIP budget stays unchanged',async t=>{
+ const directory=await folder(t),file=path.join(directory,'Long names.nm'),assets=Object.fromEntries(Array.from({length:1100},(_,i)=>['assets/'+String(i).padStart(4,'0')+'-'+ 'a'.repeat(7890)+'.bin',''])),doc={text:'Names beyond the Word-specific budget',assets},legacy=format.encode(doc);assert.ok(Object.keys(assets).reduce((sum,name)=>sum+Buffer.byteLength(name),0)>8*1024*1024);assert.equal(Object.keys(format.decode(legacy).assets).length,1100);const entries=Object.keys(assets).map(name=>({name,data:new Uint8Array(0)}));await assert.rejects(require('../src/zip-stream.cjs').writeZipFile(entries,{file,expected:null}),/names.*large/);const receipt=await writeNotepadFile(doc,{},{file,expected:null});assert.equal(receipt.committed,true);const restored=format.decode(await fs.readFile(file));assert.deepEqual(Object.keys(restored.assets),Object.keys(assets));assert.equal(restored.text,doc.text);
+});

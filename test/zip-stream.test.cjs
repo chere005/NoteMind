@@ -31,3 +31,7 @@ test('failed compressed output awaits asynchronous source cleanup before releasi
 });
 
 test('compressed sources can reuse a mutable chunk without changing earlier ZIP bytes',async t=>{const h=await fixture(t),buffer=Buffer.alloc(8192),expected=Buffer.concat(Array.from({length:32},(_,i)=>Buffer.alloc(buffer.length,i))),source=async function*(){for(let i=0;i<32;i++){buffer.fill(i);yield buffer;}};await writeZipFile([{name:'xml',bytes:expected.length,source}],{file:h.file,expected:null});assert.deepEqual(zip.unpack(await fs.readFile(h.file)).xml,expected);});
+
+test('invalid per-service name budgets fail before acquiring sources or creating files',async t=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-zip-name-budget-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));const file=path.join(directory,'Exact.docx');for(const value of [0,-1,1.5,50*1024*1024+1,NaN])await assert.rejects(writeZipFile([{name:'document.xml',bytes:0,source:()=>assert.fail('source must remain unopened')}],{file,expected:null},{maxNameBytes:value}),/name budget/);assert.deepEqual(await fs.readdir(directory),[]);
+});

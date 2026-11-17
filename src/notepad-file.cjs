@@ -37,7 +37,7 @@ async function writeNotepadFile(doc,{kind='notepad',extra={}}={},target,{hooks={
   for(const[name,value]of extras){check();if(!['drawing.json','workspace.json','recovery.json'].includes(name))throw Error('Invalid attachment');add(name,utf8(JSON.stringify(value)));}
   const manifest={format:'notemind',version:1,kind,id:doc.id||randomUUID(),title:doc.title||'',created:doc.created||new Date().toISOString(),meta:doc.meta||{},modified:new Date().toISOString(),content:'document.md',files:index},bytes=utf8(JSON.stringify(manifest,null,2));metadata.push(bytes);
   if(bytes.length>ENTRY_BYTES||total+bytes.length>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');
-  check();const receipt=await writer([{name:'manifest.json',data:bytes},...entries],{...target,check},{maxBytes:200*1024*1024});if(receipt?.warnings)receipt.warnings=receipt.warnings.map(message=>String(message).replace(/\bWord\b/g,'Notepad'));return receipt;
+  check();const receipt=await writer([{name:'manifest.json',data:bytes},...entries],{...target,check},{maxBytes:200*1024*1024,maxNameBytes:ENTRY_BYTES,...(target.preparation?require('./archive-preparation-temps.cjs').archivePreparationServices(target):{})});if(receipt?.warnings)receipt.warnings=receipt.warnings.map(message=>String(message).replace(/\bWord\b/g,'Notepad'));return receipt;
  }catch(error){if(error instanceof Error&&/\bWord\b/.test(error.message))error.message=error.message.replace(/\bWord\b/g,'Notepad');throw error;}
  finally{for(const bytes of metadata)discard(bytes);}
 }
