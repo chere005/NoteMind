@@ -32,6 +32,13 @@ class PDFReferenceService {
  async save(sender,id,{page,bytes,expectedRevision=null,noteRevision=null,baseline=null}){
   const state=this.get(sender,id);this.pageNumber(state,page);const args={identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page,bytes,expectedRevision,noteRevision,baseline,sourcePath:state.sourceFile?.file||state.file},run=(async()=>{let saved=await this.jobs.call('save',args);if(saved.needsSource){const sourceBytes=await state.client.call('source');saved=await this.jobs.call('save',{...args,bytes:saved.bytes,sourceBytes});}state.index ||= {pages:{}};state.index.pages[page]={revision:saved.revision};return saved;})();state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
  }
+ async inkDocument(sender,doc,options,storage){
+  if(!options||Object.keys(options).some(key=>!['mode','id','page','expectedRevision','noteRevision','baselineRevision'].includes(key))||!['serialize','page','save'].includes(options.mode))throw Error('Invalid PDF ink operation.');
+  if(options.mode==='serialize')return storage.run('pdfInk',doc,{mode:'serialize'});
+  const state=this.get(sender,options.id);this.pageNumber(state,options.page);const args={mode:options.mode,root:this.root,identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page:options.page,sourcePath:state.sourceFile?.file||state.file};
+  if(options.mode==='page')return storage.run('pdfInk',doc,args);
+  const run=storage.run('pdfInk',doc,{...args,expectedRevision:options.expectedRevision??null,noteRevision:options.noteRevision??null,baselineRevision:options.baselineRevision??null}).then(saved=>{state.index ||= {pages:{}};state.index.pages[args.page]={revision:saved.revision};return saved;});state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
+ }
  async previous(sender,id,sourceHash){const current=this.get(sender,id),entry=current.previous.find(value=>value.sourceHash===sourceHash);if(!entry)throw Error('This marked PDF version is unavailable.');const next=await this.open(sender,{file:current.file,attachment:current.attachment,previousHash:sourceHash});if(next.id!==id)try{await this.close(sender,id);}catch(error){await this.close(sender,next.id).catch(()=>{});throw error;}return next;}
  async close(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)return;await Promise.all([...state.saves,...(state.exports||[])]);state.client.dispose();owned.delete(id);}
  retain(sender,id,retained){if(typeof retained!=='boolean')throw Error('Invalid PDF reference ownership.');this.get(sender,id).retained=retained;}

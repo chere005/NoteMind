@@ -20,7 +20,7 @@ const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
 const pdfReferences=require('./pdf-reference-service.cjs').register();
 const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc));
 const notepadFormat=require('./notepad-format.cjs');
-const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO});
+const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO,pdfReferences});
 
 require('./features.cjs')(() => win, projectService);
 

@@ -1,10 +1,14 @@
 import React from 'react';
 import {createRoot} from 'react-dom/client';
+import {create as createSync} from '../src/document-sync.js';
+import {create as createUpload} from '../src/document-asset-upload.js';
 import {PDFReferenceWorkspace} from '../src/tablet/renderer/PDFReferenceWorkspace';
 import '../src/tablet/renderer/camera.css';
 import '../src/tablet/renderer/document.css';
 import '../src/tablet/renderer/pane.css';
 import '../src/tablet/renderer/toolbar.css';
+window.NoteMindDocumentSync=createSync({invoke:packet=>window.notemind.documentCall(packet),uuid:()=>crypto.randomUUID(),transfer:createUpload(window.notemind.documentAssets)});
+window.testMarkupTransport='scoped-raw-assets';
 window.testImports=[];window.testOwner={tab:{id:'A',doc:{id:'A',text:'',assets:{},meta:{}}}};
 window.NoteMindPDFReferences={isOwnerOpen:()=>window.testOwnerOpen!==false};
 window.NoteMindNotes={captureInsertion:()=>window.testOwner,insertTextFor:(owner,text)=>{if(window.testOwnerOpen===false)throw Error('The original Notepad is no longer open.');window.testImports.push({owner:owner.tab.id,text})},insertAssetFor:(owner,name,data)=>{if(window.testOwnerOpen===false)throw Error('The original Notepad is no longer open.');window.testImports.push({owner:owner.tab.id,name,data})},flush:async()=>{if(window.testCancelAt&&window.testImports.length===window.testCancelAt)document.querySelector('[title="Cancel after the current completed page"]')?.click();}};

@@ -4,6 +4,7 @@ function binding(value,expected={}){if(!value||value.version!==1||!HASH.test(val
 function sheet({sourceHash,page,aspect,strokes}){const reference=binding({version:1,sourceHash,page,aspect});if(!Array.isArray(strokes)||strokes.some(stroke=>stroke.opacity!==undefined))throw Error('PDF ink uses opaque pen strokes.');return{name:'PDF page '+page,aspect:1,strokes,backdrop:null,extent:{x:0,y:0,width:1,height:1},paper:{kind:'blank',spacing:'medium',colour:'white',pdfReference:reference}};}
 function decode(bytes,expected){const result=graphics.decode(bytes),reference=binding(result.paper?.pdfReference,expected);if(result.strokes.some(stroke=>stroke.opacity!==undefined))throw Error('PDF ink uses opaque pen strokes.');return{...reference,strokes:result.strokes};}
 async function decodeAsync(bytes,expected,options={}){const result=graphics.decodeAsync?await graphics.decodeAsync(bytes,options):graphics.decode(bytes),reference=binding(result.paper?.pdfReference,expected);if(result.strokes.some(stroke=>stroke.opacity!==undefined))throw Error('PDF ink uses opaque pen strokes.');return{...reference,strokes:result.strokes};}
+async function decodeBase64Async(data,expected,options={}){const result=await graphics.decodeBase64Async(data,options),reference=binding(result.paper?.pdfReference,expected);if(result.strokes.some(stroke=>stroke.opacity!==undefined))throw Error('PDF ink uses opaque pen strokes.');return{...reference,strokes:result.strokes};}
 // Storage checks binary geometry without materializing its point/stroke graph.
 function validate(bytes,expected){
  if(!graphics.isBinary(bytes)){const {strokes,...reference}=decode(bytes,expected);return reference;}
@@ -11,4 +12,4 @@ function validate(bytes,expected){
 }
 function encode(value){return graphics.encodeBytes(sheet(value));}
 function encodeAsync(value,options={}){return graphics.encodeBytesAsync(sheet(value),options);}
-module.exports={encode,encodeAsync,decode,decodeAsync,validate};
+module.exports={encode,encodeAsync,decode,decodeAsync,decodeBase64Async,validate};
