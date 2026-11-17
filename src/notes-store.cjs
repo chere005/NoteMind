@@ -14,7 +14,7 @@ async function atomic(file, data) {
 }
 class NotesStore {
  constructor(root, recoveryRoot = path.join(root, 'recovery')) { this.root = root; this.recoveryRoot = recoveryRoot; this.pending = Promise.resolve(); this.snapshotObjects = new Map(); this.versionPending = new Map(); }
- async readIndexState() { try { const encoded=await fs.readFile(path.join(this.root, 'index.json'));return {index:await archiveCodec.parseJson(encoded),encoded}; } catch(e) { if(e.code !== 'ENOENT') throw e; return {index:{records:{}, smartFolders:[], deleted:[], sort:'manual'},encoded:null}; } }
+ async readIndexState() { try {const encoded=await fs.readFile(path.join(this.root,'index.json')),index=await archiveCodec.parseJson(encoded);if(!index||typeof index!=='object'||Array.isArray(index)||!index.records||typeof index.records!=='object'||Array.isArray(index.records))throw Error('The Notepad library index is damaged.');Object.setPrototypeOf(index.records,null);return {index,encoded};}catch(e){if(e.code!=='ENOENT')throw e;return {index:{records:Object.create(null),smartFolders:[],deleted:[],sort:'manual'},encoded:null};} }
  async readIndex() { return (await this.readIndexState()).index; }
  async transaction(fn) {
   const run = () => require('./native-file-lock.cjs').runWithNativeLock(path.join(this.root,'index.json'),async () => {
