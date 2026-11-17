@@ -449,7 +449,10 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return
       event.preventDefault()
       event.stopPropagation()
-      latest.current.onBox(null)
+      const g=gesture.current
+      if(g?.kind==='box'){paintVersion.current++;gesture.current=null;if(g.page.strokes===g.strokes)restorePreview(g);releasePreview(g);for(const owner of [wrap.current,host.current]){try{if(owner?.hasPointerCapture(g.pointerId))owner.releasePointerCapture(g.pointerId)}catch{}}setBoxing(false);schedule(true)}
+      for(const input of deferredInputs.current)if(input.action==='select'&&!input.cancelled){input.cancelled=true;input.ended=true;input.controller.abort()}
+      void drainInputs();lastClick.current=null;latest.current.onBox(null)
     }
     window.addEventListener("keydown", key, true)
     return () => window.removeEventListener("keydown", key, true)
@@ -526,7 +529,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         }else if(!input.cancelled){
           const first=input.points[0],last=input.points[input.points.length-1],origin=input.origin,hit=origin?hitBox(origin,first.unit,input.pixelSize):null,dragged=input.dragged
           if(dragged&&origin&&hit){const target=hit==='inside'?moveBox(origin,last.unit.x-first.unit.x,last.unit.y-first.unit.y,input.view):resizeBox(origin,hit as BoxHandle,last.unit,input.pixelSize,MIN_BOX_PX,input.view)
-            if(denseInk(input.page.strokes)){const op=beginInkMutation(input.page,async(strokes:any,signal:AbortSignal)=>{const map=await transformDrawingInk(strokes,origin,target,{signal});for(const [a,b]of map)replacements.set(a,b);return map},{onCommit:()=>latest.current.onEdited()});await op.done}
+            if(denseInk(input.page.strokes)){let applied:Map<InkStroke,InkStroke|null>|null=null;const op=beginInkMutation(input.page,async(strokes:any,signal:AbortSignal)=>{applied=await transformDrawingInk(strokes,origin,target,{signal});return applied},{onCommit:()=>latest.current.onEdited()});const cancel=()=>op.cancel();input.controller.signal.addEventListener('abort',cancel,{once:true});try{await op.done;if(applied)for(const [a,b]of applied)replacements.set(a,b)}finally{input.controller.signal.removeEventListener('abort',cancel)}}
             else{const before=input.page.strokes,next=graphics.transform(before,origin,target);before.forEach((stroke,index)=>{if(stroke!==next[index])replacements.set(stroke,next[index]!)});input.page.replace(next);latest.current.onEdited()}
             if(input.page===latest.current.page)latest.current.onBox(target)
           }else if(input.page===latest.current.page){const made=boxFromPoints(first.unit,last.unit);latest.current.onBox(dragged&&made.width*input.pixelSize.width>MIN_BOX_PX&&made.height*input.pixelSize.height>MIN_BOX_PX?made:null)}
