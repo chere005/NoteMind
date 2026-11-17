@@ -1,5 +1,5 @@
 // Immutable assets shared by successive jobs in one archive worker epoch.
-const {randomUUID}=require('node:crypto');
+const {randomUUID}=require('node:crypto'),{isRawAsset}=require('./archive-raw-assets.cjs');
 const canonical=token=>typeof token==='string'&&/^[a-f0-9-]{36}$/i.test(token);
 const upload=token=>typeof token==='string'&&token.startsWith('upload:')&&canonical(token.slice(7));
 class AssetCache{
@@ -17,14 +17,15 @@ class AssetCache{
 }
 class ArchiveAssetClient extends AssetCache{
  constructor(options){super(options);this.uploads=0;}
+ remember(token,data,epoch){const previous=this.byData.get(data),entry=super.remember(token,data,epoch);if(previous&&previous!==token)this.remove(previous);return entry;}
  packet(doc,epoch){
-  const {assets={},...document}=doc,refs=Object.create(null),added={},source=new Map(),local=new Map();
+  const {assets={},...document}=doc,refs=Object.create(null),rawRefs=Object.create(null),added={},source=new Map(),local=new Map();
   for(const [name,data]of Object.entries(assets)){
-   if(typeof data!=='string')throw Error('Invalid archive asset.');
+   if(isRawAsset(data)){rawRefs[name]=data;continue;}if(typeof data!=='string')throw Error('Invalid archive asset.');
    let token=local.get(data),entry;if(!token){token=this.byData.get(data);entry=this.entries.get(token);if(!entry||entry.epoch!==epoch){token='upload:'+this.uuid();added[token]=data;this.uploads++;}else{this.entries.delete(token);this.entries.set(token,entry);}local.set(data,token);}
    refs[name]=token;source.set(token,data);
   }
-  return {wire:{document,refs,added},source};
+  return {wire:{document,refs,rawRefs,added},source};
  }
  retry(packet,missing){
   const refs={...packet.wire.refs},added={...packet.wire.added};
@@ -33,7 +34,7 @@ class ArchiveAssetClient extends AssetCache{
  }
  accepted(values,packet,epoch){for(const [input,token]of Object.entries(values||{})){const data=packet?.source.get(input);if(data===undefined)throw Error('Invalid archive asset acknowledgement.');this.remember(token,data,epoch);packet.source.set(token,data);}}
  hydrate(document,wire,source,epoch){
-  if(!wire)return document;const assets=Object.create(null);
+  if(!wire)return document;const assets=Object.assign(Object.create(null),document?.assets||{});
   for(const [name,token]of Object.entries(wire.refs||{})){
    const data=Object.hasOwn(wire.added||{},token)?wire.added[token]:source?.get(token)??this.entries.get(token)?.data;if(typeof data!=='string')throw Error('A returned archive asset is missing.');
    assets[name]=this.remember(token,data,epoch).data;
@@ -43,11 +44,12 @@ class ArchiveAssetClient extends AssetCache{
 }
 class ArchiveAssetWorker extends AssetCache{
  constructor(options){super(options);this.uploads=0;this.decodeReuses=0;}
- receive(packet){
+ receive(packet,rawContext){
   if(!packet)return {doc:null,refs:{},accepted:{}};
   if(!packet.document||Object.hasOwn(packet.document,'assets')||!packet.refs||!packet.added)throw Error('Invalid archive asset packet.');
-  const refs=Object.entries(packet.refs),added=Object.entries(packet.added),missing=[],assets=Object.create(null),accepted={},canonicalRefs={};
-  if(refs.length>9998||added.length>9998)throw Error('Too many archive assets.');
+  const rawRefs=Object.entries(packet.rawRefs||{}),refs=Object.entries(packet.refs),added=Object.entries(packet.added),missing=[],assets=Object.create(null),accepted={},canonicalRefs={};
+  if(refs.length+rawRefs.length>9998||added.length>9998)throw Error('Too many archive assets.');
+  for(const [name,descriptor]of rawRefs){if(Object.hasOwn(packet.refs,name)||!this.raw)throw Error('Invalid raw archive asset packet.');this.raw.resolve(descriptor,rawContext);assets[name]=descriptor;canonicalRefs[name]=descriptor;}
   const used=new Set(refs.map(([,token])=>token));for(const [token,data]of added)if(!upload(token)||!used.has(token)||typeof data!=='string')throw Error('Canonical archive references cannot be uploaded or rebound.');
   for(const [,token]of refs){if(!(canonical(token)||upload(token)))throw Error('Invalid archive asset reference.');if(!Object.hasOwn(packet.added,token)&&!this.entries.has(token)&&!missing.includes(token))missing.push(token);}
   if(missing.length)return {missing};
@@ -59,8 +61,9 @@ class ArchiveAssetWorker extends AssetCache{
   return {doc:{...packet.document,assets:Object.fromEntries(Object.entries(assets))},refs:canonicalRefs,accepted};
  }
  observe(token,bytes,info){
-  const entry=this.entries.get(token);if(!entry)return;
+  if(isRawAsset(token))return;const entry=this.entries.get(token);if(!entry)return;
   if(entry.hash&&entry.hash!==info.sha256)throw Error('An archive asset digest cannot be changed.');
+  if(entry.hash===info.sha256&&entry.binaryBytes===bytes.length&&typeof entry.canonical==='boolean')return;
   entry.hash=info.sha256;entry.binaryBytes=bytes.length;
   // Noncanonical legacy base64 must still decode to the same normalized string as before.
   entry.canonical ??= entry.data.length%4===0&&/^[A-Za-z0-9+/]*={0,2}$/.test(entry.data)&&entry.data.length===4*Math.ceil(bytes.length/3)&&Buffer.from(entry.data.slice(-4),'base64').toString('base64')===entry.data.slice(-4);
@@ -72,9 +75,9 @@ class ArchiveAssetWorker extends AssetCache{
   const data=bytes.toString('base64');let fresh=this.byData.get(data);if(!this.entries.has(fresh))fresh=this.uuid();const created=this.remember(fresh,data);created.hash=info.sha256;created.binaryBytes=bytes.length;created.canonical=true;this.byHash.set(info.sha256,fresh);return created.data;
  }
  pack(doc,known){
-  if(!doc||typeof doc.text!=='string'||!doc.assets)return {document:doc,wire:null};const {assets,...document}=doc,refs=Object.create(null),added={};
-  for(const [name,data]of Object.entries(assets)){let token=this.byData.get(data);if(!this.entries.has(token))token=this.uuid();const entry=this.remember(token,data);refs[name]=token;if(!known.has(token))added[token]=entry.data;}
-  return {document,wire:{refs,added}};
+  if(!doc||typeof doc.text!=='string'||!doc.assets)return {document:doc,wire:null};const {assets,...document}=doc,refs=Object.create(null),added={},rawAssets={};
+  for(const [name,data]of Object.entries(assets)){if(isRawAsset(data)){rawAssets[name]=data;continue;}let token=this.byData.get(data);if(!this.entries.has(token))token=this.uuid();const entry=this.remember(token,data);refs[name]=token;if(!known.has(token))added[token]=entry.data;}
+  return {document:Object.keys(rawAssets).length?{...document,assets:rawAssets}:document,wire:{refs,added}};
  }
  stats(){return {...super.stats(),uploads:this.uploads,decodeReuses:this.decodeReuses};}
 }

@@ -1,12 +1,13 @@
 const {randomUUID}=require('node:crypto');
 const {digest}=require('./notes-store.cjs');
 const {mime}=require('./document-renderer.cjs');
+const codec=require('./archive-codec.cjs'),{isRawAsset}=require('./document-asset-sessions.cjs');
 function inputs(doc){return [...Object.entries(doc.assets||{}).filter(([name])=>mime(name)&&!name.endsWith('.preview.png')), ...Object.entries(doc.meta?.attachments||{}).filter(([,info])=>info?.text).map(([name,info])=>[name,info.text])];}
 function sameInputs(a,b){return a.length===b.length&&a.every(([name,data],i)=>name===b[i][0]&&data===b[i][1]);}
 function sameValues(a,b){const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(name=>a[name]?.hash===b[name]?.hash&&a[name]?.text===b[name]?.text);}
 // One image-reading run per note. A newer image snapshot supersedes old work;
 // ordinary typing joins the current run rather than restarting its OCR.
-function createIndexer({store,documentIO,send}){
+function createIndexer({store,documentIO,send,storage=codec}){
  const pending=new Map();
  return function indexDocument(event,doc,options={}){
   const request={event,doc,inputs:inputs(doc),background:!event||options.background===true},existing=pending.get(doc.id);
@@ -26,13 +27,13 @@ function createIndexer({store,documentIO,send}){
     for(const [name,data]of Object.entries(doc.assets||{})){
      if(controller.signal.aborted)break;
      if(!mime(name)||name.endsWith('.preview.png'))continue;
-     const hash=digest(Buffer.from(data,'base64'));
+     const hash=isRawAsset(data)?(await storage.rawAssetInfo(data)).sha256:digest(Buffer.from(data,'base64'));
      if(cached[name]?.hash===hash){values[name]=cached[name];continue;}
      try{
       if(event?.sender&&!event.sender.isDestroyed())event.sender.send('notes:index-progress',{id:doc.id,name});
       const converted=await documentIO.call('image',data,mime(name));
       if(controller.signal.aborted)break;
-      const value=await documentIO.reader.read(Buffer.from(converted.data,'base64'),{id:'index-'+randomUUID(),language:'auto',priority:background?'background':'foreground',signal:controller.signal});
+      const value=await documentIO.reader.read(Buffer.isBuffer(converted.data)?converted.data:Buffer.from(converted.data,'base64'),{id:'index-'+randomUUID(),language:'auto',priority:background?'background':'foreground',signal:controller.signal});
       values[name]=cached[name]={hash,text:value.text};
      }catch(error){if(controller.signal.aborted)break;errors.push(name+': '+error.message);}
     }

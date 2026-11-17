@@ -1,6 +1,6 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = { create: options => factory(require('./document-renderer.cjs').imageDimensions, options) };
-  else root.NoteMindImagePreviews = factory(root.NoteMindDocument.imageDimensions, { lazy: true });
+  else root.NoteMindImagePreviews = factory(root.NoteMindDocument.imageDimensions, {lazy:true,identity:(assets,name)=>root.NoteMindDocumentSync?.assetIdentity?.(assets,name),chunks:(assets,name)=>root.NoteMindDocumentSync?.assetChunks?.(assets,name)});
 })(typeof window === 'undefined' ? this : window, function (dimensions, options = {}) {
   const cache = new Map(), placeholders = new Map(), bound = new Map(), pins = new Map();
   const urls = options.urls || URL, makeBlob = options.makeBlob || ((bytes, type) => new Blob([bytes], { type }));
@@ -9,25 +9,25 @@
   let clock = 0, serial = 0, blobBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null;
   const entries = () => Array.from(cache.values()).flatMap(types => Array.from(types.values()));
   function revoke(entry) { if (!entry.url) return; urls.revokeObjectURL(entry.url); blobBytes -= entry.bytes; entry.url = null; }
-  function forget(entry) { revoke(entry); placeholders.delete(entry.placeholder); const types = cache.get(entry.data); types?.delete(entry.type); if (!types?.size) cache.delete(entry.data); }
+  function forget(entry) { revoke(entry); placeholders.delete(entry.placeholder); const types = cache.get(entry.key); types?.delete(entry.type); if (!types?.size) cache.delete(entry.key); }
   function trim() {
     const attached = new Set(bound.values());
-    for (const entry of entries()) if (retained && !retained.has(entry.data) && !entry.active && !attached.has(entry)) forget(entry);
+    for (const entry of entries()) if (retained && !retained.has(entry.key) && !entry.active && !attached.has(entry)) forget(entry);
     const values = entries().sort((a, b) => a.used - b.used);
     for (const entry of values) if (blobBytes > maxBytes && !entry.active) revoke(entry);
     let count = values.length;
     for (const entry of values) if (count > maxEntries && !entry.active && !attached.has(entry)) { forget(entry); count--; }
   }
   function get(name, data, type) {
-    let types = cache.get(data), entry = types?.get(type);
+    const owned=assetsFor?.(),key=data.length>=1024*1024&&owned?.[name]===data&&options.identity?options.identity(owned,name)||data:data;let types=cache.get(key),entry=types?.get(type);
     if (!entry) {
-      const prefix = data.slice(0, Math.ceil(65536 / 3) * 4);
+      const chunks=owned?.[name]===data?options.chunks?.(owned,name):null,prefix=(chunks?.[0]||data).slice(0,Math.ceil(65536/3)*4);
       let size = dimensions(decode(prefix));
       // Unusual JPEG metadata or SVG prologs can put the dimensions after the first header block.
       if (!size && prefix.length !== data.length) size = dimensions(decode(data));
       const placeholder = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (size?.width || 1) + '" height="' + (size?.height || 1) + '"/>') + '#notemind-preview-' + (++serial);
-      entry = { data, type, size, placeholder, bytes: Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0), url: null, active: 0, used: ++clock };
-      if (!types) cache.set(data, types = new Map()); types.set(type, entry); placeholders.set(placeholder, entry);
+      entry = {key,data,chunks,type,size,placeholder,bytes:Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0), url: null, active: 0, used: ++clock };
+      if (!types) cache.set(key, types = new Map()); types.set(type, entry); placeholders.set(placeholder, entry);
     }
     entry.used = ++clock; return entry;
   }
@@ -90,7 +90,7 @@
   async function withImage(img, run) { const release = pin(img); try { await ensure(img); return await run(img); } finally { release(); } }
   function lease(name,data,type){const entry=get(name,data,type);entry.active++;const url=materialize(entry);trim();let released=false;return {url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);trim();}};}
   function retainMany(assetSets) {
-    const used = new Set(); for (const assets of assetSets || []) for (const data of Object.values(assets || {})) used.add(data);
+    const used=new Set();for(const assets of assetSets||[])for(const[name,data]of Object.entries(assets||{}))if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
     retained = used;
     trim();
   }

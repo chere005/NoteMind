@@ -2,20 +2,19 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {randomUUID, createHash} = require('node:crypto');
 const archiveCodec = require('./archive-codec.cjs');
-const snapshots = require('./snapshot-store.cjs');
 const {keyPath}=require('./path-key.cjs');
 const digest = data => createHash('sha256').update(data).digest('hex');
 const titleOf = text => String(text || '').split(/\r?\n/).map(s => s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`=]/g, '').trim()).find(Boolean)?.slice(0, 100) || 'Untitled';
 const metadata = value => ({tags: [...new Set((Array.isArray(value?.tags) ? value.tags : []).map(t => String(t).trim().replace(/^#/, '').slice(0, 60)).filter(Boolean))].slice(0, 100), pinned: !!value?.pinned, collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter(x => typeof x === 'string').slice(0, 1000) : [], attachments: value?.attachments && typeof value.attachments==='object' ? value.attachments : {}, graphicsPanes: Object.fromEntries(Object.entries(value?.graphicsPanes||{}).filter(([,pane])=>pane?.version===1).map(([name])=>[name,{version:1}]))});
 async function atomic(file, data) {
- await fs.mkdir(path.dirname(file), {recursive:true});
- const temp = file + '.' + randomUUID() + '.tmp';
- try { await fs.writeFile(temp, data, {flag:'wx'}); await fs.rename(temp, file); }
- finally { await fs.unlink(temp).catch(() => {}); }
+ const directory=path.dirname(file),created=await fs.mkdir(directory, {recursive:true}),temp=file+'.'+randomUUID()+'.tmp';let handle,published=false;
+ try {handle=await fs.open(temp,'wx');await handle.writeFile(data);await handle.sync();await handle.close();handle=null;await fs.rename(temp,file);published=true;await require('./snapshot-store.cjs').syncHierarchy(created||directory,directory);}
+ catch(error){if(published)error.notemindFileCommitted=true;throw error;}
+ finally {await handle?.close();await fs.unlink(temp).catch(() => {});}
 }
 class NotesStore {
  constructor(root, recoveryRoot = path.join(root, 'recovery')) { this.root = root; this.recoveryRoot = recoveryRoot; this.pending = Promise.resolve(); this.snapshotObjects = new Map(); this.versionPending = new Map(); }
- async readIndexState() { try { const encoded=await fs.readFile(path.join(this.root, 'index.json'));return {index:await archiveCodec.parseJson(encoded),encoded}; } catch(e) { if(e.code !== 'ENOENT') throw e; return {index:{records:{}, smartFolders:[], deleted:[], sort:'manual'},encoded:null}; } }
+ async readIndexState() { try {const encoded=await fs.readFile(path.join(this.root,'index.json')),index=await archiveCodec.parseJson(encoded);if(!index||typeof index!=='object'||Array.isArray(index)||!index.records||typeof index.records!=='object'||Array.isArray(index.records))throw Error('The Notepad library index is damaged.');Object.setPrototypeOf(index.records,null);return {index,encoded};}catch(e){if(e.code!=='ENOENT')throw e;return {index:{records:Object.create(null),smartFolders:[],deleted:[],sort:'manual'},encoded:null};} }
  async readIndex() { return (await this.readIndexState()).index; }
  async transaction(fn) {
   const run = () => require('./native-file-lock.cjs').runWithNativeLock(path.join(this.root,'index.json'),async () => {
@@ -69,7 +68,7 @@ class NotesStore {
  async patch(id, meta) { return this.transaction(index=>{const r=index.records[id]; if(!r)throw Error('This Notepad is no longer in the library.'); r.meta=metadata({...r.meta,...meta});return r;}); }
  async record(id) { const r=(await this.readIndex()).records[id]; if(!r || r.deleted) throw Error('This Notepad could not be found. Restore it from Recently Deleted if needed.'); return r; }
  async rename(from,to) { return this.transaction(index=>{for(const r of Object.values(index.records)){if(r.path && (keyPath(r.path)===keyPath(from)||keyPath(r.path).startsWith(keyPath(from)+path.sep))) r.path=to+r.path.slice(from.length);}}); }
- async draft(doc) { return this.transaction(async index=>{const registered=await this.registerInIndex(index,doc,{meta:doc.meta}),state={recoveryId:randomUUID(),path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle}; await atomic(path.join(this.recoveryRoot, registered.id+'.wm'), await archiveCodec.encode(require('./markdown-files.cjs').canonical(registered),{extra:{'recovery.json':state}})); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify(state));index.records[registered.id].recoveryRoot=this.recoveryRoot;return {...registered,recoveryId:state.recoveryId};}); }
+ async draft(doc) { return this.transaction(async index=>{const registered=await this.registerInIndex(index,doc,{meta:doc.meta}),state={recoveryId:randomUUID(),path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle}; await atomic(path.join(this.recoveryRoot, registered.id+'.wm'), await archiveCodec.encode(await require('./markdown-files.cjs').canonicalAsync(registered),{extra:{'recovery.json':state}})); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify(state));index.records[registered.id].recoveryRoot=this.recoveryRoot;return {...registered,recoveryId:state.recoveryId};}); }
  async recordCommitIntent(doc,file,revision) {
   if(!doc||typeof doc.id!=='string'||!/^[\w-]{1,80}$/.test(doc.id)||typeof file!=='string'||!path.isAbsolute(file)||typeof revision!=='string'||!/^[a-f0-9]{64}$/.test(revision))throw Error('Invalid document commit intent.');
   const id=doc.id,stateFile=path.join(this.recoveryRoot,id+'.json'),archive=path.join(this.recoveryRoot,id+'.wm');let needsDraft=!doc.recoveryId,expectedRecoveryId=doc.recoveryId;
@@ -83,7 +82,23 @@ class NotesStore {
    const pendingCommit={path:file,revision};await atomic(stateFile,JSON.stringify({...state,pendingCommit}));return {...pendingCommit,recoveryId:expectedRecoveryId};
   });
  }
- async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}const parsed=await archiveCodec.decode(await fs.readFile(path.join(folder,id+'.wm')),{files:'metadata'}); const {files,kind,...doc}=parsed; let state={};if(files['recovery.json']){state=JSON.parse(files['recovery.json'].toString('utf8'));if(!state||typeof state!=='object'||typeof state.recoveryId!=='string')throw Error('Invalid recovered Notepad state.');}try{const companion=JSON.parse(await fs.readFile(path.join(folder,id+'.json'),'utf8'));if(!files['recovery.json']||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{} const recovered={...doc,...state,id,...(record?{path:record.path}:{} )},receipt=state.pendingCommit;
+ async recoveryState(id) {
+  if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');
+  let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}
+  const file=path.join(folder,id+'.wm');
+  for(let attempt=0;attempt<3;attempt++)try{
+   const probe=await archiveCodec.readRecoveryState(file);let state=probe.state||{};if(probe.state&&(!state||typeof state!=='object'||Array.isArray(state)||typeof state.recoveryId!=='string'))throw Error('Invalid recovery metadata.');
+   try{const companion=JSON.parse((await require('./read-limited.cjs').readLimited(path.join(folder,id+'.json'),1024*1024,'Recovery metadata is too large.')).toString('utf8'));if(!probe.state||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{}
+   const current=await fs.stat(file,{bigint:true});if(!probe.sourceIdentity||['dev','ino','size','mtimeNs','ctimeNs'].some(key=>String(current[key])!==String(probe.sourceIdentity[key])))continue;
+   const result={...state,id,path:record?.path??state.path,dirty:!!state.dirty},receipt=state.pendingCommit;
+   if(receipt?.path&&result.path&&keyPath(receipt.path)===keyPath(result.path)&&/^[a-f0-9]{64}$/.test(receipt.revision)){
+    try{const committed=await require('./source-file-revision.cjs').sourceFileRevision(receipt.path);if(committed?.sha256===receipt.revision)return {...result,dirty:false};}catch{}
+   }
+   return result;
+  }catch(error){if(error.code==='ENOENT')return null;return {id,path:record?.path,dirty:true,unknown:true};}
+  return {id,path:record?.path,dirty:true,unknown:true};
+ }
+ async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}const input=await fs.readFile(path.join(folder,id+'.wm')),parsed=await archiveCodec.decodeOwned(input.byteOffset===0&&input.byteLength===input.buffer.byteLength?input:Uint8Array.from(input),{files:'metadata'}); const {files,kind,...doc}=parsed; let state={};if(files['recovery.json']){state=JSON.parse(files['recovery.json'].toString('utf8'));if(!state||typeof state!=='object'||typeof state.recoveryId!=='string')throw Error('Invalid recovered Notepad state.');}try{const companion=JSON.parse((await require('./read-limited.cjs').readLimited(path.join(folder,id+'.json'),1024*1024,'Recovery metadata is too large.')).toString('utf8'));if(!files['recovery.json']||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{} const recovered={...doc,...state,id,...(record?{path:record.path}:{} )},receipt=state.pendingCommit;
   if(receipt?.path&&recovered.path&&keyPath(receipt.path)===keyPath(recovered.path)&&/^[a-f0-9]{64}$/.test(receipt.revision)){
    try{const committed=await archiveCodec.readCommitted(receipt.path,receipt.revision);if(committed){const clean={...recovered,...committed,id,path:recovered.path,revision:receipt.revision,dirty:false};delete clean.pendingCommit;return clean;}}catch{}
   }
@@ -92,35 +107,38 @@ class NotesStore {
  async recover() { const session=await this.session();if(!session)return null; const index=await this.readIndex(),tabs=[];for(const t of session.tabs){if(index.records[t.id]?.deleted)continue;try{tabs.push({...await this.loadDraft(t.id),visual:t.visual,scroll:t.scroll})}catch(e){tabs.push({recoveryError:e.message,id:t.id,path:t.path})}}return {...session,tabs}; }
  async deleteDraft(id) {return this.transaction(async index=>{const record=index.records[id];if(!record||record.deleted)throw Error('This draft is no longer available.');if(record.path)throw Error('Use Move to Trash for a saved Notepad.');const item={id:randomUUID(),kind:'draft',noteId:id,path:null,name:record.title,deletedAt:new Date().toISOString(),recoveryRoot:record.recoveryRoot||this.recoveryRoot};item.saved=path.join(this.root,'deleted',item.id);await fs.mkdir(item.saved,{recursive:true});for(const ext of ['.wm','.json'])await fs.copyFile(path.join(item.recoveryRoot,id+ext),path.join(item.saved,id+ext));index.deleted.push(item);record.deleted=item.id;return item.id;});}
  async version(doc, label='Saved') {
-  if(!doc.id)return;doc=require('./markdown-files.cjs').canonical(doc);
+  if(!doc.id)return;const captured={...doc,assets:{...(doc.assets||{})},meta:structuredClone(doc.meta||{})};let canonical;
+  return this.queueVersion(doc.id,label,async options=>{canonical ||=await require('./markdown-files.cjs').canonicalAsync(captured);return archiveCodec.publishVersion(canonical,options);});
+ }
+ async versionFromFile(file,doc,expectedRevision,label='Before save') {
+  if(!doc?.id)return;
+  const noteId=doc.id,titleFallback=doc.title||'',expected=structuredClone(expectedRevision);
+  const publish=path.extname(file).toLowerCase()==='.md'?'publishMarkdownVersionFromFile':'publishVersionFromFile';
+  return this.queueVersion(noteId,label,options=>archiveCodec[publish](file,{...options,noteId,titleFallback,expectedRevision:expected}));
+ }
+ async queueVersion(noteId,label,publishVersion) {
   // Keep calls for one note ordered, without holding the whole-library lock during hashing and asset I/O.
   const run=async()=>{
-   const record=(await this.readIndex()).records[doc.id];if(!record)return;const last=(record.versions||[]).at(-1);
+   const record=(await this.readIndex()).records[noteId];if(!record)return;const last=(record.versions||[]).at(-1);
    if(last?.storage==='snapshot-v1'&&last.objectCount&&this.snapshotObjects.size===0){
     // This is an optimization hint only; publication still validates objects before committing a reference.
     try{const info=await archiveCodec.readSnapshot(this.root,last.id,{referencesOnly:true});for(const hash of info.knownHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}}catch{}
    }
-   let prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()],previousHash:last?.hash||null}),verifiedLegacyID=null;
-   if(prepared.unchanged&&prepared.legacyHash&&!last.storage){
-    let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.manifest.document;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
-    if(sameMetadata)verifiedLegacyID=last.id;else prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()]});
+   const id=randomUUID(),publish=options=>publishVersion({root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null,existingVersionId:last?.storage==='snapshot-v1'?last.id:undefined}),verifiedLegacyID=null;
+   if(prepared.unchanged&&prepared.legacyHash&&!last?.storage){
+    let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.documentMetadata;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
+    if(sameMetadata)verifiedLegacyID=last.id;else prepared=await publish({});
    }
    const matches=entry=>entry&&(entry.hash===prepared.contentHash||(verifiedLegacyID===entry.id&&prepared.legacyHash&&entry.hash===prepared.legacyHash));
    if(prepared.unchanged){
-    const needed=await this.transaction(index=>{const current=index.records[doc.id];return !!current&&!matches((current.versions||[]).at(-1));});
-    if(!needed)return;const legacyHash=prepared.legacyHash;prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()]});prepared.legacyHash=legacyHash;
+    const needed=await this.transaction(index=>{const current=index.records[noteId];return !!current&&!matches((current.versions||[]).at(-1));});
+    if(!needed)return;const legacyHash=prepared.legacyHash;prepared=await publish({});prepared.legacyHash=legacyHash;
    }
-   const id=randomUUID();
-   try{await snapshots.publishSnapshot(this.root,id,prepared,this.snapshotObjects);}catch(error){
-    if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;
-    // Hints can become stale after external cleanup. Rebuild missing objects from the current immutable document.
-    this.snapshotObjects.clear();const legacyHash=prepared.legacyHash;prepared=await archiveCodec.prepareSnapshot(doc,{});prepared.legacyHash=legacyHash;
-    await snapshots.publishSnapshot(this.root,id,prepared,this.snapshotObjects);
-   }
-   return this.transaction(index=>{const r=index.records[doc.id];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:new Set(Object.values(prepared.manifest.assets).map(ref=>ref.hash)).size});return id;});
+   for(const hash of prepared.objectHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}
+   return this.transaction(index=>{const r=index.records[noteId];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:prepared.objectCount});return id;});
   };
-  const next=(this.versionPending.get(doc.id)||Promise.resolve()).catch(()=>{}).then(run);this.versionPending.set(doc.id,next);
-  try{return await next;}finally{if(this.versionPending.get(doc.id)===next)this.versionPending.delete(doc.id);}
+  const next=(this.versionPending.get(noteId)||Promise.resolve()).catch(()=>{}).then(run);this.versionPending.set(noteId,next);
+  try{return await next;}finally{if(this.versionPending.get(noteId)===next)this.versionPending.delete(noteId);}
  }
  async versions(id) { return (await this.readIndex()).records[id]?.versions || []; }
  async versionDoc(id, version) {const entry=(await this.versions(id)).find(v=>v.id===version);if(!entry)throw Error('This version is unavailable.');if(entry.storage==='snapshot-v1')return archiveCodec.readSnapshot(this.root,version);if(entry.storage)throw Error('This version format is not supported.');if(!/^[\w-]{1,80}$/.test(version))throw Error('Invalid version identity.');const {files,kind,...doc}=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',version+'.wm')),{files:false});return doc;}

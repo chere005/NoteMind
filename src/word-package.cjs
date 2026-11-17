@@ -1,0 +1,11 @@
+// Build only DOCX XML/relationships with tiny unique private placeholders. The streaming writer supplies real media.
+const {createHash}=require('node:crypto'),{exportWord}=require('./documents.cjs'),{readWordTemplate}=require('./word-template.cjs');
+const PIXEL=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64'),TYPES=new Set(['png','jpg','gif','bmp']),XML_LIMIT=50*1024*1024;
+async function wordPackage(doc,images={},options={}){
+ if(!doc||typeof doc.text!=='string'||Buffer.byteLength(doc.text)>16*1024*1024||!images||typeof images!=='object'||Array.isArray(images)||Object.keys(images).length>9998)throw Error('Invalid Word export metadata.');const placeholders=Object.create(null),sources=new Map();
+ for(const[name,info]of Object.entries(images)){if(typeof name!=='string'||name.length>8192||!info||!TYPES.has(info.type)||![info.width,info.height].every(value=>Number.isFinite(value)&&value>0&&value<=1000000))throw Error('Invalid Word image metadata.');const identity=/^[a-f0-9]{64}$/i.test(info.contentHash)?info.contentHash:createHash('sha256').update(name).digest('hex'),data=Buffer.concat([PIXEL,Buffer.from('\0NoteMind:'+info.type+':'+identity)]),key=data.toString('base64');if(!sources.has(key))sources.set(key,name);Object.defineProperty(placeholders,name,{value:{data,width:info.width,height:info.height,type:info.type},enumerable:true});}
+ const bytes=await exportWord({...doc,assets:{}},placeholders,options);if(bytes.length>XML_LIMIT)throw Error('The Word document metadata exceeds the export limit.');const files=readWordTemplate(bytes),entries=[];let metadataBytes=0,media=0;
+ for(const[name,data]of Object.entries(files)){if(name.startsWith('word/media/')){const image=sources.get(data.toString('base64'));if(!image)throw Error('Word image relationships could not be resolved.');entries.push({name,image,store:true});media++;}else{metadataBytes+=data.length;if(metadataBytes>XML_LIMIT)throw Error('The Word document metadata exceeds the export limit.');entries.push({name,data,store:false});}}
+ if(media!==sources.size)throw Error('A Word image was not represented in the export package.');return{entries,metadataBytes,images:media};
+}
+module.exports={wordPackage};

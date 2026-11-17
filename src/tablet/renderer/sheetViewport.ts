@@ -1,4 +1,5 @@
 import type { Point, Rect, Size } from '@notemind/core'
+import { inkBox } from '../../stroke-bounds.js'
 
 export const UNIT_SHEET: Rect = { x: 0, y: 0, width: 1, height: 1 }
 
@@ -21,9 +22,8 @@ export const pagePixelSize = (size: Size, view: Rect): Size => ({ width: size.wi
 export function includeInk(extent: Rect, strokes: { points: Point[] }[]): Rect {
   let rx = Math.max(.5, .5 - extent.x, extent.x + extent.width - .5)
   let ry = Math.max(.5, .5 - extent.y, extent.y + extent.height - .5)
-  for (const stroke of strokes) for (const point of stroke.points) {
-    rx = Math.max(rx, Math.abs(point.x - .5));ry = Math.max(ry, Math.abs(point.y - .5))
-  }
+  const box=inkBox(strokes)
+  if(box.count){rx=Math.max(rx,Math.abs(box.x-.5),Math.abs(box.right-.5));ry=Math.max(ry,Math.abs(box.y-.5),Math.abs(box.bottom-.5))}
   if (extent.x === .5 - rx && extent.y === .5 - ry && extent.width === 2 * rx && extent.height === 2 * ry) return extent
   return { x: .5 - rx, y: .5 - ry, width: 2 * rx, height: 2 * ry }
 }

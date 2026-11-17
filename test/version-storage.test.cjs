@@ -12,23 +12,25 @@ test('version history stores unchanged assets once and reads both old archives a
  const newFiles=(await fs.readdir(path.join(root,'versions'))).filter(file=>file.endsWith('.snapshot.json')),manifestBytes=(await Promise.all(newFiles.map(file=>fs.stat(path.join(root,'versions',file))))).reduce((n,s)=>n+s.size,0);assert.ok(manifestBytes<5000,'text edits retain compact manifests rather than duplicate the 32 KiB asset');
 });
 test('version preparation releases the library lock and preserves per-note call order',async t=>{
- const {store,doc}=await fixture(t),other=await store.register({text:'Other',assets:{}});let release,reached,seen=[];const gate=new Promise(resolve=>release=resolve),paused=new Promise(resolve=>reached=resolve),prepare=codec.prepareSnapshot.bind(codec);
- t.mock.method(codec,'prepareSnapshot',async(value,options)=>{seen.push(value.text);if(value.text==='First'){reached();await gate;}return prepare(value,options)});
+ const {store,doc}=await fixture(t),other=await store.register({text:'Other',assets:{}});let release,reached,seen=[];const gate=new Promise(resolve=>release=resolve),paused=new Promise(resolve=>reached=resolve),prepare=codec.publishVersion.bind(codec);
+ t.mock.method(codec,'publishVersion',async(value,options)=>{seen.push(value.text);if(value.text==='First'){reached();await gate;}return prepare(value,options)});
  const first=store.version({...doc,text:'First'}),second=store.version({...doc,text:'Second'});await paused;
  let timer;try{assert.equal(await Promise.race([store.patch(other.id,{tags:['responsive']}).then(()=>true),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),2000)})]),true,'unrelated library operations continue while snapshot work is pending');assert.deepEqual(seen,['First']);}
  finally{clearTimeout(timer);release();await Promise.all([first,second]);}
  const history=await store.versions(doc.id);assert.deepEqual(await Promise.all(history.map(async entry=>(await store.versionDoc(doc.id,entry.id)).text)),['First','Second']);assert.equal(store.versionPending.size,0);
 });
 test('an unchanged preparation retries if another instance commits different content before its final check',async t=>{
- const {root,store,doc}=await fixture(t);await store.version(doc);const other=new NotesStore(root),prepare=codec.prepareSnapshot.bind(codec);let paused=false,release,reached;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>reached=resolve);
- t.mock.method(codec,'prepareSnapshot',async(value,options)=>{const prepared=await prepare(value,options);if(value.text==='A'&&!paused){paused=true;reached();await gate;}return prepared});
+ const {root,store,doc}=await fixture(t);await store.version(doc);const other=new NotesStore(root),prepare=codec.publishVersion.bind(codec);let paused=false,release,reached;const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>reached=resolve);
+ t.mock.method(codec,'publishVersion',async(value,options)=>{const prepared=await prepare(value,options);if(value.text==='A'&&!paused){paused=true;reached();await gate;}return prepared});
  const returning=store.version(doc);await started;try{await other.version({...doc,text:'B'});}finally{release();}await returning;
  const history=await store.versions(doc.id);assert.deepEqual(await Promise.all(history.map(async entry=>(await store.versionDoc(doc.id,entry.id)).text)),['A','B','A']);
 });
 test('failed snapshot publication cannot add an unreadable history entry or modify earlier versions',async t=>{
- const {root,store,doc}=await fixture(t);await store.version(doc);const before=await fs.readFile(path.join(root,'index.json')),link=fs.link,original=(await store.versions(doc.id))[0];
- t.mock.method(fs,'link',async(from,to)=>{if(to.endsWith('.snapshot.json'))throw Object.assign(Error('snapshot publication interrupted'),{code:'EIO'});return link(from,to)});
- await assert.rejects(store.version({...doc,text:'New content',assets:{'assets/a.bin':Buffer.from('new asset').toString('base64')}}),/interrupted/);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),before);assert.equal((await store.versionDoc(doc.id,original.id)).text,'A');assert.equal(store.versionPending.size,0);
+ const {root,store,doc}=await fixture(t);await store.version(doc);const before=await fs.readFile(path.join(root,'index.json')),original=(await store.versions(doc.id))[0],folder=path.join(root,'versions'),held=path.join(root,'versions-held');
+ await fs.rename(folder,held);await fs.writeFile(folder,'interrupted destination');
+ try{await assert.rejects(store.version({...doc,text:'New content',assets:{'assets/a.bin':Buffer.from('new asset').toString('base64')}}),/exist|directory|EEXIST/i);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),before);assert.equal(store.versionPending.size,0);}
+ finally{await fs.unlink(folder);await fs.rename(held,folder);}
+ assert.equal((await store.versionDoc(doc.id,original.id)).text,'A');
 });
 test('title and creation metadata changes remain distinct versions even when body and images are unchanged',async t=>{
  const {store,doc}=await fixture(t);await store.version({...doc,title:'Original title',created:'2026-01-01'});await store.version({...doc,title:'Renamed title',created:'2026-01-01'});await store.version({...doc,title:'Renamed title',created:'2026-02-01'});
@@ -45,4 +47,14 @@ test('legacy body-only fingerprints cannot hide a title-only rename during migra
 test('stale known-object hints heal missing blobs from current verified source bytes',async t=>{
  const {root,store,doc}=await fixture(t);await store.version(doc);const initial=(await store.versions(doc.id))[0],manifest=JSON.parse(await fs.readFile(snapshots.manifestFile(root,initial.id))),ref=manifest.assets['assets/a.bin'];await fs.unlink(snapshots.objectFile(root,ref.hash));
  await store.version({...doc,text:'After cleanup'});const history=await store.versions(doc.id);assert.equal(history.length,2);assert.deepEqual((await store.versionDoc(doc.id,initial.id)).assets,doc.assets);assert.equal((await store.versionDoc(doc.id,history[1].id)).text,'After cleanup');
+});
+test('an unchanged history check repairs missing shared bytes without adding a redundant version',async t=>{
+ const {root,store,doc}=await fixture(t);await store.version(doc);const initial=(await store.versions(doc.id))[0],manifest=JSON.parse(await fs.readFile(snapshots.manifestFile(root,initial.id))),ref=manifest.assets['assets/a.bin'];await fs.unlink(snapshots.objectFile(root,ref.hash));
+ await store.version(doc);assert.equal((await store.versions(doc.id)).length,1);assert.deepEqual((await store.versionDoc(doc.id,initial.id)).assets,doc.assets);
+});
+test('a missing or substituted manifest cannot masquerade as an intact unchanged backup',async t=>{
+ const {root,store,doc}=await fixture(t);await store.version(doc);const original=(await store.versions(doc.id))[0],file=snapshots.manifestFile(root,original.id),bytes=await fs.readFile(file),index=await fs.readFile(path.join(root,'index.json'));
+ await fs.unlink(file);await assert.rejects(store.version(doc),/ENOENT/);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),index);
+ const different=snapshots.prepareSnapshot({...doc,text:'Different history'});await fs.writeFile(file,different.manifestBytes);await assert.rejects(store.version(doc),/metadata is damaged/);assert.deepEqual(await fs.readFile(path.join(root,'index.json')),index);
+ await fs.writeFile(file,bytes);assert.equal((await store.versionDoc(doc.id,original.id)).text,'A');
 });

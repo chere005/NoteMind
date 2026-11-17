@@ -1,0 +1,9 @@
+const {randomUUID}=require('node:crypto'),{createPrintFiles}=require('./print-asset-files.cjs');
+class PrintFileLeases{
+ constructor({create=createPrintFiles,maxEntries=2,maxBytes=398*1024*1024,idleMs=300000,uuid=randomUUID}={}){Object.assign(this,{create,maxEntries,maxBytes,idleMs,uuid});this.entries=new Map();this.pending=0;this.bytes=0;this.closed=new WeakSet()}
+ async open(owner,doc){if(!owner||this.closed.has(owner)||owner.isDestroyed?.())throw Error('The print window is closed.');if(this.entries.size+this.pending>=this.maxEntries)throw Error('Two printable documents are already open. Close one before printing another.');this.pending++;let files,entry;const closed=()=>{this.closed.add(owner);if(entry)void this.remove(entry)};owner.once?.('destroyed',closed);try{files=await this.create(doc);if(this.closed.has(owner)||owner.isDestroyed?.())throw Error('The print window is closed.');if(this.bytes+files.bytes>this.maxBytes)throw Error('The printable documents exceed the temporary image limit.');const token=this.uuid();entry={owner,files,token,closed};this.entries.set(token,entry);this.bytes+=files.bytes;entry.timer=setTimeout(()=>void this.remove(entry),this.idleMs);entry.timer.unref?.();return{token,url:files.url}}catch(error){owner.removeListener?.('destroyed',closed);await files?.release();throw error}finally{this.pending--}}
+ async remove(entry){if(this.entries.get(entry.token)!==entry)return;this.entries.delete(entry.token);this.bytes-=entry.files.bytes;clearTimeout(entry.timer);entry.owner.removeListener?.('destroyed',entry.closed);await entry.files.release()}
+ async release(owner,token){const entry=this.entries.get(token);if(!entry||entry.owner!==owner)throw Error('This printable document has expired.');await this.remove(entry)}
+ async dispose(){await Promise.all([...this.entries.values()].map(entry=>this.remove(entry)))}
+}
+module.exports={PrintFileLeases};

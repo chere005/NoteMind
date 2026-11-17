@@ -19,6 +19,9 @@ import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 import { recordStrokeAppend } from '../../stroke-signature.js'
+import { strokeBox,strokeBoxAsync,knownStrokeBox } from '../../stroke-bounds.js'
+import { DrawingHistory } from '../../drawing-history.js'
+import { yieldTask } from '../../graphics-pane.js'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -36,17 +39,6 @@ export interface InkStroke {
   points: Point[]
   /** 0…1, one per point; absent for the mouse. */
   pressures?: number[]
-}
-
-const strokeBoxes = new WeakMap<InkStroke, { count: number; x: number; y: number; right: number; bottom: number }>()
-function strokeBox(stroke: InkStroke) {
-  let box = strokeBoxes.get(stroke)
-  if (!box || box.count !== stroke.points.length) {
-    box = { count: stroke.points.length, x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity }
-    for (const p of stroke.points) { box.x = Math.min(box.x, p.x); box.y = Math.min(box.y, p.y); box.right = Math.max(box.right, p.x); box.bottom = Math.max(box.bottom, p.y) }
-    strokeBoxes.set(stroke, box)
-  }
-  return box
 }
 
 /** Distance from a point to a segment. */
@@ -77,6 +69,19 @@ export function strokeUnder(strokes: InkStroke[], point: Point, size: Size, radi
     }
   }
   return -1
+}
+
+/** Large single strokes and dense pages yield without allocating a pixel object for every segment. */
+export async function strokeUnderAsync(strokes:InkStroke[],point:Point,size:Size,radius:number,unit=1,options:{signal?:AbortSignal;yieldControl?:()=>Promise<any>}={}):Promise<number>{
+ const yieldControl=options.yieldControl||(()=>new Promise<void>(resolve=>setTimeout(resolve,0))),px=point.x*size.width,py=point.y*size.height;let work=0
+ const pause=async()=>{if(options.signal?.aborted)throw Error('Drawing hit test cancelled.');await yieldControl();if(options.signal?.aborted)throw Error('Drawing hit test cancelled.')}
+ for(let index=strokes.length-1;index>=0;index--){
+  if(options.signal?.aborted)throw Error('Drawing hit test cancelled.');const stroke=strokes[index]!,reach=radius+stroke.width*unit/2,box=knownStrokeBox(stroke)||await strokeBoxAsync(stroke,{signal:options.signal,yieldControl})
+  if(px>=box.x*size.width-reach&&px<=box.right*size.width+reach&&py>=box.y*size.height-reach&&py<=box.bottom*size.height+reach){
+   if(stroke.points.length===1&&Math.hypot(px-stroke.points[0]!.x*size.width,py-stroke.points[0]!.y*size.height)<=reach)return index
+   for(let i=1;i<stroke.points.length;i++){const a=stroke.points[i-1]!,b=stroke.points[i]!,ax=a.x*size.width,ay=a.y*size.height,bx=b.x*size.width,by=b.y*size.height,dx=bx-ax,dy=by-ay,length=dx*dx+dy*dy,t=length===0?0:Math.min(1,Math.max(0,((px-ax)*dx+(py-ay)*dy)/length));if(Math.hypot(px-(ax+dx*t),py-(ay+dy*t))<=reach)return index;if(++work%8192===0)await pause()}
+  }if(++work%8192===0)await pause()
+ }return -1
 }
 
 const inside = (point: Point, region: Rect): boolean =>
@@ -174,6 +179,22 @@ export function paintStrokes(context: CanvasRenderingContext2D, strokes: InkStro
   }
 }
 
+/** Dense recovery/exports yield between bounded pieces; pen contact still paints synchronously. */
+export async function paintStrokesYielding(context:CanvasRenderingContext2D,strokes:InkStroke[],toPixel:(point:Point)=>Point,scale:number,colour?:string,from=0,tint?:(hex:string)=>string,options:{cancelled?:()=>boolean;yieldControl?:()=>Promise<any>}={}){
+  const yieldControl=options.yieldControl||(()=>new Promise<void>(resolve=>setTimeout(resolve,0)))
+  let work=0
+  for(const stroke of strokes){
+    if(options.cancelled?.())return false
+    if(stroke.points.length<=8192&&from===0){paintStrokes(context,[stroke],toPixel,scale,colour,0,tint);work+=stroke.points.length+1;if(work>=8192){work=0;await yieldControl()}continue}
+    for(let start=Math.max(0,from-1);start<stroke.points.length-1;start+=8191){
+      if(options.cancelled?.())return false
+      const end=Math.min(stroke.points.length,start+8192),part={...stroke,points:stroke.points.slice(start,end),...(stroke.pressures?{pressures:stroke.pressures.slice(start,end)}:{})}
+      paintStrokes(context,[part],toPixel,scale,colour,0,tint);work+=end-start;if(work>=8192){work=0;await yieldControl()}
+    }
+  }
+  return !options.cancelled?.()
+}
+
 /**
  * Strokes (fractions of the sheet) as note items, landed on the pane.
  *
@@ -222,6 +243,7 @@ export function landStrokes(strokes: InkStroke[], options: {
  * replaying the same operations in the same order.
  */
 export interface SheetState { strokes: InkStroke[]; past: InkStroke[][]; future: InkStroke[][]; extent?: Rect }
+export interface GeometryChangeOptions { signal?: AbortSignal; valid?: () => boolean; yieldControl?: () => Promise<void> }
 
 export type SheetOp =
   | { op: "mark" }
@@ -251,13 +273,22 @@ export class TabletPage {
   backdrop: string | null = null
   /** The file the NOTE shows for this picture now (after a Save to Original replaced it); null: the backdrop itself. In memory only. */
   target: string | null = null
-  private past: InkStroke[][] = []
-  private future: InkStroke[][] = []
+  private history = new DrawingHistory()
+  private geometryLeases = 0
+  private disposeRequested = false
   private opListeners = new Set<(op: SheetOp) => void>()
-  private changeListeners = new Set<() => void>()
+  private changeListeners = new Set<(op: SheetOp | null) => void>()
   private applying = false
 
-  constructor(aspect = 16 / 9) { this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9 }
+  constructor(aspect = 16 / 9) {
+    this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
+    Object.defineProperty(this, 'history', { enumerable: false })
+    Object.defineProperty(this, 'strokes', {
+      enumerable: true,
+      get: () => this.history.current,
+      set: (strokes: InkStroke[]) => this.history.setCurrent(strokes),
+    })
+  }
 
   restoreExtent(extent?: Rect): void {
     this.extent = includeInk(validExtent(extent) ? { ...extent } : { ...UNIT_SHEET }, this.strokes)
@@ -269,8 +300,8 @@ export class TabletPage {
     return this.viewport
   }
 
-  get canUndo(): boolean { return this.past.length > 0 }
-  get canRedo(): boolean { return this.future.length > 0 }
+  get canUndo(): boolean { return this.history.canUndo }
+  get canRedo(): boolean { return this.history.canRedo }
 
   /** Hear every change as an operation (not the ones this page is told to apply). */
   onOp(listener: (op: SheetOp) => void): () => void {
@@ -278,13 +309,13 @@ export class TabletPage {
     return () => { this.opListeners.delete(listener) }
   }
   /** Hear that anything changed: strokes, history or shape. */
-  onChange(listener: () => void): () => void {
+  onChange(listener: (op: SheetOp | null) => void): () => void {
     this.changeListeners.add(listener)
     return () => { this.changeListeners.delete(listener) }
   }
   private emit(op: SheetOp | null): void {
     if (op && !this.applying) this.opListeners.forEach((listener) => listener(op))
-    this.changeListeners.forEach((listener) => listener())
+    this.changeListeners.forEach((listener) => listener(op))
   }
 
   setAspect(aspect: number): void {
@@ -302,9 +333,7 @@ export class TabletPage {
 
   /** A change is about to be made: this is what Undo returns to. */
   mark(): void {
-    this.past.push(this.strokes)
-    if (this.past.length > 100) this.past.shift()
-    this.future = []
+    this.history.mark()
     this.emit({ op: "mark" })
   }
 
@@ -318,8 +347,9 @@ export class TabletPage {
     this.silently(() => this.mark())
     this.extent = includeInk(this.extent, [stroke])
     const previous = this.strokes
-    this.strokes = [...previous, stroke]
-    recordStrokeAppend(previous, this.strokes, stroke)
+    const next = [...previous, stroke]
+    recordStrokeAppend(previous, next, stroke)
+    this.strokes = next
     this.emit({ op: "add", stroke })
   }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */
@@ -329,30 +359,67 @@ export class TabletPage {
     this.strokes = next
     this.emit({ op: "replace", strokes: next })
   }
+  /** Prepare a large replacement in yielding tasks, then announce one atomic edit. */
+  async replaceAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
+    return this.history.change(next, () => this.replace(next), options)
+  }
+  /** Hydration is not an edit and must not create an Undo frame. */
+  async loadGeometryAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
+    return this.history.change(next, () => { this.strokes = next; this.emit(null) }, options)
+  }
   clear(): void { if (this.strokes.length > 0) this.replace([]) }
   /** Remove one stroke WITHOUT marking: an erase gesture marks once, at its first hit. */
   removeAt(index: number): void {
-    this.strokes = this.strokes.filter((_, i) => i !== index)
+    if (!Number.isInteger(index) || index < 0 || index >= this.strokes.length) return
+    const next = this.strokes.filter((_, i) => i !== index)
+    this.history.prepareRemoval(next, index)
+    this.strokes = next
     this.emit({ op: "removeAt", index })
+  }
+  /** A dense erase keeps the gesture's existing mark and rejects a changed source. */
+  async removeAtAsync(index: number, options: GeometryChangeOptions = {}): Promise<boolean> {
+    const original = this.strokes
+    const current = () => !options.signal?.aborted && this.strokes === original && (options.valid?.() ?? true)
+    if (!Number.isInteger(index) || index < 0 || index >= original.length || !current()) return false
+    const next: InkStroke[] = new Array(original.length - 1)
+    let at = 0
+    for (let i = 0; i < original.length; i++) {
+      if (i !== index) next[at++] = original[i]!
+      if ((i + 1) % 4096 === 0) {
+        await (options.yieldControl || yieldTask)()
+        if (!current()) return false
+      }
+    }
+    this.history.prepareRemoval(next, index)
+    return this.history.change(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})
   }
 
   undo(): boolean {
-    const back = this.past.pop()
+    const back = this.history.step()
     if (!back) return false
-    this.future.push(this.strokes)
-    this.strokes = back
     this.emit({ op: "undo" })
     return true
   }
 
   redo(): boolean {
-    const forward = this.future.pop()
+    const forward = this.history.step(true)
     if (!forward) return false
-    this.past.push(this.strokes)
-    this.strokes = forward
     this.emit({ op: "redo" })
     return true
   }
+  async undoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    const next = this.history.peek()
+    return next ? this.history.change(next, () => this.undo(), options) : false
+  }
+  async redoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    const next = this.history.peek(true)
+    return next ? this.history.change(next, () => this.redo(), options) : false
+  }
+  /** Immutable history target, captured before an asynchronous action yields. */
+  peekUndo(redo = false): InkStroke[] | null { return this.history.peek(redo) }
+  get retainedGeometryPoints(): number { return this.history.retainedGeometryPoints }
+  get currentGeometryPoints(): number { return this.history.currentGeometryPoints }
+  get retainedGeometryBytes(): number { return this.history.retainedGeometryBytes }
 
   /** Do what another view of the sheet did. Not announced again. */
   apply(op: SheetOp): void {
@@ -369,13 +436,67 @@ export class TabletPage {
   }
 
   /** The whole state INCLUDING history, to bring another view into step (it is cloned in one piece, so shared strokes stay shared). */
-  exportState(): SheetState { return { strokes: this.strokes, past: this.past, future: this.future, extent: this.extent } }
+  exportState(): SheetState { return { ...this.history.export(), extent: this.extent } }
   importState(state: SheetState): void {
-    this.strokes = state.strokes
-    this.past = state.past
-    this.future = state.future
+    this.history.import(state)
     this.restoreExtent(state.extent)
     this.emit(null)
+  }
+
+  /** Release undo-only memory while retaining this page's current ink. */
+  clearHistory(): void { this.history.clear(); this.emit(null) }
+
+  get geometryRetained(): boolean { return this.geometryLeases > 0 }
+  retainGeometry(): () => void {
+    this.geometryLeases++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.geometryLeases--
+      if (!this.geometryLeases && this.disposeRequested) void this.disposeAsync()
+    }
+  }
+
+  /** Drop a clean inactive model after its catalog has been marked unloaded. */
+  unloadGeometry(): boolean {
+    if (this.geometryRetained) return false
+    this.history.dispose()
+    this.backdrop = null
+    this.target = null
+    this.emit(null)
+    return true
+  }
+  async unloadGeometryAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+    if (this.geometryRetained || options.signal?.aborted || options.valid?.() === false) return false
+    const released = this.history.disposeAsync()
+    this.backdrop = null
+    this.target = null
+    this.emit(null)
+    await released
+    return true
+  }
+
+  /** An unloaded page must never retain geometry through its undo history. */
+  dispose(): void {
+    if (this.geometryRetained) { this.disposeRequested = true; return }
+    this.disposeRequested = false
+    this.history.dispose()
+    this.opListeners.clear()
+    this.changeListeners.clear()
+    this.backdrop = null
+    this.target = null
+  }
+  async disposeAsync(): Promise<boolean> {
+    if (this.geometryRetained) { this.disposeRequested = true; return false }
+    this.disposeRequested = false
+    const released = this.history.disposeAsync()
+    this.opListeners.clear()
+    this.changeListeners.clear()
+    this.backdrop = null
+    this.target = null
+    await released
+    return true
   }
 }
 

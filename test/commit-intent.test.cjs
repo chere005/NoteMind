@@ -21,7 +21,7 @@ test('reopening after a committed save and failed clean recovery adopts only the
  const {root,file:unresolved,store}=await fixture(t),file=path.join(await fs.realpath(root),'note.nm'),initial={id:'receipt-note',path:file,text:'Before',assets:{},meta:{}},original=format.encode(initial);await fs.writeFile(file,original);
  const doc=await store.draft({...initial,revision:digest(original),dirty:true}),draft=store.draft.bind(store);let failClean=true;
  store.draft=async value=>{if(value.dirty===false&&failClean){failClean=false;throw Object.assign(Error('clean recovery unavailable'),{code:'EIO'});}return draft(value);};
- const context={fs,path,Buffer,digest,physicalPath:value=>value,keyPath:value=>value,notesStore:store,notesIPC:{send(){}},notepadFormat:format,dialog:{},win:null,titleOf:()=> 'Receipt note',Promise,Map,require:relative};
+ const context={fs,path,Buffer,Uint8Array,digest,physicalPath:value=>value,keyPath:value=>value,notesStore:store,notesIPC:{send(){}},notepadFormat:format,dialog:{},win:null,titleOf:()=> 'Receipt note',Promise,Map,require:relative};
  vm.runInNewContext(mainSource.slice(mainSource.indexOf('const documentWrites='),mainSource.indexOf("ipcMain.handle('save',")),context);
  const saved=await context.saveDocument({...doc,text:'Committed latest writing'},false,true);assert.equal(saved.recoverySaved,false);assert.match(saved.saveWarnings[0],/clean recovery unavailable/);
  const committed=await fs.readFile(file);assert.equal(format.decode(committed).text,'Committed latest writing');

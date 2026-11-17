@@ -14,21 +14,23 @@ import { rotateSheetPoint, type Turns } from "../shared/orientation"
 import type { InkStroke } from "./tabletPage"
 
 /** Where the picture is on screen: its rect in the unzoomed viewfinder, the zoom (fractions of the viewfinder), the viewfinder's size. */
-export interface InkView { shown: Rect; zoom: Rect | null; size: Size }
+export interface InkView { shown: Rect; zoom: Rect | null; size: Size; turns?: Turns; clip?: Rect }
 
 /** Reference units across the picture's longer side. */
 export const INK_REF = 1000
 
 /** A point of the picture (fractions of the upright picture), where it is in the viewfinder on screen. */
 export function inkToScreen(point: Point, view: InkView): Point {
+  if(view.turns)point=rotateSheetPoint(point,view.turns)
   const flat = { x: view.shown.x + point.x * view.shown.width, y: view.shown.y + point.y * view.shown.height }
   return view.zoom ? zoomedPoint(flat, view.zoom, view.size) : flat
 }
 
 /** The entire upright picture through the zoom (viewfinder points), including any part of it a zoom puts outside the viewfinder. */
 export function inkPictureRect(view: InkView): Rect {
-  const first = inkToScreen({ x: 0, y: 0 }, view)
-  const last = inkToScreen({ x: 1, y: 1 }, view)
+  const rect=view.clip||view.shown
+  const first=view.zoom?zoomedPoint({x:rect.x,y:rect.y},view.zoom,view.size):{x:rect.x,y:rect.y}
+  const last=view.zoom?zoomedPoint({x:rect.x+rect.width,y:rect.y+rect.height},view.zoom,view.size):{x:rect.x+rect.width,y:rect.y+rect.height}
   return { x: first.x, y: first.y, width: last.x - first.x, height: last.y - first.y }
 }
 
@@ -67,15 +69,18 @@ export function inkPenArea(view: InkView, aspect: number): Rect {
 
 /** A point on screen (viewfinder points), where it is on the picture, clamped to the picture's edge (a stroke stops there, as at the sheet's). */
 export function screenToInk(point: Point, view: InkView): Point {
-  const flat = view.zoom ? unzoomedPoint(point, view.zoom, view.size) : point
+  let flat = view.zoom ? unzoomedPoint(point, view.zoom, view.size) : point
+  if(view.clip)flat={x:Math.max(view.clip.x,Math.min(view.clip.x+view.clip.width,flat.x)),y:Math.max(view.clip.y,Math.min(view.clip.y+view.clip.height,flat.y))}
   const w = Math.max(1e-6, view.shown.width), h = Math.max(1e-6, view.shown.height)
-  return { x: clamp01((flat.x - view.shown.x) / w), y: clamp01((flat.y - view.shown.y) / h) }
+  const normalized={x:(flat.x-view.shown.x)/w,y:(flat.y-view.shown.y)/h}
+  const result=view.clip?normalized:{x:clamp01(normalized.x),y:clamp01(normalized.y)}
+  return view.turns?rotateSheetPoint(result,((4-view.turns)%4) as Turns):result
 }
 
 /** Whether a point on screen is on the picture at all (a pen that starts on the dark bars around it writes nothing). */
 export function onPicture(point: Point, view: InkView): boolean {
   const flat = view.zoom ? unzoomedPoint(point, view.zoom, view.size) : point
-  const { x, y, width, height } = view.shown
+  const { x, y, width, height } = view.clip||view.shown
   return width > 0 && height > 0 && flat.x >= x && flat.x <= x + width && flat.y >= y && flat.y <= y + height
 }
 
