@@ -384,6 +384,8 @@ export class TabletPage {
     const next = this.history.peek(true)
     return next ? this.history.change(next, () => this.redo(), options) : false
   }
+  /** Immutable history target, captured before an asynchronous action yields. */
+  peekUndo(redo = false): InkStroke[] | null { return this.history.peek(redo) }
 
   /** Do what another view of the sheet did. Not announced again. */
   apply(op: SheetOp): void {
