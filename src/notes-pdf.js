@@ -19,7 +19,8 @@
    for(const field of fields){if(field.type==='checkbox')field.checked=!!value[field.dataset.k];else field.value=value[field.dataset.k];}
    const read=()=>{const next={};for(const field of fields)next[field.dataset.k]=field.type==='checkbox'?field.checked:field.value;return next;};
    const request=next=>({pageSize:next.pageSize,landscape:next.orientation==='landscape',margin:next.margin,pageNumbers:next.pageNumbers,clean:next.clean,open:next.open});
-   const html=new Map(),pictures=new Map();let serial=0,leases=[];
+   const html=new Map(),pictures=new Map();let serial=0,leases=[],closed=false;const printTokens=new Set();
+   const rememberPrint=preview=>{const token=/<meta name="notemind-print-assets" content="([a-f0-9-]{36})">/i.exec(preview)?.[1];if(token){if(closed)void window.notemind.releasePrintAssets?.(token).catch(()=>{});else printTokens.add(token)}return preview};
    const releasePreview=()=>{for(const lease of leases)lease.release();leases=[];};
    async function draw(){
     const mine=++serial,next=read();releasePreview();note.textContent='Preparing preview…';try{localStorage.setItem('notemind.pdfExport',JSON.stringify(next));}catch{}
@@ -30,7 +31,7 @@
     const m=geometry.margins,printable=height-px(m.top)-px(m.bottom);
     iframe.style.cssText='left:'+px(m.left)+'px;top:'+px(m.top)+'px;width:'+(width-px(m.left)-px(m.right))+'px;height:'+printable+'px';
     const key=window.NoteMindDocumentSync?'layout':next.clean;
-    if(!html.has(key))html.set(key,(window.NoteMindDocumentSync?window.NoteMindDocumentSync.call('printHtml',snapshot,{preview:true}):window.notemind.printHtml(snapshot,{clean:next.clean})));
+    if(!html.has(key))html.set(key,(window.NoteMindDocumentSync?window.NoteMindDocumentSync.call('printHtml',snapshot,{preview:true}):window.notemind.printHtml(snapshot,{clean:next.clean})).then(rememberPrint));
     let preview;try{preview=await html.get(key);}catch(error){html.delete(key);throw error;}
     if(mine!==serial)return;
     note.textContent='First page. Page breaks are set when you export.';
@@ -44,7 +45,7 @@
    let result=null;
    d.querySelector('[data-cancel]').onclick=()=>d.close();
    d.querySelector('[data-go]').onclick=()=>{result=request(read());d.close();};
-   d.onclose=()=>{serial++;releasePreview();html.clear();pictures.clear();iframe.onload=null;iframe.srcdoc='';resolve(result);d.remove();};
+   d.onclose=()=>{closed=true;serial++;releasePreview();for(const token of printTokens)void window.notemind.releasePrintAssets?.(token).catch(()=>{});printTokens.clear();html.clear();pictures.clear();iframe.onload=null;iframe.srcdoc='';resolve(result);d.remove();};
    document.body.append(d);d.showModal();draw().catch(showError);
   });
  }
