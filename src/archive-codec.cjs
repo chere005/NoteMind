@@ -1,5 +1,5 @@
 const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=require('node:path');
-const {createSpoolDirectory}=require('./archive-raw-spool.cjs');
+const {createSpoolDirectory,cleanupDeadSpoolDirectories}=require('./archive-raw-owner.cjs');
 const {TextEncoder}=require('node:util'),{randomUUID}=require('node:crypto');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
 const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawAcquireWorking','rawReleaseWorking','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
@@ -146,7 +146,7 @@ class ArchiveCodec{
  stringifyJson(value){return this.run('stringifyJson',value);}
  ensureWorker(){
   if(this.worker)return this.worker;
-  const spool=createSpoolDirectory();let worker;try{worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));}catch(error){void spool.cleanup().catch(()=>{});throw error;}this.spoolOwners.set(worker,spool);this.worker=worker;this.epoch++;
+  if(!this.spoolJanitorStarted){this.spoolJanitorStarted=true;setImmediate(()=>{void cleanupDeadSpoolDirectories().catch(()=>{});});}const spool=createSpoolDirectory();let worker;try{worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));}catch(error){void spool.cleanup().catch(()=>{});throw error;}this.spoolOwners.set(worker,spool);this.worker=worker;this.epoch++;
   worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
    try{
     // Keep the active slot until cancellation has released newly issued output.
@@ -183,7 +183,7 @@ class ArchiveCodec{
  postJob(worker,job){
   const args=[...job.args];if(job.rawContext&&!rawOps.has(job.op))this.checkRawContext(job.rawContext);if(documentOps.has(job.op)){job.assetPacket ||= this.assets.packet(args[0],this.epoch);args[0]=job.assetPacket.wire.document;}
   const wire=job.assetPacket?.wire,assetPacket=wire?{refs:wire.refs,rawRefs:wire.rawRefs,added:wire.added}:undefined,knownAssets=[...this.assets.entries].filter(([,entry])=>entry.epoch===this.epoch).map(([token])=>token);
-  worker.postMessage({id:job.id,op:job.op,args,codecEpoch:this.epoch,rawContext:job.rawContext?{owner:job.rawContext.owner,lease:job.rawContext.lease,epoch:job.rawContext.epoch,tokens:[...job.rawContext.tokens]}:undefined,rawLimits:{maxBytes:this.maxRawBytes,maxCacheBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries,spoolDirectory:this.spoolOwners.get(worker)?.directory},assetPacket,knownAssets,assetLimits:{maxBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries}},job.transfers||[]);
+  worker.postMessage({id:job.id,op:job.op,args,codecEpoch:this.epoch,rawContext:job.rawContext?{owner:job.rawContext.owner,lease:job.rawContext.lease,epoch:job.rawContext.epoch,tokens:[...job.rawContext.tokens]}:undefined,rawLimits:{maxBytes:this.maxRawBytes,maxCacheBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries,spoolDirectory:this.spoolOwners.get(worker)?.directory,spoolAuthority:this.spoolOwners.get(worker)?.authority},assetPacket,knownAssets,assetLimits:{maxBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries}},job.transfers||[]);
   if(job.assetPacket)job.args[0]=null;job.transfers=null;
  }
  assetStats(){return {...this.assets.stats(),uploads:this.assets.uploads,worker:this.workerAssetStats,epoch:this.epoch,rollovers:this.rollovers,raw:this.workerRawStats,validation:this.workerValidationStats,discardedReadBytes:this.discardedReadBytes||0};}
