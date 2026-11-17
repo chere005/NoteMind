@@ -2,6 +2,9 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {DrawingHistoryBudget,DrawingHistory}=require('../src/drawing-history.js'),{recordStrokeAppend}=require('../src/stroke-signature.js');
 const stroke=(n=20,value=0)=>({colorHex:'#112233',width:2,points:Array.from({length:n},(_,i)=>({x:value+i*.001,y:.3})),pressures:Array(n).fill(.7)});
 function append(history,item){history.mark();const previous=history.current,next=[...previous,item];recordStrokeAppend(previous,next,item);history.setCurrent(next);return next;}
+test('current geometry point counts follow edits and history without scanning retained scenes',()=>{
+ const history=new DrawingHistory([]);assert.equal(history.currentGeometryPoints,0);const first=stroke(3),second=stroke(5);append(history,first);append(history,second);assert.equal(history.currentGeometryPoints,8);history.step();assert.equal(history.currentGeometryPoints,3);history.step(true);assert.equal(history.currentGeometryPoints,8);const points=first.points;Object.defineProperty(first,'points',{get(){throw Error('A count getter must not scan geometry.')}});assert.equal(history.currentGeometryPoints,8);Object.defineProperty(first,'points',{value:points});history.dispose();assert.equal(history.currentGeometryPoints,0);
+});
 test('complete undo and redo survive the full100-frame limit without extra eviction',()=>{
  const budget=new DrawingHistoryBudget({maxBytes:1024*1024*1024}),history=new DrawingHistory([],{budget}),states=[history.current];for(let i=0;i<120;i++)states.push(append(history,stroke(1,i)));
  for(let i=119;i>=20;i--)assert.equal(history.step(),states[i]);assert.equal(history.step(),null);

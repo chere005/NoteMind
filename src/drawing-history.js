@@ -303,6 +303,9 @@ class DrawingHistory {
   get current() {
     return this.array;
   }
+  get currentGeometryPoints() {
+    return this.record && !this.record.released ? this.record.current?.tree?.pointCount || 0 : 0;
+  }
   get canUndo() {
     return !!this.record?.past.length;
   }
