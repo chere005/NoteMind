@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{ArchiveCodec}=require('../src/archive-codec.cjs'),format=require('../src/notepad-format.cjs');
-function fixture(options={}){const workers=[];class FakeWorker extends EventEmitter{constructor(){super();workers.push(this);this.messages=[]}postMessage(value){this.messages.push(value)}ref(){}unref(){}terminate(){this.stopped=true;return Promise.resolve(0)}}return {workers,codec:new ArchiveCodec({workerFactory:()=>new FakeWorker(),idleMs:100000,...options})};}
+function fixture(options={}){const workers=[];class FakeWorker extends EventEmitter{constructor(){super();workers.push(this);this.messages=[];this.threadId=1}postMessage(value){this.messages.push(value)}ref(){}unref(){}terminate(){this.stopped=true;queueMicrotask(()=>{this.threadId=-1;this.emit('exit',0)});return Promise.resolve(0)}}return {workers,codec:new ArchiveCodec({workerFactory:()=>new FakeWorker(),idleMs:100000,...options})};}
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),answer=(worker,value)=>worker.emit('message',{id:worker.messages.at(-1).id,value});
 test('idle worker telemetry and empty completion cannot enter a missing archive job',async t=>{
  const h=fixture();t.after(()=>h.codec.dispose());const first=h.codec.encode({text:'first'}),worker=h.workers[0];answer(worker,Uint8Array.from([1]));await first;
@@ -22,7 +22,7 @@ test('archive work is serialized, bounded and freezes queued document state',asy
  answer(h.workers[0],Uint8Array.from([2]));assert.deepEqual(await second,Buffer.from([2]));assert.equal(h.codec.bytes,0);await h.codec.dispose();
 });
 test('a failed worker rejects only its active job, ignores late replies and recovers queued work',async()=>{
- const h=fixture(),a=h.codec.encode({text:'a'}),rejected=assert.rejects(a,/crashed/),b=h.codec.encode({text:'b'}),old=h.workers[0];old.emit('error',Error('crashed'));await rejected;await tick();assert.equal(h.workers.length,2);answer(old,Uint8Array.from([9]));answer(h.workers[1],Uint8Array.from([2]));assert.deepEqual(await b,Buffer.from([2]));await h.codec.dispose();
+ const h=fixture(),a=h.codec.encode({text:'a'}),rejected=assert.rejects(a,/crashed/),b=h.codec.encode({text:'b'}),old=h.workers[0];old.emit('error',Error('crashed'));await rejected;for(let turn=0;h.workers.length<2&&turn<100;turn++)await new Promise(resolve=>setTimeout(resolve,5));assert.equal(h.workers.length,2);answer(old,Uint8Array.from([9]));answer(h.workers[1],Uint8Array.from([2]));assert.deepEqual(await b,Buffer.from([2]));await h.codec.dispose();
 });
 test('disposing archive work releases pending memory and rejects outstanding work',async()=>{
  const h=fixture(),a=h.codec.encode({text:'a'}).catch(e=>e.message),b=h.codec.encode({text:'b'}).catch(e=>e.message);await h.codec.dispose();assert.match(await a,/closing/);assert.match(await b,/closing/);assert.equal(h.codec.bytes,0);assert.equal(h.workers[0].stopped,true);await assert.rejects(h.codec.encode({text:'c'}),/closing/);

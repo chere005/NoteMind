@@ -9,7 +9,7 @@ function real(options={}){
  }});return {codec,sent,received};
 }
 function fake(options={}){
- const workers=[];class FakeWorker extends EventEmitter{constructor(){super();this.messages=[];workers.push(this);}postMessage(packet){this.messages.push(packet);}ref(){}unref(){}terminate(){return Promise.resolve(0);}}
+ const workers=[];class FakeWorker extends EventEmitter{constructor(){super();this.messages=[];workers.push(this);}postMessage(packet){this.messages.push(packet);}ref(){}unref(){}terminate(){queueMicrotask(()=>{this.threadId=-1;this.emit('exit',0)});return Promise.resolve(0);}}
  const codec=new ArchiveCodec({workerFactory:()=>new FakeWorker(),idleMs:100000,...options});return {codec,workers};
 }
 function answer(worker,value=Uint8Array.from([1])){const packet=worker.messages.at(-1),accepted={};for(const token of Object.values(packet.assetPacket?.refs||{}))accepted[token]=token.startsWith('upload:')?randomUUID():token;worker.emit('message',{id:packet.id,value,assetResult:{accepted}});}
@@ -49,7 +49,7 @@ test('queued asset maps and metadata retain their initiating values',async()=>{
 
 test('worker reset reuploads immutable values in a fresh epoch without rebinding old references',async()=>{
  const h=fake(),original=doc(),first=h.codec.encode(original);answer(h.workers[0]);await first;const old=h.workers[0],second=h.codec.encode(original),failed=assert.rejects(second,/crashed/),third=h.codec.encode(original);assert.equal(Object.keys(old.messages.at(-1).assetPacket.added).length,0);
- old.emit('error',Error('crashed'));await failed;await tick();assert.equal(h.workers.length,2);const packet=h.workers[1].messages[0];assert.equal(Object.keys(packet.assetPacket.added).length,1);assert.ok(Object.values(packet.assetPacket.refs)[0].startsWith('upload:'));answer(h.workers[1]);await third;assert.equal(h.codec.assetStats().epoch,2);await h.codec.dispose();
+ old.emit('error',Error('crashed'));await failed;await h.codec.stopping;assert.equal(h.workers.length,2);const packet=h.workers[1].messages[0];assert.equal(Object.keys(packet.assetPacket.added).length,1);assert.ok(Object.values(packet.assetPacket.refs)[0].startsWith('upload:'));answer(h.workers[1]);await third;assert.equal(h.codec.assetStats().epoch,2);await h.codec.dispose();
 });
 
 test('evicted worker references retry once with a fresh upload before the operation starts',async()=>{
@@ -83,9 +83,9 @@ test('new epoch acknowledgements replace stale canonical aliases without double-
 });
 
 test('failed worker termination never overlaps a replacement and releases queued ownership',async()=>{
- const workers=[];class StopWorker extends EventEmitter{constructor(){super();this.messages=[];this.threadId=7;workers.push(this);}postMessage(packet){this.messages.push(packet);}ref(){}unref(){}terminate(){return workers.indexOf(this)===0?Promise.reject(Error('Still alive')):Promise.resolve(0);}}
+ const workers=[];class StopWorker extends EventEmitter{constructor(){super();this.messages=[];this.threadId=7;workers.push(this);}postMessage(packet){this.messages.push(packet);}ref(){}unref(){}terminate(){if(workers.indexOf(this)===0)return Promise.reject(Error('Still alive'));queueMicrotask(()=>{this.threadId=-1;this.emit('exit',0)});return Promise.resolve(0);}}
  const codec=new ArchiveCodec({workerFactory:()=>new StopWorker(),maxWorkerBytes:1}),first=codec.encode(doc()),second=codec.encode(doc()),rejected=assert.rejects(second,/could not stop/),old=workers[0],packet=old.messages[0],accepted={};for(const token of Object.values(packet.assetPacket.refs))accepted[token]=randomUUID();old.emit('message',{id:packet.id,value:Uint8Array.from([1]),assetResult:{accepted},workerBytes:2});await first;await rejected;await tick();assert.equal(workers.length,1);assert.equal(codec.bytes,0);await assert.rejects(codec.encode(doc()),/could not stop/);
- old.threadId=-1;old.emit('exit',0);await tick();const recovered=codec.encode(doc());assert.equal(workers.length,2);answer(workers[1]);await recovered;await codec.dispose();assert.equal(codec.assetStats().entries,0);
+ old.threadId=-1;old.emit('exit',0);await codec.stopping;const recovered=codec.encode(doc());assert.equal(workers.length,2);answer(workers[1]);await recovered;await codec.dispose();assert.equal(codec.assetStats().entries,0);
 });
 
 test('digest reuse preserves normalized legacy base64 semantics',async t=>{

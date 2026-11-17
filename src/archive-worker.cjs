@@ -17,10 +17,10 @@ function packOutput(doc,known,context){
  return assets.pack(doc,known);
 }
 parentPort.on('message',async packet=>{
- let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup}=packet;packet=null;
+ let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup}=packet;packet=null;let rawPacket;
  try{
   assets ||= new ArchiveAssetWorker(assetLimits);raw ||= new RawAssetStore({epoch:codecEpoch,...rawLimits,legacy:assets});assets.raw=raw;
-  if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');
+  if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');rawPacket=raw.beginPacket();
   const transfers=[],known=new Set(knownAssets);let value,output,received={accepted:{},refs:{}};
   if(op==='rawBegin')value=raw.begin(args[0]);
   else if(op==='rawAppend')value=raw.append(args[0]);
@@ -42,10 +42,11 @@ parentPort.on('message',async packet=>{
    received=assets.receive(assetPacket?{document:args[0],...assetPacket}:null,rawContext);
    if(received.missing){parentPort.postMessage({id,missingAssets:received.missing});return;}
    if(assetPacket)args[0]=received.doc;raw.claim(0);
-   const hooks={assetBytes:(_name,value)=>isRawAsset(value)?raw.resolve(value,rawContext):undefined,assetInfo:name=>isRawAsset(received.refs[name])?raw.info(received.refs[name],rawContext):undefined,validateAsset:name=>isRawAsset(received.refs[name])?raw.validate(name,received.refs[name],rawContext):false,asset:(name,bytes,info)=>assets.observe(received.refs[name],bytes,info)};
+   const hooks={assetBytes:(_name,value)=>isRawAsset(value)?raw.resolve(value,rawContext):undefined,assetInfo:name=>isRawAsset(received.refs[name])?raw.info(received.refs[name],rawContext):undefined,assetSource:(_name,value)=>isRawAsset(value)?raw.source(value,rawContext):undefined,validateAsset:name=>isRawAsset(received.refs[name])?raw.validate(name,received.refs[name],rawContext):false,asset:(name,bytes,info)=>assets.observe(received.refs[name],bytes,info)};
    value=await snapshots.withAssetContext(hooks,async()=>{
     if(op==='encodeDrawingOwned'){const bytes=format.encodeDrawingOwned(args[0]),encoded=owned(bytes);transfers.push(encoded.buffer);return {bytes:encoded,revision:digest(bytes)};}
     if(op==='duplicateArchiveOwned'){const bytes=owned(format.duplicateArchiveOwned(view(args[0]),args[1]));transfers.push(bytes.buffer);return bytes;}
+    if(op==='encodeFile'){const flag=args[1]?.cancel instanceof SharedArrayBuffer&&args[1].cancel.byteLength===4?new Int32Array(args[1].cancel):null;if(!flag)throw Error('Archive file output cancellation ownership is missing.');const check=()=>{if(Atomics.load(flag,0))throw Object.assign(Error('Archive file output cancelled.'),{name:'AbortError'});if(rawContext)raw.context(rawContext);};check();return require('./notepad-file.cjs').writeNotepadFile(args[0],args[2],args[1],{hooks:{...hooks,assetSource:(name,value)=>isRawAsset(value)?raw.source(value,rawContext,{check}):undefined},check});}
     if(op==='encode'||op==='encodeWithDigest'){const bytes=format.encode(...args,hooks),encoded=owned(bytes);transfers.push(encoded.buffer);return op==='encode'?encoded:{bytes:encoded,revision:digest(bytes)};}
     if(op==='pdfInk'){const result=await require('./pdf-ink-archive.cjs').run(args[0],args[1],{assetBytes:hooks.assetBytes,makeAsset:(bytes,info)=>rawContext?raw.decoded(bytes,info,rawContext):bytes.toString('base64')});if(result?.assets){const packed=packOutput(result,known,rawContext);output=packed.wire;return packed.document;}return result;}
     if(op==='wordImageNames'){const doc=args[0];if(!doc||typeof doc.text!=='string'||Buffer.byteLength(doc.text)>16*1024*1024||Object.keys(doc.assets||{}).length>9998)throw Error('Invalid Word export metadata.');return require('./word-markdown.cjs').imageNames(doc);}
@@ -58,7 +59,7 @@ parentPort.on('message',async packet=>{
     if(op==='inspectFile'){
      const options=args[1],flag=options?.cancel instanceof SharedArrayBuffer&&options.cancel.byteLength===4?new Int32Array(options.cancel):null;if(!flag)throw Error('Archive file inspection cancellation ownership is missing.');const check=()=>{if(Atomics.load(flag,0))throw Object.assign(Error('Archive open cancelled.'),{name:'AbortError'});if(rawContext)raw.context(rawContext);},lease=rawContext?raw.context(rawContext):null,before=new Set(lease?.tokens||[]);
      const issued=()=>[...(lease?.tokens||[])].filter(token=>!before.has(token)).map(token=>raw.entries.get(token)?.descriptor).filter(Boolean);
-     try{check();const result=await require('./archive-file-inspection.cjs').inspectArchiveFile(args[0],{files:options.files},{check,withEntry:(entry,run)=>raw.withWorking(entry.original,run),...(rawContext?{asset:(_name,result)=>{const descriptor=raw.decoded(result.bytes,result,rawContext);if(raw.resolve(descriptor,rawContext).buffer!==result.bytes.buffer)raw.discardBacking(result.bytes);return descriptor;}}:{})});check();const packed=packOutput(result.doc,known,rawContext);output=packed.wire;for(const bytes of Object.values(packed.document.files||{}))transfers.push(bytes.buffer);return{...result,doc:packed.document,issuedRawTokens:issued().map(value=>value.rawAssetToken)};}catch(error){const descriptors=issued();if(descriptors.length)raw.releaseScoped({descriptors},rawContext);throw error;}
+     try{check();const result=await require('./archive-file-inspection.cjs').inspectArchiveFile(args[0],{files:options.files},{check,withEntry:(entry,run)=>raw.withWorking(entry.original,run),...(rawContext?{asset:(_name,result)=>{const descriptor=raw.decoded(result.bytes,result,rawContext);raw.markValidated(_name,descriptor,rawContext,result.bytes);if(!raw.retainsBacking(descriptor,result.bytes,rawContext))raw.discardBacking(result.bytes);return descriptor;}}:{})});check();const packed=packOutput(result.doc,known,rawContext);output=packed.wire;for(const bytes of Object.values(packed.document.files||{}))transfers.push(bytes.buffer);return{...result,doc:packed.document,issuedRawTokens:issued().map(value=>value.rawAssetToken)};}catch(error){const descriptors=issued();if(descriptors.length)raw.releaseScoped({descriptors},rawContext);throw error;}
     }
     if(op==='inspectDrawingOwned'){
      const original=view(args[0]),parsed=format.decode(original,{asset:()=>''}),files=parsed.files,info=files['drawing.json']?JSON.parse(files['drawing.json'].toString('utf8')):{},name=info.sheet||(files['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');
@@ -82,7 +83,7 @@ parentPort.on('message',async packet=>{
     throw Error('Unknown archive operation.');
    });
   }
-  releaseArchiveInput(op,args);assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
- }catch(error){releaseArchiveInput(op,args);assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
- finally{releaseArchiveInput(op,args);assets?.trim();raw?.trim();args=null;assetPacket=null;}
+  releaseArchiveInput(op,args);raw.endPacket(rawPacket);rawPacket=null;assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
+ }catch(error){releaseArchiveInput(op,args);try{raw?.endPacket(rawPacket)}catch(cleanup){error.rawCleanupError=cleanup.message;}rawPacket=null;assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
+ finally{releaseArchiveInput(op,args);raw?.endPacket(rawPacket);assets?.trim();raw?.trim();args=null;assetPacket=null;}
 });

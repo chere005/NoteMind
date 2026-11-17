@@ -49,7 +49,7 @@ class ArchiveAssetWorker extends AssetCache{
   if(!packet.document||Object.hasOwn(packet.document,'assets')||!packet.refs||!packet.added)throw Error('Invalid archive asset packet.');
   const rawRefs=Object.entries(packet.rawRefs||{}),refs=Object.entries(packet.refs),added=Object.entries(packet.added),missing=[],assets=Object.create(null),accepted={},canonicalRefs={};
   if(refs.length+rawRefs.length>9998||added.length>9998)throw Error('Too many archive assets.');
-  for(const [name,descriptor]of rawRefs){if(Object.hasOwn(packet.refs,name)||!this.raw)throw Error('Invalid raw archive asset packet.');this.raw.resolve(descriptor,rawContext);assets[name]=descriptor;canonicalRefs[name]=descriptor;}
+  for(const [name,descriptor]of rawRefs){if(Object.hasOwn(packet.refs,name)||!this.raw)throw Error('Invalid raw archive asset packet.');this.raw.info(descriptor,rawContext);assets[name]=descriptor;canonicalRefs[name]=descriptor;}
   const used=new Set(refs.map(([,token])=>token));for(const [token,data]of added)if(!upload(token)||!used.has(token)||typeof data!=='string')throw Error('Canonical archive references cannot be uploaded or rebound.');
   for(const [,token]of refs){if(!(canonical(token)||upload(token)))throw Error('Invalid archive asset reference.');if(!Object.hasOwn(packet.added,token)&&!this.entries.has(token)&&!missing.includes(token))missing.push(token);}
   if(missing.length)return {missing};
