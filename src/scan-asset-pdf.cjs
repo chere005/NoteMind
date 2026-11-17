@@ -3,9 +3,14 @@ const limits=require('./scan-limits.js');
 const WORKING_BYTES=256*1024*1024,MAX_THUMB=512*1024;
 const abortError=()=>Object.assign(Error('Scan preparation cancelled.'),{name:'AbortError'}),check=signal=>{if(signal?.aborted)throw abortError();};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+async function acquireWorking(codec,signal){
+ let revision=0,wake=null;const changed=()=>{revision++;wake?.();wake=null},off=codec.subscribeRawCapacity?.(changed),abort=()=>changed();signal?.addEventListener('abort',abort,{once:true});
+ try{for(;;){check(signal);const observed=revision;try{return await codec.acquireScopedRawWorking(WORKING_BYTES)}catch(error){if(error?.code!=='ARCHIVE_RAW_BUSY'||!off)throw error;}check(signal);codec.hasRawAssetScope?.();if(observed!==revision)continue;await new Promise(resolve=>{wake=resolve;if(observed!==revision||signal?.aborted){wake=null;resolve();}});}}
+ finally{off?.();signal?.removeEventListener('abort',abort);}
+}
 function scanPages(doc){
  const pages=doc?.meta?.scanPages;limits.assertPageCount(pages?.length,{allowEmpty:false});if(!Array.isArray(pages)||!doc.assets||typeof doc.assets!=='object')throw Error('Invalid scan pages.');let chars=0,textBytes=0;
- const output=pages.map(page=>{if(!page||typeof page.asset!=='string'||!Object.hasOwn(doc.assets,page.asset)||!/\.(?:png|jpe?g)$/i.test(page.asset)||page.text!==undefined&&typeof page.text!=='string')throw Error('Invalid scan page asset.');const data=doc.assets[page.asset],bytes=typeof data==='string'?data.length/4*3-(data.endsWith('==')?2:data.endsWith('=')?1:0):data?.bytes,mime=/\.png$/i.test(page.asset)?'image/png':'image/jpeg';chars+=limits.imageDataURLChars(bytes,mime);if(chars>limits.MAX_DATA_URL_CHARS)throw Error('This scan is too large. Use fewer pages.');textBytes+=Buffer.byteLength(page.text||'');if(textBytes>limits.ENTRY_BYTES-4096)throw Error('The scan text is too large.');return{asset:page.asset,text:page.text||'',mime};});return output;
+ const output=pages.map(page=>{if(!page||typeof page.asset!=='string'||!Object.hasOwn(doc.assets,page.asset)||!/\.(?:png|jpe?g)$/i.test(page.asset)||page.text!==undefined&&typeof page.text!=='string')throw Error('Invalid scan page asset.');const data=doc.assets[page.asset],bytes=typeof data==='string'?data.length/4*3-(data.endsWith('==')?2:data.endsWith('=')?1:0):data?.bytes,mime=/\.png$/i.test(page.asset)?'image/png':'image/jpeg';chars+=limits.imageDataURLChars(bytes,mime);if(chars>limits.MAX_DATA_URL_CHARS)throw Error('This scan is too large. Use fewer pages.');textBytes+=Buffer.byteLength(page.text||'');if(textBytes>limits.ENTRY_BYTES)throw Error('The scan text is too large.');return{asset:page.asset,text:page.text||'',mime};});return output;
 }
 async function spoolAsset(codec,data,file,mime,signal){
  check(signal);
@@ -35,7 +40,7 @@ async function scanAssetPdf(doc,options={},services={}){
  try{
   const staged=new Map();
   for(let index=0;index<pages.length;index++){check(signal);const page=pages[index],data=doc.assets[page.asset],key=typeof data==='string'?'name:'+page.asset:'raw:'+data?.rawAssetToken,prior=staged.get(key);if(prior){if(prior.mime!==page.mime)throw Error('Scan image type does not match its asset.');page.file=prior.file;continue;}page.file=path.join(directory,index+(page.mime==='image/png'?'.png':'.jpg'));await spoolAsset(codec,data,page.file,page.mime,signal);staged.set(key,page);if(typeof data!=='string')await codec.unpinScopedRawAssets([data]);check(signal);}
-  release=await codec.acquireScopedRawWorking(WORKING_BYTES);link(release.signal);check(signal);
+  release=await acquireWorking(codec,signal);link(release.signal);check(signal);
   const thumbnail=await (services.inspectNative||inspectNative)(pages,directory,signal,services);check(signal);const output=path.join(directory,'Scan.pdf'),result=await (services.runWriter||runWriter)({pages:pages.map(({file,mime})=>({file,mime})),output},signal,services);check(signal);limits.assertPDFSize(result.bytes);const stat=await fs.stat(output);if(stat.size!==result.bytes)throw Error('The scan PDF changed before import.');
   const thumbFile=path.join(directory,'preview.png');if(!(thumbnail instanceof Uint8Array)||!thumbnail.byteLength||thumbnail.byteLength>MAX_THUMB)throw Error('Invalid scan thumbnail.');const thumbInfo=await limits.validateBytes(thumbnail,{signal});if(thumbInfo.mime!=='image/png'||thumbInfo.width>320||thumbInfo.height>320)throw Error('Invalid scan thumbnail.');await fs.writeFile(thumbFile,thumbnail,{flag:'wx',mode:0o600});
   await release();release=null;check(signal);const name='assets/scan-'+randomUUID()+'.pdf',thumb=name+'.preview.png',importFile=services.importFile||((file,name)=>codec.importRawAssetFile(file,{name,root:directory}));let pdf,preview;
@@ -48,4 +53,4 @@ async function legacyScanPdf(pages,options={},services={}){
  for(let i=0;i<pages.length;i++){const page=pages[i],info=limits.inspectImage(page.data),asset='assets/page-'+i+(info.mime==='image/png'?'.png':'.jpg');doc.assets[asset]=page.data.slice(page.data.indexOf(',')+1);doc.meta.scanPages.push({asset,text:page.text||''});}
  const lease=await codec.preflightRawAssets([],{owner});try{return await lease.run(()=>scanAssetPdf(doc,options,{...services,codec,importFile:async(file)=>{const bytes=await fs.readFile(file);limits.assertPDFSize(bytes.length);return bytes.toString('base64');}}));}finally{await lease.release();await codec.releaseRawAssets(owner);}
 }
-module.exports={scanAssetPdf,legacyScanPdf,scanPages,runWriter,inspectNative,WORKING_BYTES};
+module.exports={scanAssetPdf,legacyScanPdf,scanPages,runWriter,inspectNative,WORKING_BYTES,acquireWorking};

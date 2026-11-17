@@ -23,7 +23,7 @@ async function writeScanPDF(packet,{check=()=>{},onPage=()=>{}}={}){
   // Context owns encoded image/alpha streams only. Count immediately, before
   // accepting another image; PDF serialization has a separate exact final cap.
   let total=0;for(const [,object]of doc.context.enumerateIndirectObjects())if(object instanceof PDFRawStream){const filter=object.dict.get(PDFName.of('Filter'));if(filter)total+=object.getContentsSize();}
-  compressed=total;if(compressed>limits.ENTRY_BYTES-65536)throw Error('The generated scan PDF exceeds the 50 MiB attachment limit.');
+  compressed=total;if(compressed>limits.ENTRY_BYTES)throw Error('The generated scan PDF exceeds the 50 MiB attachment limit.');
   bytes=null;await onPage({index,compressed,embedderReleased:image.embedder===undefined});await tick();check();
  }
  const output=await doc.save({useObjectStreams:true,addDefaultPage:false,objectsPerTick:16});check();limits.assertPDFSize(output.byteLength);await fs.writeFile(packet.output,output,{flag:'wx',mode:0o600});check();return {bytes:output.byteLength,pages:packet.pages.length,compressed};
