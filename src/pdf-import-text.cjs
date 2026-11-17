@@ -16,12 +16,12 @@ function split(node,container,offset){
 }
 function createPageImport(bridge){
  const document=bridge.document,serialize=bridge.serialize,initialRoot=bridge.root(),initialNodes=initialRoot?Array.from(initialRoot.childNodes):null,range=bridge.range?.(),initial=initialNodes&&range?{nodes:initialNodes,start:point(initialRoot,initialNodes,range.startContainer,range.startOffset),end:point(initialRoot,initialNodes,range.endContainer,range.endOffset)}:null;
- let initialCapture=initial?.start&&initial?.end?initial:null,expectedText=bridge.target.text,cursor=null,dropped='',anchors=null,closed=false,epoch=0,lastStamp,lastState,ownEpoch=0;
+ let initialCapture=initial?.start&&initial?.end?initial:null,expectedText=bridge.target.text,cursor=null,dropped='',anchors=null,closed=false,epoch=0,lastStamp,lastState,ownEpoch=0,stateToken=0;
  const stats={serializedUnits:0,pages:0,rebuilds:0};const Observer=document.defaultView?.MutationObserver||globalThis.MutationObserver,observer=Observer&&initialRoot?new Observer(()=>{}):null;observer?.observe(initialRoot,{subtree:true,childList:true,characterData:true});
  const raw=node=>{const html=htmlOf(node);stats.serializedUnits+=html.length;return blockText(html,serialize);};
  const take=()=>{const records=observer?.takeRecords()||[];if(records.length&&bridge.root())epoch++;};
  const stampEqual=(a,b)=>a&&b&&Object.keys(a).length===Object.keys(b).length&&Object.keys(a).every(key=>a[key]===b[key]);
- function readState(){if(closed)throw cancelled();take();const stamp=bridge.readStamp();if(lastState&&stampEqual(lastStamp,stamp)&&lastState.epoch===epoch)return lastState;const value=bridge.readState({forceVisual:!!bridge.root()&&epoch!==ownEpoch});lastStamp=stamp;lastState={...value,epoch};return lastState;}
+ function readState(){if(closed)throw cancelled();take();const stamp=bridge.readStamp();if(lastState&&stampEqual(lastStamp,stamp)&&lastState.epoch===epoch)return lastState;const value=bridge.readState({forceVisual:!!bridge.root()&&epoch!==ownEpoch});lastStamp=stamp;lastState={...value,epoch,token:++stateToken};return lastState;}
  function nodesFor(page){const nodes=[];if(page.imageName){const p=document.createElement('p'),image=document.createElement('img');image.setAttribute('data-asset',page.imageName);image.setAttribute('alt','Image');p.appendChild(image);nodes.push(p);}if(page.text!==undefined){const p=document.createElement('p');String(page.text).split('\n').forEach((line,index)=>{if(index)p.appendChild(document.createElement('br'));p.appendChild(document.createTextNode(line));});nodes.push(p);}return nodes;}
  async function parts(nodes,{signal,yieldTask=()=>new Promise(resolve=>setTimeout(resolve,0))}={}){const result=[];for(let at=0;at<nodes.length;at++){check(signal);result.push(raw(nodes[at]));if(at+1<nodes.length)await yieldTask();}check(signal);return result;}
  async function planPage(page,before=readState(),options={}){
