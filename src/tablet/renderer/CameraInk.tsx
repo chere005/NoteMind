@@ -39,13 +39,20 @@ import { elementPoint } from "./padCoordinates"
 import { holdBegins, inContact, penLifted, pressAction } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
-import { paintStrokes, strokeUnder, type InkStroke, type TabletPage } from "./tabletPage"
+import { paintStrokes,paintStrokesYielding, strokeUnderAsync, type InkStroke, type TabletPage } from "./tabletPage"
+import {createInkActionController,hasPendingInkMutations,subscribeInkMutations} from '../../ink-mutations.js'
+import {yieldTask} from '../../graphics-pane.js'
+import {primeStrokeBox} from '../../stroke-bounds.js'
+import {CameraInkRenderer,cameraRasterPlan,type CameraRasterPlan} from './cameraInkRaster'
+import {multiply,inverse,type Matrix} from './cameraInkTransform'
 import { currentSheetAspect } from "./tabletSheets"
 import { inkPenArea, inkPictureRect, inkToScreen, inkUnit, inkWidth, onPicture, screenToInk, type InkView } from "./cameraInkGeometry"
 
 export interface CameraInkHandle {
   /** Finish the contact before changing the paper's coordinate frame (a turn). */
   finish(): void
+  flush(): Promise<void>
+  release(owner:TabletPage): Promise<void>
   undo(): boolean
   redo(): boolean
   clear(): void
@@ -70,6 +77,7 @@ interface Props {
   /** The pen's width in screen points, as on the sheet. */
   width: number
   onEdited(): void
+  onError?(error:Error): void
   /** The pen is down on the picture writing or rubbing out (true) and has lifted (false): the selection's row is not shown while it is. */
   onDrawing(active: boolean): void
   /**
@@ -94,24 +102,28 @@ interface Props {
 const ERASE_RADIUS = 8
 
 type Gesture =
-  | { kind: "draw"; pointerId: number; stroke: InkStroke; drawn: number; page: TabletPage }
-  | { kind: "erase"; pointerId: number; marked: boolean; page: TabletPage }
+  | { kind: "draw"; pointerId: number; stroke: InkStroke; drawn: number; page: TabletPage; bounds:{x:number;y:number;right:number;bottom:number} }
+  | { kind: "erase"; pointerId: number; page: TabletPage; samples:Point[]; ended:boolean; wake:(()=>void)|null; preview:InkStroke[]|null; view:InkView; done?:Promise<any> }
 
 export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
-  { targetKey, turns, page, view, on, colour, width, onEdited, onDrawing, zooming, onPenSelect, onPenCorner }, handle,
+  { targetKey, turns, page, view, on, colour, width, onEdited, onError, onDrawing, zooming, onPenSelect, onPenCorner }, handle,
 ) {
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const context = useRef<CanvasRenderingContext2D | null>(null)
   const gesture = useRef<Gesture | null>(null)
   const frame = useRef<number | null>(null)
   const everything = useRef(true)
+  const renderer=useRef<CameraInkRenderer|null>(null),paintVersion=useRef(0)
+  const painted=useRef<{page:TabletPage;plan:CameraRasterPlan;matrix:Matrix}|null>(null)
   const hovered = useRef(false)
   const touching = useRef(false)
+  const actionControllers=useRef(new WeakMap<TabletPage,ReturnType<typeof createInkActionController>>())
+  const controllerSet=useRef(new Set<ReturnType<typeof createInkActionController>>())
   const tools = useSheetTools()
   /** The Tablet sheet's shape (the tablet's, turned by its orientation): the native pen's area here has it too. */
   const sheetAspect = useSyncExternalStore(subscribeOrientation, currentSheetAspect)
-  const latest = useRef({ page, view, on, colour, width, onEdited, onDrawing, zooming, onPenSelect, onPenCorner })
-  latest.current = { page, view, on, colour, width, onEdited, onDrawing, zooming, onPenSelect, onPenCorner }
+  const latest = useRef({ page, view, on, colour, width, onEdited, onError, onDrawing, zooming, onPenSelect, onPenCorner })
+  latest.current = { page, view, on, colour, width, onEdited, onError, onDrawing, zooming, onPenSelect, onPenCorner }
 
   const toPixel = useCallback((point: Point): Point => inkToScreen(point, latest.current.view), [])
 
@@ -120,20 +132,49 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const element = canvas.current
     const { view: v, page: p } = latest.current
     if (!element) return
-    const ratio = element.ownerDocument.defaultView?.devicePixelRatio || 1
+    const ratio = Math.min(element.ownerDocument.defaultView?.devicePixelRatio||1,8192/Math.max(1,v.size.width),8192/Math.max(1,v.size.height),Math.sqrt(16*1024*1024)/Math.sqrt(Math.max(1,v.size.width))/Math.sqrt(Math.max(1,v.size.height)))
     const w = Math.max(1, Math.floor(v.size.width * ratio)), h = Math.max(1, Math.floor(v.size.height * ratio))
-    if (element.width !== w || element.height !== h) { element.width = w; element.height = h; everything.current = true }
+    const plan=latest.current.on&&p?cameraRasterPlan(v,ratio):null,previous=painted.current,newMatrix=plan?multiply(plan.workerToDevice,plan.canonicalToWorker):null
+    const changedSize=element.width!==w||element.height!==h,changedView=previous?.plan.key!==plan?.key||previous?.page!==p
+    let old:HTMLCanvasElement|null=null
+    if((changedSize||changedView)&&previous?.page===p&&plan&&newMatrix){old=element.ownerDocument.createElement('canvas');old.width=element.width;old.height=element.height;old.getContext('2d')?.drawImage(element,0,0)}
+    if(changedSize){element.width=w;element.height=h;everything.current=true}
     context.current ??= element.getContext("2d", { desynchronized: false })
     const ctx = context.current
     if (!ctx) return
+    if(changedSize||changedView){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,w,h);if(old&&plan&&newMatrix&&previous){ctx.save();ctx.beginPath();ctx.rect(plan.clip.x*ratio,plan.clip.y*ratio,plan.clip.width*ratio,plan.clip.height*ratio);ctx.clip();ctx.setTransform(...multiply(newMatrix,inverse(previous.matrix)));ctx.drawImage(old,0,0);ctx.restore();old.width=old.height=1;}painted.current=p&&plan&&newMatrix?{page:p,plan,matrix:newMatrix}:null;everything.current=true}
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     const unit = inkUnit(v)
     const g = gesture.current
     if (everything.current) {
       everything.current = false
+      if(!p||!plan||!latest.current.on){ctx.clearRect(0,0,v.size.width,v.size.height);renderer.current?.dispose();renderer.current=null;return}
+      // Native contact pixels remain visible while their exact signature is
+      // prepared. A stale worker frame must never paint over that contact.
+      const preview=g?.kind==='erase'&&g.page===p?g.preview:null
+      if(g?.kind==='draw'||hasPendingInkMutations(p)&&!preview){
+        if(g?.kind==='draw'&&g.stroke.points.length>g.drawn){const picture=inkPictureRect(v);ctx.save();ctx.beginPath();ctx.rect(picture.x,picture.y,picture.width,picture.height);ctx.clip();paintStrokes(ctx,[g.stroke],toPixel,unit,undefined,g.drawn);ctx.restore();g.drawn=g.stroke.points.length}
+        return
+      }
+      const strokes=preview||p.strokes,source=p.strokes,version=++paintVersion.current
+      const valid=()=>version===paintVersion.current&&latest.current.page===p&&latest.current.on&&p.strokes===source&&(!gesture.current||(gesture.current.kind==='erase'&&gesture.current.preview===strokes))&&(!hasPendingInkMutations(p)||gesture.current?.kind==='erase'&&gesture.current.preview===strokes)
+      if(strokes.length>4096||p.retainedGeometryPoints>20000){
+        renderer.current ||=new CameraInkRenderer()
+        renderer.current.request({page:p,strokes,ownerStrokes:source,view:v,ratio,valid},(result,output,current)=>{
+          if(!valid()||!current()||!canvas.current)return false
+          const target=canvas.current.getContext('2d');if(!target)return false
+          target.save();target.setTransform(ratio,0,0,ratio,0,0);target.beginPath();target.rect(output.clip.x,output.clip.y,output.clip.width,output.clip.height);target.clip();target.setTransform(...output.workerToDevice)
+          for(const tile of result.tiles){target.clearRect(tile.x,tile.y,tile.width,tile.height);target.drawImage(tile.bitmap,tile.x,tile.y)}target.restore();return true
+        },async(_failure,output,current)=>{
+          if(!output||!valid()||!current())return
+          const fallback=element.ownerDocument.createElement('canvas');fallback.width=w;fallback.height=h
+          try{const target=fallback.getContext('2d');if(!target)throw Error('Could not paint camera ink.');target.setTransform(ratio,0,0,ratio,0,0);target.beginPath();target.rect(output.clip.x,output.clip.y,output.clip.width,output.clip.height);target.clip();await paintStrokesYielding(target,strokes,point=>inkToScreen(point,v),unit,undefined,0,undefined,{cancelled:()=>!valid()||!current(),yieldControl:yieldTask});if(valid()&&current()){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,w,h);ctx.drawImage(fallback,0,0)}}catch(error){if(valid())reportError(error)}finally{fallback.width=fallback.height=1}
+        })
+        return
+      }
       ctx.clearRect(0, 0, v.size.width, v.size.height)
       const picture=inkPictureRect(v);ctx.save();ctx.beginPath();ctx.rect(picture.x,picture.y,picture.width,picture.height);ctx.clip()
-      if (p && latest.current.on) paintStrokes(ctx, p.strokes, toPixel, unit)
+      paintStrokes(ctx, strokes, toPixel, unit)
       if (g?.kind === "draw") { paintStrokes(ctx, [g.stroke], toPixel, unit); g.drawn = g.stroke.points.length }
       ctx.restore()
       return
@@ -151,6 +192,14 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     if (frame.current === null) frame.current = requestAnimationFrame(paint)
   }, [paint])
 
+  const reportError=(error:any)=>{if(error?.name!=='AbortError')latest.current.onError?.(error)}
+  const controllerFor=(owner:TabletPage)=>{
+    let controller=actionControllers.current.get(owner)
+    const callbacks={repaint:()=>{if(owner===latest.current.page)schedule(true)},onEdited:()=>latest.current.onEdited(),onError:reportError}
+    if(!controller){controller=createInkActionController(owner,callbacks);actionControllers.current.set(owner,controller);controllerSet.current.add(controller)}else controller.attach(callbacks)
+    return controller
+  }
+
   const finish = useCallback(() => {
     touching.current = false
     const g = gesture.current
@@ -158,17 +207,20 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     if (g.kind === "draw") paint()
     gesture.current = null
     latest.current.onDrawing(false)
-    if (g.kind === "draw") g.page.add(g.stroke)
-    if (g.kind === "draw" || g.marked) latest.current.onEdited()
+    if (g.kind === "draw") {
+      primeStrokeBox(g.stroke,g.bounds)
+      try{const done=controllerFor(g.page).append(g.stroke,{nativeCanonical:true});void done?.catch(reportError)}catch(error){reportError(error)}
+    }else{g.ended=true;g.wake?.();g.wake=null;}
   }, [paint])
 
   // Everything again when the view changes (zoom, the pane's size, a turn, another tab) or the ink does (undo, a turn, another window).
   const viewKey = `${view.shown.x},${view.shown.y},${view.shown.width},${view.shown.height}|${view.zoom ? `${view.zoom.x},${view.zoom.y},${view.zoom.width},${view.zoom.height}` : ""}|${view.size.width},${view.size.height}|${view.turns||0}|${view.clip?`${view.clip.x},${view.clip.y},${view.clip.width},${view.clip.height}`:''}|${on}`
   useLayoutEffect(() => {
-    if (gesture.current && (gesture.current.page !== page || !on)) finish()
+    if (gesture.current) finish()
     schedule(true)
   }, [viewKey, page, on, finish, schedule])
   useEffect(() => page?.onChange(() => schedule(true)), [page, schedule])
+  useEffect(()=>subscribeInkMutations(owner=>{if(owner===latest.current.page)schedule(true)}),[schedule])
   useEffect(() => {
     const onResize = () => schedule(true)
     const view = canvas.current?.ownerDocument.defaultView ?? window
@@ -179,17 +231,21 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
       frame.current = null
       // Keep a contact written before the pane was put away, on its own page.
       finish()
+      for(const controller of controllerSet.current)controller.detach()
+      controllerSet.current.clear()
+      paintVersion.current++;renderer.current?.dispose();renderer.current=null
     }
   }, [finish, schedule])
 
   // Undo and redo of the tab's ink: Ctrl+Z with the pointer over the picture, and the pen's double tap (penActions.ts, tabletFocus.ts).
   const act = useCallback((which: "undo" | "redo"): boolean => {
     const p = latest.current.page
-    if (!p) return false
-    const did = which === "undo" ? p.undo() : p.redo()
-    if (did) { schedule(true); latest.current.onEdited() }
-    return did
-  }, [schedule])
+    if (!p||!latest.current.on) return false
+    finish()
+    if(!(which==='undo'?p.canUndo:p.canRedo)&&!hasPendingInkMutations(p))return false
+    void controllerFor(p)[which]().catch(()=>{})
+    return true
+  }, [finish,schedule])
   useEffect(() => {
     if (!on) return
     setTabletUndo((which) => (hovered.current ? act(which) : false))
@@ -207,9 +263,11 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
 
   useImperativeHandle(handle, () => ({
     finish,
+    flush:()=>{finish();const p=latest.current.page;return p?controllerFor(p).flush():Promise.resolve()},
+    release:async owner=>{if(gesture.current?.page===owner)finish();const controller=actionControllers.current.get(owner);if(!controller)return;await controller.flush();controller.detach();controllerSet.current.delete(controller);actionControllers.current.delete(owner)},
     undo: () => act("undo"),
     redo: () => act("redo"),
-    clear: () => { const p = latest.current.page; if (p && p.strokes.length > 0) { p.clear(); schedule(true); latest.current.onEdited() } },
+    clear: () => { const p = latest.current.page; if (p&&latest.current.on) { finish();void controllerFor(p).clear().catch(()=>{}) } },
     leave: () => { hovered.current = false; quietAt.current = lastAt.current },
   }), [act, finish, schedule])
 
@@ -219,15 +277,11 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   }
 
   const eraseAt = (g: Extract<Gesture, { kind: "erase" }>, screen: Point) => {
-    const v = latest.current.view
-    // (the picture as it is on screen, zoom included: the radius is in screen points)
-    const scale = v.zoom ? zoomScale(v.zoom, v.size) : 1
-    const shownSize = { width: (v.turns&&v.turns%2?v.shown.height:v.shown.width) * scale, height: (v.turns&&v.turns%2?v.shown.width:v.shown.height) * scale }
-    const index = strokeUnder(g.page.strokes, screenToInk(screen, v), shownSize, ERASE_RADIUS, inkUnit(v))
-    if (index < 0) return
-    if (!g.marked) { g.page.mark(); g.marked = true }
-    g.page.removeAt(index)
-    schedule(true)
+    if(g.ended)return
+    if(g.samples.length>=8192){g.ended=true;g.wake?.();reportError(Error('The eraser is still finishing this gesture.'));return}
+    const point=screenToInk(screen,g.view),previous=g.samples.at(-1)
+    if(!previous||previous.x!==point.x||previous.y!==point.y)g.samples.push(point)
+    g.wake?.();g.wake=null
   }
 
   const down = (event: React.PointerEvent) => {
@@ -261,19 +315,36 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     if (action === "draw" && !onPicture(point, latest.current.view)) return
     try { canvas.current?.setPointerCapture(event.pointerId) } catch { /* the pointer is gone */ }
     if (action === "erase") {
-      const g: Gesture = { kind: "erase", pointerId: event.pointerId, marked: false, page: p }
+      const g: Extract<Gesture,{kind:'erase'}> = { kind: "erase", pointerId: event.pointerId, page: p, samples:[],ended:false,wake:null,preview:null,view:latest.current.view }
       gesture.current = g
       latest.current.onDrawing(true)
       eraseAt(g, point)
+      g.done=controllerFor(p).enqueue(async(_captured:InkStroke[],source:InkStroke[],options:any)=>{
+        const v=g.view,scale=v.zoom?zoomScale(v.zoom,v.size):1,shownSize={width:(v.turns&&v.turns%2?v.shown.height:v.shown.width)*scale,height:(v.turns&&v.turns%2?v.shown.width:v.shown.height)*scale}
+        let next=source
+        for(;;){
+          while(g.samples.length){
+            const sample=g.samples.shift()!,index=await strokeUnderAsync(next,sample,shownSize,ERASE_RADIUS,inkUnit(v),options)
+            if(index>=0){const copy:InkStroke[]=[];for(let at=0;at<next.length;at++){if(options.signal.aborted)throw Object.assign(Error('Drawing change cancelled.'),{name:'AbortError'});if(at!==index)copy.push(next[at]!);if(at%4096===4095)await yieldTask()}next=copy;g.preview=next;if(gesture.current===g)schedule(true)}
+          }
+          if(g.ended)break
+          await new Promise<void>(resolve=>{g.wake=resolve})
+        }
+        if(next===source)return null
+        return {target:next,commit:(changeOptions:any)=>p.replaceAsync(next,changeOptions)}
+      },{capture:false})
+      void g.done.catch(reportError)
       return
     }
     const pressure = event.pressure > 0 ? event.pressure : 0.5
+    const normalized=screenToInk(point,latest.current.view)
     gesture.current = {
       kind: "draw", pointerId: event.pointerId, drawn: 0, page: p,
+      bounds:{x:normalized.x,y:normalized.y,right:normalized.x,bottom:normalized.y},
       stroke: {
         colorHex: latest.current.colour,
         width: inkWidth(latest.current.width, latest.current.view),
-        points: [screenToInk(point, latest.current.view)],
+        points: [normalized],
         ...(penSettings().pressure ? { pressures: [pressure] } : {}),
       },
     }
@@ -298,7 +369,9 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const all = samples.length > 0 ? samples : [event.nativeEvent]
     if (g.kind === "erase") { for (const sample of all) eraseAt(g, at(sample)); return }
     for (const sample of all) {
-      g.stroke.points.push(screenToInk(at(sample), latest.current.view))
+      const point=screenToInk(at(sample), latest.current.view)
+      g.stroke.points.push(point)
+      g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)
       g.stroke.pressures?.push(sample.pressure > 0 ? sample.pressure : 0.5)
     }
     schedule()
@@ -309,6 +382,10 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const g = gesture.current
     if (!g || g.pointerId !== event.pointerId) return
     event.stopPropagation()
+    if(g.kind==='draw'&&event.type!=='pointercancel'){
+      const point=screenToInk(at(event),latest.current.view),last=g.stroke.points.at(-1)
+      if(!last||last.x!==point.x||last.y!==point.y){g.stroke.points.push(point);if(g.stroke.pressures)g.stroke.pressures.push(g.stroke.pressures.at(-1)??.5);g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)}
+    }
     try { if (canvas.current?.hasPointerCapture(event.pointerId)) canvas.current.releasePointerCapture(event.pointerId) } catch { /* gone */ }
     finish()
   }
