@@ -1,12 +1,14 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 12:58 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 1:34 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
 
 Revised after Sean's request to make progress visible sooner and review the features together with performance work. **Feature integration starts now.** Foundation memory/export fixes stay actively owned in parallel; the broad review is moved onto the first useful feature bundle instead of waiting for a separate foundation-only audit.
 
-The working estimate remains **12–24 hours from the November 17, 10:55 AM Central replanning point for the first stable test bundle** and **48–84 hours for the full scope**. At this update that means approximately **10–22 hours remaining to the first candidate**, subject to closing the supported-workflow failures. These are working estimates, not automatic release deadlines. Source checkpoints arrive sooner and do not interrupt the installed application.
+Sean rejected the multi-day delivery wait. The immediate target is now a **tested first stable increment in 3–6 hours from the November 17, approximately 1:32 PM Central decision** (approximately 4:30–7:30 PM Central). Give a concrete **go/no-go update by approximately 2:33 PM Central** using the actual remaining gate results.
+
+Prioritize the drawing/pen/page/crash fixes, the already integrated useful features and their scoped first review/release gate. Finish independent critical ownership fixes in parallel. Deliver the rest as smaller reviewed increments; preserve every approved feature and required audit wave. The previous 48–84-hour monolithic finish estimate is superseded as the delivery strategy. Source checkpoints remain recoverable and do not interrupt the installed app.
 
 | Checkpoint | Status / next bounded increment | Visible result and pause point |
 |---|---|---|
@@ -21,11 +23,11 @@ The working estimate remains **12–24 hours from the November 17, 10:55 AM Cent
 | **C2c — PDF transport and supported scale** | **Transport integrated; supported-scale and lease gates active** | Raw markup save/reopen uses the existing scoped chunk transport and archive worker. Actual 2.4 MB pressure-markup roundtrip has no Main whole-byte borrow. The strict 100-page workflow passes. Worker-loss lease cleanup and large supported workloads remain actively assigned. |
 | **D1 — page overview** | **Isolated source `a94928c`, actual-host gate queued** | Drawing/camera adapters compile and 42 focused tests pass. The prepared hidden App gate exercises 3,000 pages, reorder, portal ownership and disabled hidden ink commands. SVG normalization and full scale remain the next sub-checkpoint. |
 | **D2 — large import** | **After its shared PDF/attachment seam** | Cancellable page selection and page-by-page text-first import; retain exact insertion ownership. Separate recoverable checkpoint. |
-| **First stable bundle** | **12–24 hours from the replanning point** | Run the first independent bugs/UI/performance panel on the useful integrated core, presets, selection, precision and PDF bundle. Fix findings, freeze, preflight, package and verify; notify before installation. |
-| **All-feature panel** | **Approximately 30–48 hours from replanning** | Review all approved features together, implement findings, and repeat affected end-to-end/performance stages. |
-| **Final audits and release** | **Approximately 48–84 hours from replanning** | Three fresh whole-app audits; resolve findings; frozen stress/recovery/soak, full packaged validation and Claude handoff. |
+| **First stable bundle** | **Target 3–6 hours from the 1:32 PM decision** | Run the first independent bugs/UI/performance panel on the useful integrated core, presets, selection, precision and PDF bundle. Fix findings, freeze, preflight, package and verify; notify before installation. |
+| **All-feature panel** | **Subsequent reviewed increments** | Review all approved features together, implement findings, and repeat affected end-to-end/performance stages. |
+| **Final audits and release** | **After all approved scope passes** | Three fresh whole-app audits; resolve findings; frozen stress/recovery/soak, full packaged validation and Claude handoff. |
 
-The next source increments target roughly **1–3 hours each**, with a status report if a gate exposes a larger defect. Independent lanes overlap; these are not durations to add. A source pause point is committed and recoverable. An installable increment additionally passes its review and release gates.
+The next source increments target roughly **30–90 minutes each**, with a status report if a gate exposes a larger defect. Independent lanes overlap; these are not durations to add. A source pause point is committed and recoverable. An installable increment additionally passes its review and release gates.
 
 ### What changes in the execution order
 
@@ -142,6 +144,7 @@ The withdrawn preset-layout icon request and unapproved opacity/highlighter feat
 - Overview uses drawing's verified file converter instead of building a second byte-transfer broker. It resumes as soon as that dependency is available.
 - Precision gesture adapters are integrated at `09c0743`. Further Surface changes remain serially owned; memory work continues independently.
 - Merge one feature inward at a time. A feature branch being coded or passing pure tests does not mean it is integrated or release-ready.
+- First-candidate priority: actual 2M producer + real lazy load/save gates, PDF kernel lease closure, scoped fresh bugs/UI/performance panel, full affected release validation and packaging. Additional feature/optimization work remains explicitly queued behind these dependencies.
 - Word final packaging/ZIP must release the raw-CAS/document-request lane once media is safely spooled: otherwise a large export can queue foreground PDF requests. Drawing owns this immediately after its compact-inline boundary gate, with a Root-authored concurrency regression.
 - For a confirmed new issue: reproduce it, assign a concrete owner/file boundary, implement the fix, run focused regression checks, integrate serially, and rerun the affected complete scenario. Dependent tasks start immediately when prerequisites land.
 - Keep work moving on independent tasks while a native slot, conversion seam or reviewer is pending. Only product decisions that cannot be inferred go back to Sean.
@@ -164,7 +167,7 @@ Author checks, reciprocal code reads and the current targeted memory investigati
 
 ## Final release gate and delivery
 
-The completed candidate must have all approved scope integrated and all known actionable findings resolved. Run the full suite after the requested phase is implemented, then hidden source/packaged app checks, frozen representative stress runs, recovery/soak and strict signature verification. Preserve exact test/build/source identity and local artefacts. Never push main or a release tag before preflight passes.
+The first candidate must have its stated increment implemented, all critical findings for that increment resolved, and its required first panel/release gate passed. The final programme candidate must have all approved scope integrated and all known actionable findings resolved. Run the full suite after the requested phase is implemented, then hidden source/packaged app checks, frozen representative stress runs, recovery/soak and strict signature verification. Preserve exact test/build/source identity and local artefacts. Never push main or a release tag before preflight passes.
 
 Finish checked work on main, push it, remove completed work branches/worktrees, and report the actual release through the existing status tooling. Notify Sean before installing the tested candidate; keep unsaved work protected and the working installation undisturbed until installation is authorised for that candidate.
 

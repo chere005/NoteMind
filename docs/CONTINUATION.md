@@ -1,5 +1,8 @@
 # Continuation
 
+- Sean rejected the multi-day wait: target first reviewed stable increment in3–6h from Nov17 about1:32PM Central; give go/no-go by about2:33PM Central (20:33UTC). Prioritize supported drawing/pen/page/crash gates and the already useful feature bundle; later work ships as smaller reviewed increments, with all approved scope/review waves retained.
+- Desktop interruption fixed: our Word test PID30524 was stopped; idle worker packets no longer enter ArchiveCodec/PDF job completion without an active job (c3db0a1/6b2dd27). Actual Electron throw/reject proof passes with final ffcd16e test-only fatal boundary. Use this exact corrected helper in every new native entry; the earlier app.exit-only helper was insufficient. Word16MiB retirement repeat passed on41c05ed at966,344,704B/30.66s; no installed app was changed.
+
 - During active work, give Sean a brief whole-roadmap update at least hourly and whenever he requests status; report completed/active work, dependencies/blockers and revised estimate without creating task-tracking automations.
 - Approved later feature scope: all selection editing/duplication/recolor/width/delete, tool presets/quick switching, zoom/pan/precision, page overview/reordering, cancellable page-by-page large PDF/scan import and essential right-pane PDF reference with editable Wacom markup. Use isolated feature worktrees, integrate one feature at a time, then another bugs/UI-UX/performance panel and final fresh whole-app audits.
 
