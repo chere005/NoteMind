@@ -5,6 +5,17 @@
   const cache = new Map(), placeholders = new Map(), bound = new Map(), pins = new Map();
   const urls = options.urls || URL, makeBlob = options.makeBlob || ((bytes, type) => new Blob([bytes], { type }));
   const decode = options.decode || (data => typeof Uint8Array.fromBase64 === 'function' ? Uint8Array.fromBase64(data) : Uint8Array.from(atob(data), c => c.charCodeAt(0)));
+  const discard = bytes => { if (ArrayBuffer.isView(bytes) && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && typeof bytes.buffer.transfer === 'function') try { bytes.buffer.transfer(0); } catch {} };
+  function measure(data) { const bytes = decode(data); try { return dimensions(bytes); } finally { if (!options.decode) discard(bytes); } }
+  function blob(entry) {
+    if (entry.chunks && !options.decode && !options.makeBlob) {
+      const parts = [];
+      for (const chunk of entry.chunks) { const bytes = decode(chunk); try { parts.push(new Blob([bytes])); } finally { discard(bytes); } }
+      return new Blob(parts, { type: entry.type });
+    }
+    const bytes = decode(entry.data);
+    try { return makeBlob(bytes, entry.type); } finally { if (!options.decode && !options.makeBlob) discard(bytes); }
+  }
   const maxBytes = options.maxBytes ?? 32 * 1024 * 1024, maxEntries = options.maxEntries ?? 2048;
   let clock = 0, serial = 0, blobBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null;
   const entries = () => Array.from(cache.values()).flatMap(types => Array.from(types.values()));
@@ -22,9 +33,9 @@
     const owned=assetsFor?.(),key=data.length>=1024*1024&&owned?.[name]===data&&options.identity?options.identity(owned,name)||data:data;let types=cache.get(key),entry=types?.get(type);
     if (!entry) {
       const chunks=owned?.[name]===data?options.chunks?.(owned,name):null,prefix=(chunks?.[0]||data).slice(0,Math.ceil(65536/3)*4);
-      let size = dimensions(decode(prefix));
+      let size = measure(prefix);
       // Unusual JPEG metadata or SVG prologs can put the dimensions after the first header block.
-      if (!size && prefix.length !== data.length) size = dimensions(decode(data));
+      if (!size && prefix.length !== data.length) size = measure(data);
       const placeholder = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (size?.width || 1) + '" height="' + (size?.height || 1) + '"/>') + '#notemind-preview-' + (++serial);
       entry = {key,data,chunks,type,size,placeholder,bytes:Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0), url: null, active: 0, used: ++clock };
       if (!types) cache.set(key, types = new Map()); types.set(type, entry); placeholders.set(placeholder, entry);
@@ -32,7 +43,7 @@
     entry.used = ++clock; return entry;
   }
   function materialize(entry) {
-    if (!entry.url) { entry.url = urls.createObjectURL(makeBlob(decode(entry.data), entry.type)); blobBytes += entry.bytes; }
+    if (!entry.url) { entry.url = urls.createObjectURL(blob(entry)); blobBytes += entry.bytes; }
     entry.used = ++clock; return entry.url;
   }
   function url(name, data, type) { const entry = get(name, data, type); return options.lazy ? entry.placeholder : materialize(entry); }
@@ -88,7 +99,7 @@
     finally { release(); }
   }
   async function withImage(img, run) { const release = pin(img); try { await ensure(img); return await run(img); } finally { release(); } }
-  function lease(name,data,type){const entry=get(name,data,type);entry.active++;const url=materialize(entry);trim();let released=false;return {url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);trim();}};}
+  function lease(name,data,type){const entry=get(name,data,type);entry.active++;let url;try{url=materialize(entry);trim();}catch(error){entry.active--;trim();throw error;}let released=false;return {url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);trim();}};}
   function retainMany(assetSets) {
     const used=new Set();for(const assets of assetSets||[])for(const[name,data]of Object.entries(assets||{}))if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
     retained = used;
