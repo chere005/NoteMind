@@ -9,6 +9,43 @@ function remapMeta(meta,mapping){meta=structuredClone(meta||{});const attachment
 function assetMapping(assets,target){const mapping={};const map=name=>{if(mapping[name])return mapping[name];const preview=name.endsWith('.json')&&name.slice(0,-5);return mapping[name]=preview&&Object.hasOwn(assets,preview)?map(preview)+'.json':target(name)};for(const name of Object.keys(assets))map(name);return mapping;}
 function assetHash(assets,name){const hash=crypto.createHash('sha256').update(Buffer.from(assets[name],'base64'));if(assets[name+'.json'])hash.update('\0').update(Buffer.from(assets[name+'.json'],'base64'));return hash.digest('hex');}
 function canonical(doc){const assets={},mapping=assetMapping(doc.assets||{},name=>/^assets\/[\w./ -]+$/.test(name)&&!name.split('/').some(p=>p==='..'||p==='.'||!p)?name:'assets/'+assetHash(doc.assets,name).slice(0,16)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,''));for(const [name,data]of Object.entries(doc.assets||{}))assets[mapping[name]]=data;return {...doc,text:rewriteAll(doc.text,mapping),assets,meta:remapMeta(doc.meta,mapping)};}
+const yieldAsset=()=>new Promise(resolve=>setImmediate(resolve));
+async function visitAsset(data,visit){
+ if(typeof data!=='string')return require('./archive-codec.cjs').withRawAssetBytes(data,async bytes=>{for(let at=0;at<bytes.length;at+=256*1024){await visit(bytes.subarray(at,at+256*1024));await yieldAsset();}});
+ let carry='',padded=false;
+ for(let at=0;at<data.length;at+=65536){
+  const part=carry+data.slice(at,at+65536).replace(/\s/g,'');if(padded&&part)throw Error('Invalid attachment data.');
+  if(!/^[a-z0-9+/]*={0,2}$/i.test(part))throw Error('Invalid attachment data.');
+  const length=at+65536>=data.length?part.length:Math.floor(part.length/4)*4,complete=part.slice(0,length);carry=part.slice(length);
+  if(complete){if(complete.length%4===1||complete.includes('=')&&complete.length%4)throw Error('Invalid attachment data.');padded=complete.endsWith('=');await visit(Buffer.from(complete,'base64'));}
+  await yieldAsset();
+ }
+ if(carry)throw Error('Invalid attachment data.');
+}
+async function assetMappingAsync(assets,target){const mapping={};const map=async name=>{if(mapping[name])return mapping[name];const preview=name.endsWith('.json')&&name.slice(0,-5);return mapping[name]=preview&&Object.hasOwn(assets,preview)?await map(preview)+'.json':await target(name);};for(const name of Object.keys(assets))await map(name);return mapping;}
+async function assetHashAsync(assets,name){const hash=crypto.createHash('sha256');await visitAsset(assets[name],bytes=>hash.update(bytes));if(assets[name+'.json']){hash.update('\0');await visitAsset(assets[name+'.json'],bytes=>hash.update(bytes));}return hash.digest('hex');}
+async function canonicalAsync(doc){
+ const input={...doc,assets:{...(doc.assets||{})},meta:structuredClone(doc.meta||{})},assets={},mapping=await assetMappingAsync(input.assets,async name=>/^assets\/[\w./ -]+$/.test(name)&&!name.split('/').some(p=>p==='..'||p==='.'||!p)?name:'assets/'+(await assetHashAsync(input.assets,name)).slice(0,16)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,''));
+ for(const [name,data]of Object.entries(input.assets))assets[mapping[name]]=data;
+ return {...input,text:rewriteAll(input.text,mapping),assets,meta:remapMeta(input.meta,mapping)};
+}
+async function matchesAsset(target,data){
+ const handle=await fs.open(target,'r');let position=0;
+ try{const before=await handle.stat({bigint:true});if(!before.isFile())throw Error('An attachment with this filename already exists.');
+  await visitAsset(data,async bytes=>{const existing=Buffer.allocUnsafe(bytes.length);let offset=0;while(offset<existing.length){const result=await handle.read(existing,offset,existing.length-offset,position+offset);if(!result.bytesRead)throw Error('An attachment with this filename already exists.');offset+=result.bytesRead;}if(!existing.equals(bytes))throw Error('An attachment with this filename already exists.');position+=bytes.length;});
+  const after=await handle.stat({bigint:true});if(after.size!==BigInt(position)||before.size!==after.size||before.mtimeNs!==after.mtimeNs||before.ctimeNs!==after.ctimeNs)throw Error('An attachment with this filename already exists.');
+ }finally{await handle.close();}
+}
+async function writeAsset(target,data){
+ const temp=target+'.notemind-'+process.pid+'-'+crypto.randomUUID()+'.tmp';let handle;
+ try{
+  handle=await fs.open(temp,'wx');let position=0;
+  await visitAsset(data,async bytes=>{let offset=0;while(offset<bytes.length){const written=await handle.write(bytes,offset,bytes.length-offset,position+offset);if(!written.bytesWritten)throw Error('Attachment write stopped.');offset+=written.bytesWritten;}position+=bytes.length;});
+  await handle.sync();await handle.close();handle=null;
+  try{await fs.link(temp,target);}catch(error){if(error.code!=='EEXIST')throw error;await matchesAsset(target,data);}
+ }finally{await handle?.close();await fs.unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+}
+
 const legacyFolder=file=>path.basename(file,path.extname(file)).replace(/[^\p{L}\p{N}_.-]/gu,'-')+'.assets';
 // Exact filenames distinguish names that sanitize to the same stem, including case-sensitive volumes.
 function sidecarFolder(file){const name=path.basename(file),stem=legacyFolder(file).slice(0,-7);let short='';for(const c of stem){if(Buffer.byteLength(short+c)>120)break;short+=c;}return (short||'note')+'-'+crypto.createHash('sha256').update(name).digest('hex').slice(0,12)+'.assets';}
@@ -22,8 +59,9 @@ async function read(file,text){
  return {path:file,text,assets,id:metadata.id,title:metadata.title,created:metadata.created,meta:metadata.meta||{}};
 }
 async function writeMetadata(doc,file){await require('./notes-store.cjs').atomic(path.join(path.dirname(file),sidecarFolder(file),'notemind.json'),JSON.stringify({sourceName:path.basename(file),id:doc.id,title:doc.title,created:doc.created,meta:doc.meta,extraAssets:Object.keys(doc.assets||{}).filter(n=>n.endsWith('.json'))}));}
-async function prepare(doc,file,{metadata=true}={}){const assets={},dir=path.dirname(file),folder=sidecarFolder(file),mapping=assetMapping(doc.assets||{},name=>folder+'/'+assetHash(doc.assets,name).slice(0,24)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,''));
- for(const [name,data]of Object.entries(doc.assets||{})){const bytes=Buffer.from(data,'base64'),targetName=mapping[name];await fs.mkdir(path.join(dir,folder),{recursive:true});const target=path.join(dir,targetName);try{await fs.writeFile(target,bytes,{flag:'wx'})}catch(e){if(e.code!=='EEXIST')throw e;if(!Buffer.from(await fs.readFile(target)).equals(bytes))throw Error('An attachment with this filename already exists.');}assets[targetName]=data;}
+async function prepare(doc,file,{metadata=true}={}){const assets={},dir=path.dirname(file),folder=sidecarFolder(file),input={...doc.assets},mapping=await assetMappingAsync(input,async name=>folder+'/'+(await assetHashAsync(input,name)).slice(0,24)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,''));
+ if(Object.keys(input).length)await fs.mkdir(path.join(dir,folder),{recursive:true});
+ for(const [name,data]of Object.entries(input)){const targetName=mapping[name];await writeAsset(path.join(dir,targetName),data);assets[targetName]=data;}
  const next={...doc,text:rewriteAll(doc.text,mapping),assets,meta:remapMeta(doc.meta,mapping)};
  if(metadata)await writeMetadata(next,file);
  return next;
@@ -65,7 +103,7 @@ async function restore(saved,target){
  if(bytes&&markdown(target))return writeDocument(require('./notepad-format.cjs').decode(bytes),target);
  await fs.cp(saved,target,{recursive:true,force:false,errorOnExist:true});
 }
-module.exports={read,prepare,writeMetadata,canonical,references,rewrite,sidecarFolder,copy,capture,restore};
+module.exports={read,prepare,writeMetadata,canonical,canonicalAsync,references,rewrite,sidecarFolder,copy,capture,restore};
 module.exports.legacyFolder=legacyFolder;
 module.exports.remapMeta=remapMeta;
 module.exports.assetMapping=assetMapping;

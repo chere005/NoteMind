@@ -82,7 +82,23 @@ class NotesStore {
    const pendingCommit={path:file,revision};await atomic(stateFile,JSON.stringify({...state,pendingCommit}));return {...pendingCommit,recoveryId:expectedRecoveryId};
   });
  }
- async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}const parsed=await archiveCodec.decode(await fs.readFile(path.join(folder,id+'.wm')),{files:'metadata'}); const {files,kind,...doc}=parsed; let state={};if(files['recovery.json']){state=JSON.parse(files['recovery.json'].toString('utf8'));if(!state||typeof state!=='object'||typeof state.recoveryId!=='string')throw Error('Invalid recovered Notepad state.');}try{const companion=JSON.parse(await fs.readFile(path.join(folder,id+'.json'),'utf8'));if(!files['recovery.json']||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{} const recovered={...doc,...state,id,...(record?{path:record.path}:{} )},receipt=state.pendingCommit;
+ async recoveryState(id) {
+  if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');
+  let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}
+  const file=path.join(folder,id+'.wm');
+  for(let attempt=0;attempt<3;attempt++)try{
+   const probe=await archiveCodec.readRecoveryState(file);let state=probe.state||{};if(probe.state&&(!state||typeof state!=='object'||Array.isArray(state)||typeof state.recoveryId!=='string'))throw Error('Invalid recovery metadata.');
+   try{const companion=JSON.parse((await require('./read-limited.cjs').readLimited(path.join(folder,id+'.json'),1024*1024,'Recovery metadata is too large.')).toString('utf8'));if(!probe.state||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{}
+   const current=await fs.stat(file,{bigint:true});if(!probe.sourceIdentity||['dev','ino','size','mtimeNs','ctimeNs'].some(key=>String(current[key])!==String(probe.sourceIdentity[key])))continue;
+   const result={...state,id,path:record?.path??state.path,dirty:!!state.dirty},receipt=state.pendingCommit;
+   if(receipt?.path&&result.path&&keyPath(receipt.path)===keyPath(result.path)&&/^[a-f0-9]{64}$/.test(receipt.revision)){
+    try{const committed=await require('./source-file-revision.cjs').sourceFileRevision(receipt.path);if(committed?.sha256===receipt.revision)return {...result,dirty:false};}catch{}
+   }
+   return result;
+  }catch(error){if(error.code==='ENOENT')return null;return {id,path:record?.path,dirty:true,unknown:true};}
+  return {id,path:record?.path,dirty:true,unknown:true};
+ }
+ async loadDraft(id) { if(!/^[\w-]{1,80}$/.test(id))throw Error('Invalid Notepad identity.');const record=(await this.readIndex()).records[id];if(record?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before opening.');let folder=this.recoveryRoot;try{await fs.access(path.join(folder,id+'.wm'));}catch{folder=record?.recoveryRoot||folder;}const input=await fs.readFile(path.join(folder,id+'.wm')),parsed=await archiveCodec.decodeOwned(input.byteOffset===0&&input.byteLength===input.buffer.byteLength?input:Uint8Array.from(input),{files:'metadata'}); const {files,kind,...doc}=parsed; let state={};if(files['recovery.json']){state=JSON.parse(files['recovery.json'].toString('utf8'));if(!state||typeof state!=='object'||typeof state.recoveryId!=='string')throw Error('Invalid recovered Notepad state.');}try{const companion=JSON.parse((await require('./read-limited.cjs').readLimited(path.join(folder,id+'.json'),1024*1024,'Recovery metadata is too large.')).toString('utf8'));if(!files['recovery.json']||companion.recoveryId===state.recoveryId)state={...state,...companion};}catch{} const recovered={...doc,...state,id,...(record?{path:record.path}:{} )},receipt=state.pendingCommit;
   if(receipt?.path&&recovered.path&&keyPath(receipt.path)===keyPath(recovered.path)&&/^[a-f0-9]{64}$/.test(receipt.revision)){
    try{const committed=await archiveCodec.readCommitted(receipt.path,receipt.revision);if(committed){const clean={...recovered,...committed,id,path:recovered.path,revision:receipt.revision,dirty:false};delete clean.pendingCommit;return clean;}}catch{}
   }
@@ -91,29 +107,37 @@ class NotesStore {
  async recover() { const session=await this.session();if(!session)return null; const index=await this.readIndex(),tabs=[];for(const t of session.tabs){if(index.records[t.id]?.deleted)continue;try{tabs.push({...await this.loadDraft(t.id),visual:t.visual,scroll:t.scroll})}catch(e){tabs.push({recoveryError:e.message,id:t.id,path:t.path})}}return {...session,tabs}; }
  async deleteDraft(id) {return this.transaction(async index=>{const record=index.records[id];if(!record||record.deleted)throw Error('This draft is no longer available.');if(record.path)throw Error('Use Move to Trash for a saved Notepad.');const item={id:randomUUID(),kind:'draft',noteId:id,path:null,name:record.title,deletedAt:new Date().toISOString(),recoveryRoot:record.recoveryRoot||this.recoveryRoot};item.saved=path.join(this.root,'deleted',item.id);await fs.mkdir(item.saved,{recursive:true});for(const ext of ['.wm','.json'])await fs.copyFile(path.join(item.recoveryRoot,id+ext),path.join(item.saved,id+ext));index.deleted.push(item);record.deleted=item.id;return item.id;});}
  async version(doc, label='Saved') {
-  if(!doc.id)return;doc=require('./markdown-files.cjs').canonical(doc);
+  if(!doc.id)return;const captured={...doc,assets:{...(doc.assets||{})},meta:structuredClone(doc.meta||{})};let canonical;
+  return this.queueVersion(doc.id,label,async options=>{canonical ||=await require('./markdown-files.cjs').canonicalAsync(captured);return archiveCodec.publishVersion(canonical,options);});
+ }
+ async versionFromFile(file,doc,expectedRevision,label='Before save') {
+  if(!doc?.id)return;
+  const noteId=doc.id,titleFallback=doc.title||'',expected=structuredClone(expectedRevision);
+  return this.queueVersion(noteId,label,options=>archiveCodec.publishVersionFromFile(file,{...options,noteId,titleFallback,expectedRevision:expected}));
+ }
+ async queueVersion(noteId,label,publishVersion) {
   // Keep calls for one note ordered, without holding the whole-library lock during hashing and asset I/O.
   const run=async()=>{
-   const record=(await this.readIndex()).records[doc.id];if(!record)return;const last=(record.versions||[]).at(-1);
+   const record=(await this.readIndex()).records[noteId];if(!record)return;const last=(record.versions||[]).at(-1);
    if(last?.storage==='snapshot-v1'&&last.objectCount&&this.snapshotObjects.size===0){
     // This is an optimization hint only; publication still validates objects before committing a reference.
     try{const info=await archiveCodec.readSnapshot(this.root,last.id,{referencesOnly:true});for(const hash of info.knownHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}}catch{}
    }
-   const id=randomUUID(),publish=options=>archiveCodec.publishVersion(doc,{root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null,existingVersionId:last?.storage==='snapshot-v1'?last.id:undefined}),verifiedLegacyID=null;
-   if(prepared.unchanged&&prepared.legacyHash&&!last.storage){
+   const id=randomUUID(),publish=options=>publishVersion({root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null,existingVersionId:last?.storage==='snapshot-v1'?last.id:undefined}),verifiedLegacyID=null;
+   if(prepared.unchanged&&prepared.legacyHash&&!last?.storage){
     let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.documentMetadata;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
     if(sameMetadata)verifiedLegacyID=last.id;else prepared=await publish({});
    }
    const matches=entry=>entry&&(entry.hash===prepared.contentHash||(verifiedLegacyID===entry.id&&prepared.legacyHash&&entry.hash===prepared.legacyHash));
    if(prepared.unchanged){
-    const needed=await this.transaction(index=>{const current=index.records[doc.id];return !!current&&!matches((current.versions||[]).at(-1));});
+    const needed=await this.transaction(index=>{const current=index.records[noteId];return !!current&&!matches((current.versions||[]).at(-1));});
     if(!needed)return;const legacyHash=prepared.legacyHash;prepared=await publish({});prepared.legacyHash=legacyHash;
    }
    for(const hash of prepared.objectHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}
-   return this.transaction(index=>{const r=index.records[doc.id];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:prepared.objectCount});return id;});
+   return this.transaction(index=>{const r=index.records[noteId];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:prepared.objectCount});return id;});
   };
-  const next=(this.versionPending.get(doc.id)||Promise.resolve()).catch(()=>{}).then(run);this.versionPending.set(doc.id,next);
-  try{return await next;}finally{if(this.versionPending.get(doc.id)===next)this.versionPending.delete(doc.id);}
+  const next=(this.versionPending.get(noteId)||Promise.resolve()).catch(()=>{}).then(run);this.versionPending.set(noteId,next);
+  try{return await next;}finally{if(this.versionPending.get(noteId)===next)this.versionPending.delete(noteId);}
  }
  async versions(id) { return (await this.readIndex()).records[id]?.versions || []; }
  async versionDoc(id, version) {const entry=(await this.versions(id)).find(v=>v.id===version);if(!entry)throw Error('This version is unavailable.');if(entry.storage==='snapshot-v1')return archiveCodec.readSnapshot(this.root,version);if(entry.storage)throw Error('This version format is not supported.');if(!/^[\w-]{1,80}$/.test(version))throw Error('Invalid version identity.');const {files,kind,...doc}=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',version+'.wm')),{files:false});return doc;}

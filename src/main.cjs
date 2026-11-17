@@ -341,14 +341,14 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   const ext=path.extname(file).toLowerCase();if(!['.nm','.wm','.md','.txt','.py'].includes(ext))throw Error('Choose a .nm, .md, .txt, or .py file.');
   if((doc.otherOpenPaths||[]).some(other=>keyPath(other)===key))throw Error('That file is already open in another tab.');
   if(!['.nm','.wm','.md'].includes(ext)&&Object.keys(doc.assets||{}).length)throw Error('Save as .nm to keep attachments.');
-  let previous;try{previous=await fs.readFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
-  let expected=null,oldArchive=null;
-  if(previous){if(['.nm','.wm'].includes(ext)){const input=previous.byteOffset===0&&previous.byteLength===previous.buffer.byteLength?previous:Uint8Array.from(previous);previous=null;const inspected=await require('./archive-codec.cjs').inspectOwned(input,{files:false});oldArchive=inspected.doc;expected={sha256:inspected.revision,bytes:inspected.bytes};}else expected={sha256:digest(previous),bytes:previous.length};}
+  const archive=['.nm','.wm'].includes(ext);let previous=null,expected;
+  if(archive)expected=await require('./source-file-revision.cjs').sourceFileRevision(file);
+  else{try{previous=await fs.readFile(file);}catch(error){if(error.code!=='ENOENT')throw error;}expected=previous?{sha256:digest(previous),bytes:previous.length}:null;}
   if(!saveAs&&doc.revision&&(!expected||expected.sha256!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
   const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId)delete doc.recoveryId;
-  if(expected){try{const old=oldArchive||(ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}});await notesStore.version({...old,id:doc.id,title:old.title||doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}previous=null;oldArchive=null;
+  if(expected){if(archive)await notesStore.versionFromFile(file,doc,expected,'Before save');else{try{const old=ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}};await notesStore.version({...old,id:doc.id,title:old.title||doc.title},'Before save');}catch{}}}previous=null;
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
-  if(['.nm','.wm'].includes(ext))doc=require('./markdown-files.cjs').canonical(doc);
+  if(['.nm','.wm'].includes(ext))doc=await require('./markdown-files.cjs').canonicalAsync(doc);
   let bytes,revision;if(['.nm','.wm'].includes(ext))({bytes,revision}=await require('./archive-codec.cjs').encodeWithDigest(doc));else{bytes=Buffer.from(doc.text);revision=digest(bytes);}
   if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,revision);if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
   const saveWarnings=[];try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
