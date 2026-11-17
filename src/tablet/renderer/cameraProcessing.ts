@@ -64,5 +64,13 @@ export class CameraProcessing{
    return {request:{compact:true,bytes,backdropBytes,metadata,thumbnail},transfers:[...new Set([bytes.buffer,backdropBytes.buffer])]}
   },signal)
  }
+ runImage(blob:Blob,{rotation=0,signal,thumbnail=true,thumbnailOnly=false}: {rotation?:number;signal?:AbortSignal;thumbnail?:boolean;thumbnailOnly?:boolean}={}){
+  if(!(blob instanceof Blob)||!blob.size||blob.size>50*1024*1024||!/^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(blob.type)||![0,90,180,270].includes(rotation))return Promise.reject(Error('Invalid scan image or rotation.'))
+  return this.process(async current=>{
+   const bitmap=await createImageBitmap(blob);if(current.aborted){bitmap.close();throw abort()}
+   if(!bitmap.width||!bitmap.height||bitmap.width>32768||bitmap.height>32768||bitmap.width*bitmap.height>16*1024*1024){bitmap.close();throw Error('Scan image dimensions are too large.')}
+   return {request:{imageOnly:true,bitmap,rotation,thumbnail,thumbnailOnly},transfers:[bitmap],cleanup:()=>bitmap.close()}
+  },signal)
+ }
  dispose(){if(this.closed)return;this.closed=true;this.active?.abort();this.active?.reject(abort());this.worker?.terminate();this.worker=null}
 }

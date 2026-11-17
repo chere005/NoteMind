@@ -10,6 +10,11 @@ import {cameraMetadata} from './camera-schema.cjs'
 const MAX_PIXELS=16*1024*1024
 const validSize=(w:number,h:number)=>Number.isSafeInteger(w)&&Number.isSafeInteger(h)&&w>0&&h>0&&w<=32768&&h<=32768&&w*h<=MAX_PIXELS
 const canvas=(w:number,h:number)=>{if(!validSize(w,h))throw Error('Camera capture dimensions are too large.');return new OffscreenCanvas(w,h)}
+async function pngResult(output:OffscreenCanvas,thumbnail:boolean){
+ const blob=await output.convertToBlob({type:'image/png'});if(!thumbnail)return {blob}
+ const scale=Math.min(1,220/output.width,300/output.height),small=canvas(Math.max(1,Math.round(output.width*scale)),Math.max(1,Math.round(output.height*scale)))
+ try{small.getContext('2d')!.drawImage(output,0,0,small.width,small.height);return {blob,thumbnail:await small.convertToBlob({type:'image/png'})}}finally{small.width=small.height=1}
+}
 function inkHeader(bytes:Uint8Array){
  if(!(bytes instanceof Uint8Array)||!graphics.isBinary(bytes)||bytes.length<24||bytes.length>graphics.MAX_BINARY_BYTES)throw Error('Invalid binary camera ink.')
  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),metadataLength=view.getUint32(8,true),count=view.getUint32(12,true),points=view.getUint32(16,true)
@@ -39,10 +44,17 @@ export async function processCameraCapture(request:any){
    const next=canvas(Math.max(1,Math.round(box.width*output.width)),Math.max(1,Math.round(box.height*output.height)));next.getContext('2d')!.drawImage(output,box.x*output.width,box.y*output.height,box.width*output.width,box.height*output.height,0,0,next.width,next.height);output.width=output.height=1;output=next
   }
   if(writing){const context=output.getContext('2d',{willReadFrequently:true})!,pixels=context.getImageData(0,0,output.width,output.height);context.putImageData(new ImageData(liftedWriting(pixels.data,output.width,output.height,colour),output.width,output.height),0,0)}
-  const blob=await output.convertToBlob({type:'image/png'})
-  if(!request.thumbnail)return {blob}
-  const scale=Math.min(1,220/output.width,300/output.height),small=canvas(Math.max(1,Math.round(output.width*scale)),Math.max(1,Math.round(output.height*scale)))
-  try{small.getContext('2d')!.drawImage(output,0,0,small.width,small.height);return {blob,thumbnail:await small.convertToBlob({type:'image/png'})}}finally{small.width=small.height=1}
+  return await pngResult(output,!!request.thumbnail)
+ }finally{bitmap?.close();if(output)output.width=output.height=1}
+}
+export async function processCameraImage(request:any){
+ let bitmap:ImageBitmap|null=request.bitmap,output:OffscreenCanvas|null=null
+ try{
+  const rotation=request.rotation??0;if(!bitmap||![0,90,180,270].includes(rotation)||!validSize(bitmap.width,bitmap.height))throw Error('Invalid scan image dimensions or rotation.')
+  const width=bitmap.width,height=bitmap.height,turned=rotation===90||rotation===270,w=turned?height:width,h=turned?width:height,scale=request.thumbnailOnly?Math.min(1,220/w,300/h):1;output=canvas(Math.max(1,Math.round(w*scale)),Math.max(1,Math.round(h*scale)))
+  const context=output.getContext('2d')!,sx=output.width/w,sy=output.height/h;if(rotation===90)context.setTransform(0,sy,-sx,0,height*sx,0);else if(rotation===180)context.setTransform(-sx,0,0,-sy,width*sx,height*sy);else if(rotation===270)context.setTransform(0,-sy,sx,0,0,width*sy);else context.setTransform(sx,0,0,sy,0,0)
+  context.drawImage(bitmap,0,0);bitmap.close();bitmap=null
+  return await pngResult(output,!request.thumbnailOnly&&!!request.thumbnail)
  }finally{bitmap?.close();if(output)output.width=output.height=1}
 }
 
@@ -81,4 +93,4 @@ export async function processCompactCameraPage(request:any){
   return await processCameraCapture({bitmap,bytes,plan:{config:plan.config,matrix:plan.workerToDevice,clip:plan.clip},box:settings.box||null,corners:settings.corners||null,thumbnail:!!request.thumbnail})
  }finally{source?.close();if(output)output.width=output.height=1}
 }
-if(typeof self!=='undefined')self.onmessage=async event=>{try{const result=await(event.data?.compact?processCompactCameraPage(event.data):processCameraCapture(event.data));self.postMessage(result)}catch(error:any){self.postMessage({error:error.message||String(error)})}}
+if(typeof self!=='undefined')self.onmessage=async event=>{try{const result=await(event.data?.imageOnly?processCameraImage(event.data):event.data?.compact?processCompactCameraPage(event.data):processCameraCapture(event.data));self.postMessage(result)}catch(error:any){self.postMessage({error:error.message||String(error)})}}
