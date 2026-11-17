@@ -65,7 +65,7 @@ function inputBytes(op,args,limit){
 }
 class ArchiveCodec{
  constructor({workerFactory=file=>new Worker(file),maxPending=8,maxBytes=384*1024*1024,maxAssetBytes=256*1024*1024,maxAssetEntries=20000,maxWorkerBytes=512*1024*1024,maxRawBytes=384*1024*1024,idleMs=30000,timeoutMs=120000}={}){
-  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.retireRequested=false;
+  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.rawCapacityListeners=new Set();this.retireRequested=false;
  }
  run(op,...args){
   if(this.disposed)return Promise.reject(Error('Archive tools are closing.'));
@@ -99,6 +99,9 @@ class ArchiveCodec{
  async releaseRawAssetBytes(bytes){const read=this.rawReadBuffers.get(bytes);if(!read)return false;this.rawReadBuffers.delete(bytes);if(read.epoch!==this.epoch||!this.worker)return false;return this.run('rawReleaseRead',read);}
  async withRawAssetBytes(descriptor,run){const bytes=await this.readRawAssetBytes(descriptor);try{return await run(bytes,this.rawReadBuffers.get(bytes)?.info);}finally{await this.releaseRawAssetBytes(bytes);}}
  hasRawAssetScope(){const context=this.rawScope.getStore();if(!context)return false;this.checkRawContext(context);return true;}
+ subscribeRawCapacity(listener){if(typeof listener!=='function')throw TypeError('Expected a raw capacity listener.');if(this.disposed)return()=>{};this.rawCapacityListeners.add(listener);return()=>this.rawCapacityListeners.delete(listener);}
+ notifyRawCapacity(){if(this.capacityQueued||!this.rawCapacityListeners.size)return;this.capacityQueued=true;queueMicrotask(()=>{this.capacityQueued=false;for(const listener of [...this.rawCapacityListeners])try{listener({epoch:this.epoch});}catch{}});}
+ observeRawStats(value){const previous=this.workerRawStats;this.workerRawStats=value;if(previous&&['bytes','reserved','working','leases','uploads','reads','entries'].some(key=>value[key]<previous[key]))this.notifyRawCapacity();}
  async importRawAssetFile(file,options){const context=this.rawScope.getStore();this.checkRawContext(context);const value=await this.run('importRawAssetFile',file,options),descriptor=this.brandRaw(value,context.owner);context.tokens.add(descriptor.rawAssetToken);return descriptor;}
  liveRaw(){return this.rawUploads.size||[...this.rawLeases.values()].some(value=>!value.released&&!value.lost&&value.epoch===this.epoch);}
  retireIfReady(){if(this.retireRequested&&!this.liveRaw()&&!this.active){this.retireRequested=false;this.stopWorker();}else this.pump();}
@@ -120,7 +123,7 @@ class ArchiveCodec{
  ensureWorker(){
   if(this.worker)return this.worker;
   const worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));this.worker=worker;this.epoch++;
-  worker.on('message',packet=>{if(this.worker!==worker||packet.id!==this.active?.id)return;const job=this.active;if(packet.rawStats)this.workerRawStats=packet.rawStats;if(packet.assetStats)this.workerAssetStats=packet.assetStats;
+  worker.on('message',packet=>{if(this.worker!==worker||packet.id!==this.active?.id)return;const job=this.active;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
    try{
     if(packet.missingAssets){if(!job.assetPacket||(job.attempts||0)>=2)throw Error('Archive asset references expired repeatedly.');this.assets.retry(job.assetPacket,packet.missingAssets);job.attempts=(job.attempts||0)+1;this.postJob(worker,job);return;}
     if(packet.workerBytes>this.maxWorkerBytes&&!rawOps.has(job.op)){this.rollovers++;this.stopWorker();}
@@ -152,7 +155,7 @@ class ArchiveCodec{
   worker.postMessage({id:job.id,op:job.op,args,codecEpoch:this.epoch,rawContext:job.rawContext?{owner:job.rawContext.owner,lease:job.rawContext.lease,epoch:job.rawContext.epoch,tokens:[...job.rawContext.tokens]}:undefined,rawLimits:{maxBytes:this.maxRawBytes,maxCacheBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries},assetPacket,knownAssets,assetLimits:{maxBytes:this.maxAssetBytes,maxEntries:this.maxAssetEntries}},job.transfers||[]);
   if(job.assetPacket)job.args[0]=null;job.transfers=null;
  }
- assetStats(){return {...this.assets.stats(),uploads:this.assets.uploads,worker:this.workerAssetStats,epoch:this.epoch,rollovers:this.rollovers,raw:this.workerRawStats};}
+ assetStats(){return {...this.assets.stats(),uploads:this.assets.uploads,worker:this.workerAssetStats,epoch:this.epoch,rollovers:this.rollovers,raw:this.workerRawStats,validation:this.workerValidationStats};}
  finish(job,error,value){
   if(this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.args=null;job.assetPacket=null;error?job.reject(error):job.resolve(value);this.pump();
  }
@@ -168,11 +171,11 @@ class ArchiveCodec{
    this.stopFailure=error;for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.args=null;job.reject(Error('Archive tools could not stop their previous worker.'));}
   }).finally(()=>{if(this.stopping===attempt)this.stopping=null;this.pump();});this.stopping=attempt;
  }
- retireWorker(worker){if(this.stoppingWorker!==worker)return;this.rawUploads.clear();this.rawDescriptors.clear();for(const context of this.rawLeases.values())context.lost=true;this.stoppingWorker=null;this.stopFailure=null;this.pump();}
+ retireWorker(worker){if(this.stoppingWorker!==worker)return;this.rawUploads.clear();this.rawDescriptors.clear();for(const context of this.rawLeases.values())context.lost=true;this.workerRawStats=null;this.notifyRawCapacity();this.stoppingWorker=null;this.stopFailure=null;this.pump();}
  async dispose(){
   this.disposed=true;clearTimeout(this.idleTimer);for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.reject(Error('Archive tools are closing.'));}
   if(this.active)this.finish(this.active,Error('Archive tools are closing.'));this.stopWorker(true);await this.stopping;
-  this.assets.clear();this.workerAssetStats=null;
+  this.assets.clear();this.workerAssetStats=null;this.rawCapacityListeners.clear();
  }
 }
 const codec=new ArchiveCodec();

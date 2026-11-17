@@ -3,10 +3,11 @@ const {createHash,randomUUID}=require('node:crypto');
 const token=value=>typeof value==='string'&&/^[a-f0-9-]{36}$/i.test(value);
 const isRawAsset=value=>!!value&&typeof value==='object'&&Object.keys(value).length===4&&token(value.rawAssetToken)&&Number.isSafeInteger(value.bytes)&&value.bytes>=0&&Number.isSafeInteger(value.chars)&&value.chars>=0&&Number.isSafeInteger(value.epoch)&&value.epoch>0;
 const rawMissing=missing=>Object.assign(Error('Raw archive assets expired before the operation started.'),{code:'ARCHIVE_RAW_ASSET_MISSING',missing});
-const busy=()=>Error('Archive raw asset capacity is busy. The current document remains open.');
+const busy=()=>Object.assign(Error('Archive raw asset capacity is busy. The current document remains open.'),{code:'ARCHIVE_RAW_BUSY'});
 class RawAssetStore{
  constructor({epoch,maxBytes=384*1024*1024,maxCacheBytes=256*1024*1024,maxEntries=20000,maxUploads=8,maxLeases=128,legacy,uuid=randomUUID}={}){Object.assign(this,{epoch,maxBytes,maxCacheBytes,maxEntries,maxUploads,maxLeases,legacy,uuid});this.entries=new Map();this.payloads=new Map();this.uploads=new Map();this.leases=new Map();this.reads=new Map();this.bytes=0;this.reserved=0;this.working=0;this.reuses=0;}
- stats(){return {bytes:this.bytes,reserved:this.reserved,working:this.working,legacyBytes:this.legacy?.bytes||0,entries:this.entries.size,uploads:this.uploads.size,leases:this.leases.size,reads:this.reads.size,reuses:this.reuses,epoch:this.epoch};}
+ observe(){const peak=this.peak||={bytes:0,reserved:0,working:0,total:0};peak.bytes=Math.max(peak.bytes,this.bytes);peak.reserved=Math.max(peak.reserved,this.reserved);peak.working=Math.max(peak.working,this.working);peak.total=Math.max(peak.total,this.used());return peak;}
+ stats(){return {bytes:this.bytes,reserved:this.reserved,working:this.working,legacyBytes:this.legacy?.bytes||0,entries:this.entries.size,uploads:this.uploads.size,leases:this.leases.size,reads:this.reads.size,reuses:this.reuses,epoch:this.epoch,peak:{...this.observe()}};}
  used(){return this.bytes+this.reserved+this.working+(this.legacy?.bytes||0);}
  count(){return this.entries.size+this.uploads.size+(this.legacy?.entries.size||0);}
  drop(key){const entry=this.entries.get(key);if(!entry||entry.leases.size)return false;this.entries.delete(key);entry.payload.tokens.delete(key);if(!entry.payload.tokens.size){this.payloads.delete(entry.payload.hash);this.bytes-=entry.payload.bytes.length;}return true;}
@@ -50,7 +51,7 @@ class RawAssetStore{
  retain({owner,tokens}){this.owner(owner);if(!Array.isArray(tokens)||tokens.length>this.maxEntries||tokens.some(value=>!token(value)))throw Error('Invalid retained raw archive assets.');const keep=new Set(tokens);for(const [key,entry]of this.entries)if(entry.owner===owner&&!keep.has(key)){entry.released=true;this.drop(key);}this.trim();return true;}
  release({owner,tokens}){this.owner(owner);if(tokens!==undefined&&(!Array.isArray(tokens)||tokens.some(value=>!token(value))))throw Error('Invalid released raw archive assets.');const selected=tokens&&new Set(tokens);for(const [key,entry]of this.entries)if(entry.owner===owner&&(!selected||selected.has(key))){entry.released=true;this.drop(key);}if(!selected)for(const [upload,state]of this.uploads)if(state.owner===owner)this.cancel({upload,owner,epoch:this.epoch});this.trim();return true;}
  read({descriptor,offset=0,length=512*1024},context){const bytes=this.resolve(descriptor,context);if(!Number.isSafeInteger(offset)||offset<0||offset>bytes.length||!Number.isSafeInteger(length)||length<0||length>512*1024)throw Error('Invalid raw archive asset read.');return Uint8Array.from(bytes.subarray(offset,Math.min(bytes.length,offset+length)));}
- async withWorking(bytes,run){this.claim(bytes);this.working+=bytes;try{return await run();}finally{this.working-=bytes;this.trim();}}
+ async withWorking(bytes,run){this.claim(bytes);this.working+=bytes;this.observe();try{return await run();}finally{this.working-=bytes;this.trim();}}
  async importFile(file,options,context){
   const lease=this.context(context);let staged;
   try{

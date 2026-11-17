@@ -63,7 +63,7 @@ parentPort.on('message',async packet=>{
     throw Error('Unknown archive operation.');
    });
   }
-  assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),workerBytes:usage.heapUsed+usage.external},transfers);
+  assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
  }catch(error){assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
  finally{assets?.trim();raw?.trim();args=null;assetPacket=null;}
 });

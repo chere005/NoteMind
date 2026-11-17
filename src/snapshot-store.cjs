@@ -52,7 +52,9 @@ function remember(cache,hash,stat){cache.delete(hash);cache.set(hash,{dev:stat.d
 const sameStat=(a,b)=>a&&b&&['dev','ino','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);
 async function mapLimit(values,limit,run){let next=0,failure;await Promise.all(Array.from({length:Math.min(limit,values.length)},async()=>{while(!failure&&next<values.length){const value=values[next++];try{await run(value);}catch(error){failure ||= error;}}}));if(failure)throw failure;}
 async function syncHierarchy(root,directory){
- const stop=path.dirname(path.resolve(root));for(let current=path.resolve(directory);;current=path.dirname(current)){const handle=await fs.open(current,'r');try{await handle.sync();}finally{await handle.close();}if(current===stop||current===path.dirname(current))break;}
+ const base=path.resolve(root),target=path.resolve(directory),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Invalid durability directory.');
+ // Confirm directory entries through root's parent, including a newly created root.
+ const stop=path.dirname(base);for(let current=target;;current=path.dirname(current)){const handle=await fs.open(current,'r');try{await handle.sync();}finally{await handle.close();}if(current===stop||current===path.dirname(current))break;}
 }
 async function writeSynced(file,bytes){const handle=await fs.open(file,'wx');try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}}
 async function digestHandle(handle,maxBytes){const hash=createHash('sha256'),chunk=Buffer.allocUnsafeSlow(Math.min(256*1024,maxBytes||1));let read=0;while(read<maxBytes){const result=await handle.read(chunk,0,Math.min(chunk.length,maxBytes-read),read);if(!result.bytesRead)throw Error('A version asset is damaged.');hash.update(chunk.subarray(0,result.bytesRead));read+=result.bytesRead;}return hash.digest('hex');}
@@ -108,4 +110,4 @@ async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expected
  }
  const doc=manifest.document;return {text:doc.text,assets,id:doc.id,title:doc.title,meta:doc.meta||{},created:doc.created};
 }
-module.exports={withAssetContext,prepareReferences,publishObject,validAsset,prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
+module.exports={syncHierarchy,withAssetContext,prepareReferences,publishObject,validAsset,prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
