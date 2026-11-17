@@ -14,3 +14,4 @@ test('malformed legacy geometry fails without changing its source or already pub
 test('missing and malformed top-level legacy pages fail closed',async t=>{
  for(const value of [{name:'x'},[],[null],[{name:'x',aspect:1,strokes:null}]]){const f=await fixture(t,JSON.stringify(value));if(Array.isArray(value)&&value[0]?.strokes===null){const scan=await scanLegacy(f.file,f.packs);await assert.rejects(materializeLegacy(f.file,scan,f.packs,f.index));}else await assert.rejects(scanLegacy(f.file,f.packs));}
 });
+test('metadata budgets apply across fields and pages before retaining an oversized graph',async t=>{const source=JSON.stringify([{name:'a'.repeat(100),aspect:1,strokes:[]},{name:'b'.repeat(100),aspect:1,strokes:[]}]),f=await fixture(t,source);await assert.rejects(scanLegacy(f.file,f.packs,{maxMetadataBytes:512}),/metadata.*large/i);assert.equal(await fs.readFile(f.file,'utf8'),source);});
