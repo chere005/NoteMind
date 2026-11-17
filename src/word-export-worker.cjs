@@ -4,7 +4,8 @@ parentPort.once('message',async packet=>{
  const check=()=>{if(!flag)throw Error('Word export cancellation ownership is missing.');if(Atomics.load(flag,0))throw Object.assign(Error('Word export cancelled.'),{name:'AbortError'});};
  try{
   check();if(!packet.doc||Object.keys(packet.doc.assets||{}).length||Object.values(packet.images||{}).some(image=>!image?.source))throw Error('Word packaging requires private media spools.');
-  const value=await require('./word-file.cjs').exportWordFile(packet.doc,packet.images,packet.options,{...packet.target,check},{check});
+  const publish=prepared=>new Promise((resolve,reject)=>{parentPort.once('message',reply=>{if(reply?.id!==packet.id||reply?.publication!==true)return reject(Error('Invalid Word publication response.'));reply.error?reject(Object.assign(Error(reply.error.message),reply.error)):resolve(reply.value);});parentPort.postMessage({id:packet.id,prepared});});
+  const value=await require('./word-file.cjs').exportWordFile(packet.doc,packet.images,packet.options,{...packet.target,check},{check,writer:(entries,target)=>require('./zip-stream.cjs').writeZipFile(entries,target,{publish})});
   parentPort.postMessage({id:packet.id,value});
  }catch(error){parentPort.postMessage({id:packet?.id,error:{name:error.name,message:error.message,code:error.code,stack:error.stack}});}
  finally{parentPort.close();}
