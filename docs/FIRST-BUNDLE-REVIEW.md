@@ -18,9 +18,11 @@ Evidence: 171 focused feature/ownership cases on `42754e3`; 76 Word/owned-pipeli
 
 No unresolved blocker was found in this review's scope. This is source and focused Node evidence; the reviewer did not run native Electron, a build, the installed application or user documents.
 
-## UI/UX — active
+## UI/UX — passed
 
-Fresh independent reviewer `review_first_bundle_ui` is reviewing `5287a7a`, whose product source matches the data-reviewed snapshot. Native jobs require the shared serial slot. Confirmed findings receive isolated fixes and affected interaction checks before disposition.
+Fresh independent reviewer `review_first_bundle_ui` completed source `5bce3366a35e78ebdf791fec2dcf70aeaf41616f`. All confirmed findings are fixed: PDF page-entry-before-load exception; virtualized keyboard reorder and stale async focus; nested tab-close propagation; capture tab/document keyboard activation; overview focus in its owning window; deferred-flush latest intent across source/document/visibility changes; preset modal focus after menu removal; and PDF Fit resetting both precision and layout zoom.
+
+Evidence:101 focused Node cases; actual DOM12 reorder/close checks on `d0d5aa6` at435,847,168 B; actual App/PadHost9 phases on `121a64b` at818,069,504 B;17 preset modal checks on `121a64b` at435,372,032 B; strict100-pagePDF14 phases on `5bce336` at952,745,984 B. Every process exited0. Owned runtime-error channels are empty; strict App/PDF warning channels are empty. The reviewer inspected captured overview/PDF layouts. These are hidden synthetic actual-component workflows, not physical pen/device or assistive-technology runtime certification. Fixes are integrated in Root through `8421d36`.
 
 ## Performance and architecture — next dependency
 
@@ -44,3 +46,9 @@ The real Main/preload/staged-save lazy2M pipeline remains a separate active gate
 The cleanup-corrected producer run on `8300136` again preserved all five fixed hashes and both Undo/Redo sequences, but selection preview crossed1GiB at1,074,954,240 B. The earlier functional pass is not a stable repeated pass. Real IPC source `d41eab8` passes reopen/first paint/metadata save but fails erase-paint at1,085,014,016 B. The final observed jump is GPU101.42→128.63 MB; Main284.18 MB and Tab622.89 MB are unchanged. No repeated-pass, complete save/reopen, packaged or release claim is made.
 
 The UI panel has already fixed PDF page-number Enter before source load (`4078d36`,15 focused component/view/session checks). Its overview keyboard-focus finding is being fixed in isolation. The first performance panel owns the native renderer experiment; Word/CAS foreground scheduling is independently being implemented through a bounded file-only worker after verified media spooling.
+
+## Updated real durable drawing checkpoint
+
+Frozen `bab96ac` passes the actual2M Main/preload/staged-save workflow: load, metadata save, erase/paint, erase-save, Undo/save, disposal and fresh-worker reopen. Both persisted counts and full geometry/identity SHA values match. Peak1,063,452,672 B leaves only9.81 MiB under the unchanged1GiB guard; this is one successful run and repeatability remains required. Erase/Undo saves take12.334/12.400s with observed UI timer gaps6.4/14.3ms. The sorted immutable record stream is integrated as `5ba5540`/`4c749a7`; the final fresh-worker oracle is integrated through `bbf8ff4`.
+
+Fresh performance review additionally identified full-App signature cache misses, absent from the core producer fixture. Exact asynchronous preparation is actively owned. The existing10s close watchdog is also being corrected against the measured12s saves. Pressure pixel and clean producer repeats, affected-source rereads and packaged validation remain gates. The rejected CPU raster backend is not accepted source because it changed canonical native pixels.
