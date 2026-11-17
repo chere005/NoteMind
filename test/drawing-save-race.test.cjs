@@ -19,7 +19,7 @@ function pendingSave(sheets) {
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
     window: { notemind: { savePane(data,svg,file,options) { context.savedData = data;context.saveTarget={file,options};return new Promise(resolve => { complete = resolve; }); } } },
   };
-  context.saveDrawingPane=(api,...args)=>api.savePane(...args);context.pendingSheetActions={current:new Set()};context.page={current:sheets[0].page};context.liveSheets={get current(){return context.currentSheets;}};context.sheetsSnapshot=()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.ensureSheetReady=async page=>context.currentSheets.find(item=>item.page===page);
+  context.bindDrawingSaveChunks=value=>value;context.saveDrawingPane=(api,...args)=>api.savePane(...args);context.pendingSheetActions={current:new Set()};context.page={current:sheets[0].page};context.liveSheets={get current(){return context.currentSheets;}};context.sheetsSnapshot=()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.ensureSheetReady=async page=>context.currentSheets.find(item=>item.page===page);
   vm.runInNewContext(implementation + ';globalThis.save = saveSheet;globalThis.closeDrawing=closeSheet;', context);
   return { context, complete: file => complete(file) };
 }
