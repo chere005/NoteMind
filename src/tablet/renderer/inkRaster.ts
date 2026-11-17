@@ -36,11 +36,11 @@ export class InkRaster{
   for(const rect of request.extraDirty||[])this.markRect(rect,config,dirty);if(cancelled())throw Error('Ink raster cancelled.')
   this.session=request.session;this.revision=revision;this.records=next;this.refs=next.order.stats.indexRefs;this.overflow=next.order.stats.overflow;this.config=config;this.configKey=key;this.bytes=next.bytes;this.points=next.points;this.dirty=dirty;if(acknowledged)this.lastAck=request.ack;return{resync:false,revision}
  }
- private async paint(ctx:any,rect:any,cancelled:()=>boolean,selected?:Uint8Array,selectMode=false){
+ private async paint(ctx:any,rect:any,cancelled:()=>boolean,selected?:Uint8Array,selectMode=false,deviceGlobal=false){
   const config=this.config!,{paintWidth:width,paintHeight:height,region,ratio}=config,unit=width/(region.width*1000);let work=0
   // Keep absolute path coordinates identical for full and dirty-tile paints.
   // Subtracting tile origins in JS changes native float32 path rounding.
-  ctx.lineCap='round';ctx.lineJoin='round';ctx.translate(-rect.x,-rect.y)
+  ctx.lineCap='round';ctx.lineJoin='round';ctx.translate(deviceGlobal?0:-rect.x,deviceGlobal?0:-rect.y);if(deviceGlobal){ctx.beginPath();ctx.rect(rect.x,rect.y,rect.width,rect.height);ctx.clip()}
   const x=(n:number)=>(n-region.x)/region.width*width,y=(n:number)=>(n-region.y)/region.height*height
   const stroke=emptyRecord(),order=this.records.order
   for(const leaf of order.leafEntries(rect))for(let local=0;local<leaf.values.length;local++){const position=leaf.start+local;if(cancelled())return false;if(selected&&!!(selected[position>>>3]!&(1<<(position&7)))!==selectMode){if(++work%2048===0)await graphics.yieldTask();continue}this.records.read(leaf.values[local]!,stroke);if(!stroke.count){if(++work%2048===0)await graphics.yieldTask();continue;}const {view,stride}=stroke;let at=stroke.at,px=x(view.getFloat64(at,true)),py=y(view.getFloat64(at+8,true)),pressure=stroke.pressure?view.getFloat64(at+16,true):.5
@@ -57,6 +57,11 @@ export class InkRaster{
   }
   return !cancelled()
  }
+ // Native anti-aliasing depends on device coordinates, including integer origins.
+ // Paint in the original full-frame device space; retain only the bounded crop.
+ private cropTile(canvas:any,rect:any,canvasFactory:any){
+  let full:any=null,crop:any=null;try{full=canvas.transferToImageBitmap();crop=canvasFactory(rect.width,rect.height);const target=crop.getContext('2d');if(!target)throw Error('Could not copy drawing ink.');target.globalCompositeOperation='copy';target.drawImage(full,rect.x,rect.y,rect.width,rect.height,0,0,rect.width,rect.height);return crop.transferToImageBitmap()}finally{full?.close();if(crop)crop.width=crop.height=1}
+ }
  private async preview(request:any,cancelled:()=>boolean,canvasFactory:any){
   const selection=request.selection,config=this.config!,selected=new Uint8Array(Math.ceil(this.records.order.length/8)),affected=new Set<number>(),stroke=emptyRecord();let selectedCount=0,left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity,padding=0,allCells=false,work=0
   try{
@@ -70,8 +75,8 @@ export class InkRaster{
  }
  async render(request:any,cancelled:()=>boolean=()=>false,canvasFactory=(w:number,h:number)=>new OffscreenCanvas(w,h),prepared?:()=>void){
   const started=globalThis.performance?.now()??Date.now();let sync:any;try{sync=await this.sync(request,cancelled)}catch(error){if(cancelled())return{cancelled:true,accepted:false};throw error}if(sync.resync)return sync;const synced=globalThis.performance?.now()??Date.now();prepared?.();if(request.selection)return this.preview(request,cancelled,canvasFactory)
-  const config=this.config!,tileCount=Math.ceil(config.width/EDGE)*Math.ceil(config.height/EDGE),full=this.dirty.size>Math.max(4,tileCount*.3),dense=this.points>=FULL_TILE_POINTS||this.records.length>=FULL_TILE_POINTS,reuseCanvas=full&&dense,rects=full?dense?Array.from({length:tileCount},(_,id)=>frameRect(config,id)):[{x:0,y:0,width:config.width,height:config.height}]:[...this.dirty].map(id=>frameRect(config,id)),tiles:any[]=[];let sharedCanvas:any=null
-  try{for(const rect of rects){if(cancelled())break;const canvas=reuseCanvas?(sharedCanvas||=(canvasFactory(rect.width,rect.height))):canvasFactory(rect.width,rect.height);try{if(reuseCanvas){canvas.width=rect.width;canvas.height=rect.height}const ctx=canvas.getContext('2d');if(!ctx)throw Error('Could not paint drawing ink.');const complete=await this.paint(ctx,rect,cancelled);if(!complete)break;tiles.push({...rect,bitmap:canvas.transferToImageBitmap()})}finally{canvas.width=1;canvas.height=1}}}catch(error){for(const tile of tiles)tile.bitmap.close();throw error}
+  const config=this.config!,tileCount=Math.ceil(config.width/EDGE)*Math.ceil(config.height/EDGE),full=this.dirty.size>Math.max(4,tileCount*.3),dense=this.points>=FULL_TILE_POINTS||this.records.length>=FULL_TILE_POINTS,rects=full?dense?Array.from({length:tileCount},(_,id)=>frameRect(config,id)):[{x:0,y:0,width:config.width,height:config.height}]:[...this.dirty].map(id=>frameRect(config,id)),globalTiles=rects.some(rect=>rect.x!==0||rect.y!==0||rect.width!==config.width||rect.height!==config.height),tiles:any[]=[];let sharedCanvas:any=null
+  try{for(const rect of rects){if(cancelled())break;const canvas=globalTiles?(sharedCanvas||=(canvasFactory(config.width,config.height))):canvasFactory(rect.width,rect.height);try{if(globalTiles){canvas.width=config.width;canvas.height=config.height}const ctx=canvas.getContext('2d');if(!ctx)throw Error('Could not paint drawing ink.');const complete=await this.paint(ctx,rect,cancelled,undefined,false,globalTiles);if(!complete)break;tiles.push({...rect,bitmap:globalTiles?this.cropTile(canvas,rect,canvasFactory):canvas.transferToImageBitmap()})}finally{canvas.width=1;canvas.height=1}}}catch(error){for(const tile of tiles)tile.bitmap.close();throw error}
   if(cancelled()){for(const tile of tiles)tile.bitmap.close();return{cancelled:true,accepted:true}}
   return{frame:++this.lastFrame,revision:this.revision,tiles,stats:{syncMs:synced-started,paintMs:(globalThis.performance?.now()??Date.now())-synced,typedBytes:this.records.typedBytes,indexRefs:this.refs,overflow:this.overflow,binaryBytes:this.bytes,strokeRecords:this.records.size,storedRecords:this.records.storedRecords,points:this.points,tileCount,paintedTiles:rects.length}}
  }
