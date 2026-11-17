@@ -36,9 +36,10 @@ app.on('will-quit',()=>{sheetReads.dispose();sheetLoads.dispose();void sheetPers
 
 let cameraWrite = Promise.resolve();
 
-let closing = false, closeTimer;
+const closeFlush=new(require('./close-flush-watchdog.cjs').CloseFlushWatchdog)({onTimeout:()=>sheetSaveFailed('The save request timed out.'),onCancel:({owner,requestId})=>{if(!owner.isDestroyed())owner.send('sheets:flush-cancel',{requestId});}});
+app.on('will-quit',()=>closeFlush.dispose());
 
-function sheetSaveFailed(reason) { closing = false; const choice = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Keep editing', 'Close without saving sheets'], defaultId: 0, cancelId: 0, message: 'The drawing sheets could not be saved.', detail: `${reason}\nClosing without saving can lose recent ink.` }); if (choice === 1) { win.confirmedClose = true; win.close(); } }
+function sheetSaveFailed(reason) { closeFlush.cancel(); const choice = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Keep editing', 'Close without saving sheets'], defaultId: 0, cancelId: 0, message: 'The drawing sheets could not be saved.', detail: `${reason}\nClosing without saving can lose recent ink.` }); if (choice === 1) { win.confirmedClose = true; win.close(); } }
 
 const instance = app.requestSingleInstanceLock();
 
@@ -152,13 +153,11 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
     if (win.confirmedClose) {try{require('node:fs').writeFileSync(path.join(app.getPath('userData'),'window.json'),JSON.stringify(win.getNormalBounds()));}catch{}stopPython();return;}
 
-    event.preventDefault(); if (closing) return;
+    event.preventDefault(); if (closeFlush.pending) return;
 
     // Every open draft is flushed before the window closes.
 
-    closing = true; win.webContents.send('sheets:flush-request');
-
-    closeTimer = setTimeout(() => sheetSaveFailed('The save request timed out.'), 10000);
+    const request=closeFlush.start(win.webContents);win.webContents.send('sheets:flush-request',request);
 
   });
 
@@ -285,7 +284,8 @@ ipcMain.handle('save-camera-pages-delta',async(_,delta)=>{const pending=cameraPe
 ipcMain.handle('load-camera-pages',async()=>{await cameraWrite;const sheets=await cameraPersistence().load();return sheets?.map(require('./camera-schema.cjs').cameraPage)||null;});
 ipcMain.handle('save-camera-pages',async(_,data)=>{if(!Array.isArray(data)||!data.length)throw Error('Invalid camera page data.');const {cameraMetadata}=require('./camera-schema.cjs'),sheets=data.map(page=>({...cameraMetadata(page),strokes:page.strokes,backdrop:page.picture})),pending=cameraPersistence().save(sheets);cameraWrite=pending.catch(()=>{});return pending;});
 
-ipcMain.on('sheets:flush-done', (event, error) => { if (!closing || event.sender !== win.webContents) return; clearTimeout(closeTimer); if (error) { sheetSaveFailed(String(error)); return; } closing = false; win.confirmedClose = true; win.close(); });
+ipcMain.on('sheets:flush-progress',(event,packet)=>closeFlush.progress(event.sender,packet?.requestId,packet?.sequence));
+ipcMain.on('sheets:flush-done',(event,packet)=>{if(!closeFlush.complete(event.sender,packet?.requestId))return;if(packet.error){sheetSaveFailed(String(packet.error).slice(0,8192));return;}win.confirmedClose=true;win.close();});
 
 const validName = name => typeof name === 'string' && name.trim() === name && name.length > 0 && name !== '.' && name !== '..' && !/[\\/:*?"<>|]/.test(name);
 

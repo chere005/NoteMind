@@ -171,7 +171,7 @@ function App(){
 
  useEffect(()=>{if(!loaded||loadFailed)return;saveTimer.current=setTimeout(()=>{saveTimer.current=null;saveNow().then(answer=>setSaveError(answer?.durabilityWarning||'')).catch(e=>setSaveError('Could not save sheets; the current drawings remain open: '+(e.message||e)));},500);return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};},[sheets,active,revision,loaded,loadFailed]);
 
- useEffect(()=>window.notemind.onSheetsFlush(async()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}if(!persistence.current.loaded||persistence.current.loadFailed){window.notemind.sheetsFlushDone('The drawing sheets could not be safely loaded.');return;}try{const detail={promises:[]};window.dispatchEvent(new CustomEvent('camera-flush',{detail}));await Promise.all(detail.promises);await flushAllInkMutations();await saveNow();window.notemind.sheetsFlushDone(null);}catch(e){window.notemind.sheetsFlushDone(e.message||String(e));}}),[]);
+ useEffect(()=>window.notemind.onSheetsFlush(async request=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}if(!persistence.current.loaded||persistence.current.loadFailed){window.notemind.sheetsFlushDone('The drawing sheets could not be safely loaded.',request?.requestId);return;}try{const detail={promises:[]};window.dispatchEvent(new CustomEvent('camera-flush',{detail}));await Promise.all(detail.promises);await flushAllInkMutations();await saveNow();window.notemind.sheetsFlushDone(null,request?.requestId);}catch(e){window.notemind.sheetsFlushDone(e.message||String(e),request?.requestId);}}),[]);
 
 
 
