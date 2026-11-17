@@ -1,15 +1,46 @@
 (() => {
- let restoring=false,batching=0;
- const state=tab=>({text:tab===activeTab?currentText():tab.doc.text,assets:{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{})});
- function initialize(tab){if(tab&&!tab.textHistory)tab.textHistory={past:[],future:[],last:state(tab)};}
- function record(tab){initialize(tab);if(batching)return;const history=tab.textHistory,next=state(tab),last=history.last;
-  const differs=last.text!==next.text||JSON.stringify(last.meta)!==JSON.stringify(next.meta)||Object.keys(last.assets).length!==Object.keys(next.assets).length||Object.keys(next.assets).some(n=>next.assets[n]!==last.assets[n]);
-  if(differs&&!restoring){history.past.push(last);if(history.past.length>100)history.past.shift();history.future=[];}history.last=next;
+ const MAX_BYTES=192*1024*1024,MAX_STATES=100,records=new Set(),byTab=new WeakMap(),info=new WeakMap(),resources=new Map(),entries=new Map(),metaPool=new Map();
+ let restoring=false,batching=0,composing=false,inputHint=null,retainedBytes=0,totalBytes=0,assetScans=0;
+ const protectedValue=resource=>resource.current>0;
+ function charged(resource){return resource.history>0&&!protectedValue(resource);}
+ function resource(key,bytes){let value=resources.get(key);if(!value){value={key,bytes,current:0,history:0};resources.set(key,value);}return value;}
+ function count(value,kind,delta){const before=charged(value),used=value.current+value.history>0;value[kind]+=delta;const after=charged(value),now=value.current+value.history>0;if(before!==after)retainedBytes+=after?value.bytes:-value.bytes;if(used!==now)totalBytes+=now?value.bytes:-value.bytes;if(!used&&now)resources.set(value.key,value);if(!now)resources.delete(value.key);}
+ function blockCount(block,kind,delta){const before=block[kind]>0;block[kind]+=delta;if(before!==(block[kind]>0))for(const value of block.resources)count(value,kind,block[kind]>0?1:-1);if(!block.current&&!block.history&&block.signature!==undefined&&metaPool.get(block.signature)===block)metaPool.delete(block.signature);}
+ function assetsBlock(assets,last){
+  assetScans++;const keys=Object.keys(assets||{});if(last&&keys.length===Object.keys(last.value).length&&keys.every(name=>assets[name]===last.value[name]))return last;
+  const value=Object.freeze({...assets}),values=new Set(keys.flatMap(name=>[name,value[name]]).filter(item=>typeof item==='string')),block={value,current:0,history:0,resources:[]};block.resources=[resource(block,64+keys.length*32),...[...values].map(item=>resource(item,item.length*2))];return block;
  }
- function step(redo=false){const tab=activeTab;initialize(tab);const history=tab.textHistory,from=redo?history.future:history.past,to=redo?history.past:history.future;if(!from.length)return;to.push(state(tab));const next=from.pop();Object.assign(doc,{...next,assets:{...next.assets},meta:structuredClone(next.meta)});source.value=doc.text;rich.innerHTML=render(doc.text);richChanged=false;restoring=true;try{markDirty();}finally{restoring=false;}window.NoteMindWriting.decorate();window.NoteMindFind.refresh();}
- function command(redo){const focused=document.activeElement;if(focused===source||focused===rich||rich.contains(focused)||focused===document.body)step(redo);else document.execCommand(redo?'redo':'undo');}
- window.addEventListener('notemind-command',e=>{if(e.detail==='undoText')command(false);if(e.detail==='redoText')command(true);});
- document.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey))return;const focused=document.activeElement;if(focused!==rich&&focused!==source&&!rich.contains(focused))return;const key=e.key.toLowerCase();if(key==='z'||key==='y'){e.preventDefault();step(key==='y'||e.shiftKey);}});
- function transaction(run){initialize(activeTab);batching++;try{return run();}finally{batching--;if(!batching)record(activeTab);}}
- window.NoteMindHistory={initialize,record,step,transaction};
+ function metadataBlock(meta,last){const signature=JSON.stringify(meta||{});if(last?.signature===signature)return last;let block=metaPool.get(signature);if(!block){block={value:structuredClone(meta||{}),signature,current:0,history:0,resources:[]};block.resources=[resource(block,64+signature.length*4)];metaPool.set(signature,block);}return block;}
+ function capture(tab,textOnly=false){
+  const last=tab.textHistory?.last,previous=last&&info.get(last),assets=tab.doc.assets||{},meta=tab.doc.meta||{},assetBlock=textOnly&&previous?.assetSource.deref()===assets?previous.assets:assetsBlock(assets,previous?.assets),metaBlock=textOnly&&previous?.metaSource.deref()===meta?previous.meta:metadataBlock(meta,previous?.meta),next={text:tab===activeTab?currentText():tab.doc.text,assets:assetBlock.value,meta:metaBlock.value};
+  info.set(next,{assets:assetBlock,meta:metaBlock,assetSource:new WeakRef(assets),metaSource:new WeakRef(meta)});return next;
+ }
+ function hold(state,kind,delta){const value=info.get(state);blockCount(value.assets,kind,delta);blockCount(value.meta,kind,delta);count(resource(state,128),kind,delta);count(resource(state.text,state.text.length*2),kind,delta);}
+ function last(record,next){const previous=record.history.last,a=previous&&info.get(previous),b=info.get(next);if(a){if(a.assets!==b.assets)blockCount(a.assets,'current',-1);if(a.meta!==b.meta)blockCount(a.meta,'current',-1);count(resource(previous,128),'current',-1);if(previous.text!==next.text)count(resource(previous.text,previous.text.length*2),'current',-1);}if(!a||a.assets!==b.assets)blockCount(b.assets,'current',1);if(!a||a.meta!==b.meta)blockCount(b.meta,'current',1);count(resource(next,128),'current',1);if(!previous||previous.text!==next.text)count(resource(next.text,next.text.length*2),'current',1);record.history.last=next;}
+ function remove(record,list,state){const array=record.history[list],at=array.indexOf(state);if(at<0)return;array.splice(at,1);entries.delete(state);hold(state,'history',-1);}
+ function clear(record,list){for(const state of [...record.history[list]])remove(record,list,state);}
+ function push(record,list,state){record.history[list].push(state);entries.set(state,{record,list});hold(state,'history',1);while(record.history[list].length>MAX_STATES)remove(record,list,record.history[list][0]);}
+ function trim(){for(const [state,entry]of entries){if(retainedBytes<=MAX_BYTES)break;remove(entry.record,entry.list,state);}}
+ function prune(){const open=new Set(typeof tabs==='undefined'?[]:tabs);for(const record of records){const tab=record.owner.deref();if(tab&&open.has(tab))continue;clear(record,'past');clear(record,'future');if(record.history.last)hold(record.history.last,'current',-1);if(tab){delete tab.textHistory;byTab.delete(tab);}records.delete(record);}trim();}
+ function initialize(tab){if(!tab||byTab.has(tab))return;prune();const history={past:[],future:[],last:null},record={owner:new WeakRef(tab),history};tab.textHistory=history;byTab.set(tab,record);records.add(record);last(record,capture(tab));}
+ function record(tab,force=false){
+  initialize(tab);if(!tab||batching)return;const textOnly=!force&&inputHint?.tab===tab;if(inputHint?.tab===tab)inputHint=null;
+  const item=byTab.get(tab),history=item.history,next=capture(tab,textOnly),previous=history.last,a=info.get(previous),b=info.get(next),differs=previous.text!==next.text||a.assets!==b.assets||a.meta!==b.meta;
+  if(!differs){a.assetSource=b.assetSource;a.metaSource=b.metaSource;return;}
+  if(!restoring){push(item,'past',previous);clear(item,'future');}last(item,next);trim();
+ }
+ function step(redo=false){
+  const tab=activeTab;record(tab);const item=byTab.get(tab),history=item.history,from=redo?'future':'past',to=redo?'past':'future',next=history[from].at(-1);if(!next)return;
+  // Move ownership before trimming, so the current state and the most recent redo remain available.
+  push(item,to,history.last);hold(next,'current',1);remove(item,from,next);hold(next,'current',-1);
+  Object.assign(doc,{text:next.text,assets:{...next.assets},meta:structuredClone(next.meta)});source.value=doc.text;rich.innerHTML=render(doc.text);richChanged=false;restoring=true;try{markDirty();}finally{restoring=false;}window.NoteMindWriting.decorate();window.NoteMindFind.refresh();trim();
+ }
+ function command(redo){if(composing)return;const focused=document.activeElement;if(focused===source||focused===rich||rich.contains(focused)||focused===document.body)step(redo);else document.execCommand(redo?'redo':'undo');}
+ window.addEventListener('notemind-command',event=>{if(event.detail==='undoText')command(false);if(event.detail==='redoText')command(true);});
+ document.addEventListener('compositionstart',()=>{composing=true;});document.addEventListener('compositionend',()=>{composing=false;});
+ document.addEventListener('input',event=>{if(event.target!==source&&event.target!==rich&&!rich.contains(event.target)||!/^insert(?:Text|CompositionText|Paragraph|LineBreak)$|^delete(?:Content|Word|SoftLine)(?:Backward|Forward)$/.test(event.inputType||''))return;const hint=inputHint={tab:activeTab};queueMicrotask(()=>{if(inputHint===hint)inputHint=null;});},true);
+ document.addEventListener('keydown',event=>{if(composing||event.isComposing||event.keyCode===229||event.defaultPrevented||!(event.ctrlKey||event.metaKey))return;const focused=document.activeElement;if(focused!==rich&&focused!==source&&!rich.contains(focused))return;const key=event.key.toLowerCase();if(key==='z'||key==='y'){event.preventDefault();step(key==='y'||event.shiftKey);}});
+ function transaction(run){const target=activeTab;initialize(target);batching++;try{return run();}finally{batching--;if(!batching)record(target,true);}}
+ window.addEventListener('notemind-document',prune);const strip=document.getElementById?.('documentTabs');if(strip&&typeof MutationObserver==='function')new MutationObserver(prune).observe(strip,{childList:true});
+ window.NoteMindHistory={initialize,record,step,transaction,prune,stats:()=>({retainedBytes,protectedBytes:totalBytes-retainedBytes,totalBytes,states:entries.size,tabs:records.size,assetScans,maxBytes:MAX_BYTES})};
 })();
