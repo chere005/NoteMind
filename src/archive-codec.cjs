@@ -195,8 +195,8 @@ class ArchiveCodec{
  }
  quarantineInspectionWorker(worker,job,cause,exited=false){
   if(this.inspectionStop?.worker===worker)return;if(worker!==this.worker)return;clearTimeout(job.timer);clearTimeout(this.idleTimer);this.worker=null;this.stoppingWorker=worker;
-  const error=Object.assign(Error('Archive inspection cancellation cleanup failed: '+(cause?.message||cause)),{code:'ARCHIVE_INSPECTION_CLEANUP_FAILED',cause});let resolve;const promise=new Promise(done=>resolve=done),record={worker,promise};this.inspectionStop=record;this.stopping=promise;this.notifyRawCapacity();
-  const finish=async()=>{if(this.inspectionStop!==record||record.finishing)return;record.finishing=true;try{await this.retireWorker(worker);}catch(cleanup){error.archiveCleanupError=cleanup.message;}this.inspectionStop=null;if(this.stopping===promise)this.stopping=null;this.finish(job,error);resolve();this.pump();};
+  const error=Object.assign(Error('Archive inspection cancellation cleanup failed: '+(cause?.message||cause)),{code:'ARCHIVE_INSPECTION_CLEANUP_FAILED',cause});let resolve,reject;const promise=new Promise((done,fail)=>{resolve=done;reject=fail;});promise.catch(()=>{});const record={worker,promise};this.inspectionStop=record;this.stopping=promise;this.notifyRawCapacity();
+  const finish=async()=>{if(this.inspectionStop!==record||record.finishing)return;record.finishing=true;try{await this.retireWorker(worker);}catch(cleanup){error.archiveCleanupError=cleanup.message;this.stopFailure=cleanup;this.rejectStoppedQueue();this.inspectionStop=null;this.finish(job,error);reject(cleanup);return;}this.inspectionStop=null;if(this.stopping===promise)this.stopping=null;this.finish(job,error);resolve();this.pump();};
   if(exited){finish();return;}worker.once('exit',finish);
   // A resolved or rejected terminate promise is not an exit receipt.
   Promise.resolve().then(()=>worker.terminate()).catch(failure=>{if(this.inspectionStop===record)this.stopFailure=failure;});
@@ -204,10 +204,11 @@ class ArchiveCodec{
  stopWorker(force=false,exited=false){
   if(!force&&this.liveRaw()){this.retireRequested=true;return this.stopping;}clearTimeout(this.idleTimer);const worker=this.worker;this.worker=null;if(!worker)return this.stopping;
   this.stoppingWorker=worker;if(force)this.notifyRawCapacity();let resolve,reject;const promise=new Promise((done,fail)=>{resolve=done;reject=fail;});promise.catch(()=>{});this.stopping=promise;let finishing=false;
-  const finish=async()=>{if(finishing||this.stoppingWorker!==worker)return;finishing=true;try{await this.retireWorker(worker);if(this.stopping===promise)this.stopping=null;resolve();this.pump();}catch(error){this.stopFailure=error;reject(error);}};
-  worker.once('exit',finish);if(exited||worker.threadId===-1){void finish();return promise;}
-  Promise.resolve().then(()=>worker.terminate()).then(()=>{if(worker.threadId===-1)void finish();},error=>{if(this.stoppingWorker!==worker)return;if(worker.threadId===-1){void finish();return;}this.stopFailure=error;for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.args=null;job.reject(Error('Archive tools could not stop their previous worker.'));}});return promise;
+  const finish=async()=>{if(finishing||this.stoppingWorker!==worker)return;finishing=true;try{await this.retireWorker(worker);if(this.stopping===promise)this.stopping=null;resolve();this.pump();}catch(error){this.stopFailure=error;this.rejectStoppedQueue();reject(error);}};
+  worker.once('exit',finish);if(exited){void finish();return promise;}
+  Promise.resolve().then(()=>worker.terminate()).catch(error=>{if(this.stoppingWorker!==worker)return;this.stopFailure=error;this.rejectStoppedQueue();});return promise;
  }
+ rejectStoppedQueue(){for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.args=null;job.reject(Error('Archive tools could not stop their previous worker.'));}}
  retireWorker(worker){
   if(this.retirements.has(worker))return this.retirements.get(worker);if(this.stoppingWorker!==worker)return Promise.resolve();
   const pending=(async()=>{await this.spoolOwners.get(worker)?.cleanup();this.spoolOwners.delete(worker);this.rawUploads.clear();this.rawDescriptors.clear();for(const context of this.rawLeases.values())context.lost=true;this.workerRawStats=null;this.notifyRawCapacity();this.stoppingWorker=null;this.stopFailure=null;})();this.retirements.set(worker,pending);return pending;

@@ -16,8 +16,9 @@ function packOutput(doc,known,context){
  if(context&&doc&&typeof doc.text==='string'&&doc.assets)for(const name of Object.keys(doc.assets)){const value=doc.assets[name];if(typeof value==='string'){const bytes=Buffer.from(value,'base64');doc.assets[name]=raw.decoded(bytes,{sha256:digest(bytes)},context);}}
  return assets.pack(doc,known);
 }
-parentPort.on('message',async packet=>{
+async function handlePacket(packet){
  let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup}=packet;packet=null;let rawPacket;
+ const cleanup=()=>{let failure;try{releaseArchiveInput(op,args)}catch(error){failure=error;}const scope=rawPacket;rawPacket=null;try{raw?.endPacket(scope)}catch(error){failure ||=error;}try{assets?.trim()}catch(error){failure ||=error;}try{raw?.trim()}catch(error){failure ||=error;}if(failure)throw failure;};
  try{
   assets ||= new ArchiveAssetWorker(assetLimits);raw ||= new RawAssetStore({epoch:codecEpoch,...rawLimits,legacy:assets});assets.raw=raw;
   if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');rawPacket=raw.beginPacket();
@@ -40,7 +41,7 @@ parentPort.on('message',async packet=>{
   else{
    if(rawContext)raw.context(rawContext);
    received=assets.receive(assetPacket?{document:args[0],...assetPacket}:null,rawContext);
-   if(received.missing){parentPort.postMessage({id,missingAssets:received.missing});return;}
+   if(received.missing){cleanup();parentPort.postMessage({id,missingAssets:received.missing});return;}
    if(assetPacket)args[0]=received.doc;raw.claim(0);
    const hooks={assetBytes:(_name,value)=>isRawAsset(value)?raw.resolve(value,rawContext):undefined,assetInfo:name=>isRawAsset(received.refs[name])?raw.info(received.refs[name],rawContext):undefined,assetSource:(_name,value)=>isRawAsset(value)?raw.source(value,rawContext):undefined,validateAsset:name=>isRawAsset(received.refs[name])?raw.validate(name,received.refs[name],rawContext):false,asset:(name,bytes,info)=>assets.observe(received.refs[name],bytes,info)};
    value=await snapshots.withAssetContext(hooks,async()=>{
@@ -83,7 +84,9 @@ parentPort.on('message',async packet=>{
     throw Error('Unknown archive operation.');
    });
   }
-  releaseArchiveInput(op,args);raw.endPacket(rawPacket);rawPacket=null;assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
- }catch(error){releaseArchiveInput(op,args);try{raw?.endPacket(rawPacket)}catch(cleanup){error.rawCleanupError=cleanup.message;}rawPacket=null;assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
- finally{releaseArchiveInput(op,args);raw?.endPacket(rawPacket);assets?.trim();raw?.trim();args=null;assetPacket=null;}
-});
+  cleanup();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
+ }catch(error){try{cleanup()}catch(failure){error.rawCleanupError=failure.message;}const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
+ finally{args=null;assetPacket=null;}
+}
+// Failed reply/cleanup reporting closes only this owned worker; Main joins its exit before retirement.
+parentPort.on('message',packet=>{void handlePacket(packet).catch(()=>process.exit(1));});
