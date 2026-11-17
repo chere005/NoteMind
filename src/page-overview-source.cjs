@@ -19,7 +19,7 @@ function captureOverviewPage(row) {
   const metadata = thumbnailMetadata({ aspect: page.aspect, paper: row.paper ?? page.paper ?? row.metadata?.paper, extent: page.extent ?? row.metadata?.extent, camera:row.metadata?.camera });
   graphics.validate({ ...metadata, strokes: [] });
   const sheet = Object.freeze({ name: String(row.name ?? row.metadata?.name ?? "Drawing").slice(0, 256), ...metadata, strokes: page.strokes, backdrop: null });
-  return Object.freeze({ sheet, backdrop: page.backdrop ?? null, metadata: Object.freeze({ ...metadata, pageId: row.pageId, geometryRevision: row.geometryRevision, revision: row.revision, signature: row.signature }) });
+  return Object.freeze({ sheet, backdrop: page.backdrop ?? row.picture?.source ?? null, metadata: Object.freeze({ ...metadata, pageId: row.pageId, geometryRevision: row.geometryRevision, revision: row.revision, signature: row.signature }) });
 }
 async function backdropBytes(data, limit, { signal, yieldControl }) {
   if (data === null) return null;

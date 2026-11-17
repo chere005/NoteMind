@@ -12,3 +12,5 @@ src/drawing-worker.js
 src/camera-worker.js
 src/pdf-ink-browser.js
 src/pdf-reference-worker.js
+
+src/overview-thumbnail-worker.js
