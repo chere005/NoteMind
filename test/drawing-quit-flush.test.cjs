@@ -17,8 +17,9 @@ test('the real quit-flush path saves an unfinished stroke synchronously and a la
       async saveSheets(data) { written = structuredClone(data); },
     } },
   };
-  const snapshotStart = source.indexOf(' const sheetsSnapshot='), snapshotEnd = source.indexOf('\n\n', snapshotStart);
-  if (snapshotStart >= 0) vm.runInNewContext(source.slice(snapshotStart, snapshotEnd), context);
+  const snapshotStart = source.indexOf(' const snapshotSheet='), snapshotEnd = source.indexOf('\n\n', snapshotStart);
+  assert.ok(snapshotStart >= 0, 'the production snapshot helpers are present');
+  vm.runInNewContext(source.slice(snapshotStart, snapshotEnd), context);
   const saveStart = source.indexOf(' const saveNow='), saveEnd = source.indexOf('\n\n', saveStart);
   vm.runInNewContext(source.slice(saveStart, saveEnd), context);
   const flushStart = source.indexOf(' useEffect(()=>window.notemind.onSheetsFlush('), flushEnd = source.indexOf('\n\n', flushStart);
