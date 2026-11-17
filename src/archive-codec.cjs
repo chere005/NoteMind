@@ -3,7 +3,7 @@ const {createSpoolDirectory,cleanupDeadSpoolDirectories}=require('./archive-raw-
 const {TextEncoder}=require('node:util'),{randomUUID}=require('node:crypto');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
 const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawAcquireWorking','rawReleaseWorking','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
-const documentOps=new Set(['encode','encodeWithDigest','encodeFile','prepareSnapshot','publishVersion','exportWord','exportWordFile','wordImageNames','pdfInk']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
+const documentOps=new Set(['encode','encodeWithDigest','encodeFile','validateNotepad','prepareSnapshot','publishVersion','exportWord','exportWordFile','wordImageNames','pdfInk']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
  const pending=[value],seen=new Set();let bytes=0;
@@ -114,6 +114,10 @@ class ArchiveCodec{
  async encodeFile(doc,target,options={}){
   const {signal,...destination}=target||{},cancel=new SharedArrayBuffer(4),flag=new Int32Array(cancel),abort=()=>Atomics.store(flag,0,1);if(signal?.aborted)throw Object.assign(Error('Archive file output cancelled.'),{name:'AbortError'});signal?.addEventListener('abort',abort,{once:true});
   try{return await this.run('encodeFile',doc,{...destination,cancel},options);}catch(error){const stopping=this.stopping;if(stopping)try{await stopping}catch(cleanup){error.archiveCleanupError=cleanup.message;}throw error;}finally{signal?.removeEventListener('abort',abort);}
+ }
+ async validateNotepad(doc,options={}){
+  const {signal,...format}=options,cancel=new SharedArrayBuffer(4),flag=new Int32Array(cancel),abort=()=>Atomics.store(flag,0,1);if(signal?.aborted)throw Object.assign(Error('Notepad validation cancelled.'),{name:'AbortError'});signal?.addEventListener('abort',abort,{once:true});
+  try{const result=await this.run('validateNotepad',doc,{...format,cancel});if(signal?.aborted)throw Object.assign(Error('Notepad validation cancelled.'),{name:'AbortError'});return result;}finally{signal?.removeEventListener('abort',abort);}
  }
  encode(doc,options){return this.run('encode',doc,options);}
  encodeWithDigest(doc,options){return this.run('encodeWithDigest',doc,options);}

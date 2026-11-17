@@ -55,6 +55,16 @@ class RawAssetStore{
  retainsBacking(descriptor,bytes,context){return this.payloadFor(descriptor,context).bytes?.buffer===bytes.buffer;}
  info(descriptor,context){const payload=this.payloadFor(descriptor,context);return {bytes:payload.length,sha256:payload.hash};}
  validate(name,descriptor,context){const payload=this.payloadFor(descriptor,context),limits=require('./archive-limits.cjs'),graphics=/^assets\/.*\.json$/i.test(name);if(payload.length>limits.maximumEntryBytes(name))throw Error('Archive entry too large');if(!graphics||payload.graphicsValid)return true;const bytes=this.resolve(descriptor,context);limits.validateEntry(name,bytes);if(require('./graphics-pane.js').isBinary(bytes))payload.graphicsValid=true;return true;}
+ validateScoped(name,descriptor,context){
+  const payload=this.payloadFor(descriptor,context),packet=this.packet,borrowed=packet?.materialized.has(payload);
+  try{return this.validate(name,descriptor,context);}
+  finally{
+   // Validation owns only a materialization it created. An earlier resolver's
+   // packet alias remains borrowed until the packet's ordinary final cleanup.
+   const bytes=!borrowed&&packet===this.packet&&packet?.materialized.get(payload);
+   if(bytes){packet.materialized.delete(payload);this.working-=bytes.length;payload.borrows--;this.discardBacking(bytes);this.discardPayload(payload);this.trim();}
+  }
+ }
  markValidated(name,descriptor,context,bytes){const payload=this.payloadFor(descriptor,context);if(/^assets\/.*\.json$/i.test(name)&&require('./graphics-pane.js').isBinary(bytes)){require('./archive-limits.cjs').validateEntry(name,bytes);payload.graphicsValid=true;}}
  async *source(descriptor,context,{check=()=>{}}={}){const payload=this.payloadFor(descriptor,context),verify=()=>{this.payloadFor(descriptor,context);check();};payload.borrows++;this.activeSources++;let reserved=0;
   try{verify();if(payload.spool){const needed=Math.min(payload.length,196608);this.claim(needed);this.working+=needed;reserved=needed;this.observe();yield*this.spool.source(payload.spool,{consume:true,check:verify,chunkBytes:196608});}else for(let at=0;at<payload.length;at+=196608){verify();yield payload.bytes.subarray(at,Math.min(payload.length,at+196608));}verify();}

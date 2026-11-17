@@ -48,4 +48,4 @@ async function writeZipFile(entries,target,services={}){
  }catch(error){if(committed){warnings.push('The Word file was saved, but finalization could not be confirmed: '+(error?.message||String(error)));return{file,bytes:offset,revision:outputRevision,committed:true,warnings};}throw error;}
  finally{await handle?.close().catch(()=>{});try{await staging?.finish({committed});}catch(error){if(committed)warnings.push('The Word file was saved, but temporary-file cleanup could not be confirmed: '+(error?.message||String(error)));else throw error;}}
 }
-module.exports={writeZipFile,crc32,checkedName,MAX_BYTES,MAX_ENTRIES};
+module.exports={writeZipFile,describeZipEntries:describe,crc32,checkedName,MAX_BYTES,MAX_ENTRIES};
