@@ -42,7 +42,7 @@ export function useInkSelection(options:Options){
    const key=(event:KeyboardEvent)=>{
      if(event.defaultPrevented||event.isComposing||event.keyCode===229)return
      const active=doc.activeElement as HTMLElement|null,target=event.target as HTMLElement|null
-     if(target?.closest?.('input,textarea,select,[contenteditable=true]'))return
+     if(target?.isContentEditable||target?.closest?.('input,textarea,select,[contenteditable]'))return
      if(!element.closest('.tablet-host')?.contains(active))return
      if(event.key==='Escape'&&(controller.bits.count||drag.current)){event.preventDefault();event.stopPropagation();drag.current=null;controller.clear();setLasso([])}
      else if((event.key==='Delete'||event.key==='Backspace')&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();void run({type:'delete'})}
