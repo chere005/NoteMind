@@ -1,0 +1,101 @@
+[
+  {
+    "kind": "empty",
+    "width": 192,
+    "height": 128,
+    "alpha": 0,
+    "sha256": "3a3ed164e42500a1c5b2d0093f0a813d27dc50d038f330cc100a7e70ece2e6e4"
+  },
+  {
+    "kind": "writing",
+    "width": 192,
+    "height": 128,
+    "alpha": 410,
+    "sha256": "35341fb0ee3711d3082fcbf133bd9c4289aeb5210951071d55cac88a35e97aa4"
+  },
+  {
+    "kind": "thick",
+    "width": 220,
+    "height": 180,
+    "alpha": 1672,
+    "sha256": "335ece5885ceadce54d8abd155e4488da848e5cfb9c353ff2ee3ce315cd91bcf"
+  },
+  {
+    "kind": "edge",
+    "width": 192,
+    "height": 128,
+    "alpha": 410,
+    "sha256": "35341fb0ee3711d3082fcbf133bd9c4289aeb5210951071d55cac88a35e97aa4"
+  },
+  {
+    "kind": "shadow",
+    "width": 192,
+    "height": 128,
+    "alpha": 410,
+    "sha256": "35341fb0ee3711d3082fcbf133bd9c4289aeb5210951071d55cac88a35e97aa4"
+  },
+  {
+    "kind": "colour",
+    "width": 192,
+    "height": 128,
+    "alpha": 410,
+    "sha256": "35341fb0ee3711d3082fcbf133bd9c4289aeb5210951071d55cac88a35e97aa4"
+  },
+  {
+    "kind": "noise",
+    "width": 177,
+    "height": 139,
+    "alpha": 0,
+    "sha256": "29f29b82d4e09450364fe94f6f3257c9623584b88224ae9eefab717cba61474d"
+  },
+  {
+    "kind": "noise",
+    "width": 97,
+    "height": 189,
+    "seed": 9281,
+    "alpha": 0,
+    "sha256": "ace0bacbc1f5b0d20dae5c0e575c7782c536d5317c5c5c509e4e1f3511f3c418"
+  },
+  {
+    "kind": "dense",
+    "width": 192,
+    "height": 128,
+    "alpha": 0,
+    "sha256": "3a3ed164e42500a1c5b2d0093f0a813d27dc50d038f330cc100a7e70ece2e6e4"
+  },
+  {
+    "kind": "checkerboard",
+    "width": 192,
+    "height": 128,
+    "alpha": 0,
+    "sha256": "3a3ed164e42500a1c5b2d0093f0a813d27dc50d038f330cc100a7e70ece2e6e4"
+  },
+  {
+    "kind": "grid",
+    "width": 800,
+    "height": 600,
+    "alpha": 0,
+    "sha256": "124617c1f65e92d3bc895fbd869e4bb16a30754b198f59e6e973949b9aaa1b01"
+  },
+  {
+    "kind": "grid-writing",
+    "width": 800,
+    "height": 600,
+    "alpha": 5526,
+    "sha256": "bca0194912fd0876afb59eacb4f3dd82cbe0fd4ef3c7c5c79cc48b9484965f92"
+  },
+  {
+    "kind": "writing",
+    "width": 41,
+    "height": 29,
+    "alpha": 53,
+    "sha256": "f74766d04fad7e79b65f1d3b88fcd86f8fbee55e31707f7772c4800f2b9c9177"
+  },
+  {
+    "kind": "writing",
+    "width": 512,
+    "height": 256,
+    "alpha": 1752,
+    "sha256": "da63159c632e737b8eedd113cffec5960700edf1df68ac4361c101be41af3a23"
+  }
+]
