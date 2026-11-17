@@ -31,9 +31,9 @@ class SheetOrderIndex{
   if(!children.length||children.length>FANOUT)throw Error('Invalid drawing index branch.');const height=children[0].height+1,count=children.reduce((n,c)=>n+c.count,0),points=children.reduce((n,c)=>n+c.points,0);for(const child of children){descriptor(child);if(child.height!==height-1)throw Error('Invalid drawing index height.');}
   const node={format:'notemind-sheet-index',version:1,kind:'branch',height,count,points,children};descriptor({ref:children[0].ref,count,points,height});const ref=await this.packs.publishJSON(node,MAX_NODE);this.remember(ref,node);return {ref,count,points,height,packFilter:packFilter(ref,children)};
  }
- async node(root){
-  descriptor(root);if(!root.count)return null;let value=this.cache.get(root.ref.sha256)?.node;
-  if(!value){const bytes=await this.packs.read(root.ref,MAX_NODE);if(bytes.subarray(0,8).equals(MAGIC))value=decodeLeaf(bytes);else{
+ async node(root,options={}){
+  options.work?.check();descriptor(root);if(!root.count)return null;let value=this.cache.get(root.ref.sha256)?.node;
+  if(!value){const bytes=await this.packs.read(root.ref,MAX_NODE,options);options.work?.check();if(bytes.subarray(0,8).equals(MAGIC))value=decodeLeaf(bytes);else{
    value=JSON.parse(bytes.toString('utf8'));if(!value||value.format!=='notemind-sheet-index'||value.version!==1||value.kind!=='branch'||!Array.isArray(value.children)||!value.children.length||value.children.length>FANOUT)throw Error('Invalid drawing order branch.');
    let count=0,points=0;for(const child of value.children){descriptor(child);if(child.height!==value.height-1)throw Error('Invalid drawing index height.');count+=child.count;points+=child.points;}if(count!==value.count||points!==value.points)throw Error('Invalid drawing index totals.');
   }this.remember(root.ref,value);}
@@ -59,8 +59,8 @@ class SheetOrderIndex{
    const children=node.children.slice(),tail=children.pop(),updated=await appendAt(tail),combined=[...children,...updated],next=[];for(let at=0;at<combined.length;at+=FANOUT)next.push(await this.branch(combined.slice(at,at+FANOUT)));return next;};
   let level=await appendAt(root);while(level.length>1){const next=[];for(let at=0;at<level.length;at+=FANOUT)next.push(await this.branch(level.slice(at,at+FANOUT)));level=next;}return level[0];
  }
- async *records(root,ancestors=new Set()){
-  descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root);if(node.kind==='leaf'){yield*node.records;return;}for(const child of node.children)yield*this.records(child,path);
+ async *records(root,ancestors=new Set(),options={}){
+  options.work?.check();descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root,options);options.work?.check();if(node.kind==='leaf'){for(const record of node.records){options.work?.check();yield record;if(options.work?.poll())await options.work.pause();}return;}for(const child of node.children){options.work?.check();yield*this.records(child,path,options);}
  }
  stats(){return {cacheBytes:this.cacheBytes,cacheEntries:this.cache.size};}
  clear(){this.cache.clear();this.cacheBytes=0;}

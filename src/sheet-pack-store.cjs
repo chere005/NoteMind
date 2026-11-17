@@ -35,11 +35,11 @@ class SheetPackStore{
    const ref={pack:active.pack,offset,bytes:stored.length,rawBytes:bytes.length,codec:encoded.codec,sha256};this.candidateRefs.add(ref);this.remember(ref);return ref;
   }catch(error){try{this.dirtyPacks.set(active.pack,await active.handle.stat());}catch{}await this.closeActive().catch(()=>{});throw error;}
  }
- async read(reference,maxBytes=this.maxExtentBytes){
-  const ref=validateRef(reference,maxBytes),file=this.file(ref.pack),before=await this.stat(ref.pack);if(before.size<ref.offset+ref.bytes)throw Error('Drawing storage is truncated.');
-  let handle;try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));const opened=await handle.stat();if(!sameStat(before,opened))throw Error('Drawing storage changed while opening.');const bytes=Buffer.allocUnsafe(ref.bytes);let read=0;
-   while(read<bytes.length){const result=await handle.read(bytes,read,bytes.length-read,ref.offset+read);if(!result.bytesRead)throw Error('Drawing storage is truncated.');read+=result.bytesRead;}
-   const after=await handle.stat();if(!sameStat(opened,after))throw Error('Drawing storage is damaged.');const decoded=decodeExtent(bytes,ref);this.readBytes+=bytes.length;this.rememberStat(ref.pack,after);this.remember(ref);return decoded;
+ async read(reference,maxBytes=this.maxExtentBytes,options={}){
+  options.work?.check();const ref=validateRef(reference,maxBytes),file=this.file(ref.pack),before=await this.stat(ref.pack);if(before.size<ref.offset+ref.bytes)throw Error('Drawing storage is truncated.');
+  let handle;try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));const opened=await handle.stat();if(!sameStat(before,opened))throw Error('Drawing storage changed while opening.');options.work?.check();const bytes=Buffer.allocUnsafe(ref.bytes);let read=0;
+   while(read<bytes.length){options.work?.check();const result=await handle.read(bytes,read,Math.min(options.work?1024*1024:bytes.length,bytes.length-read),ref.offset+read);options.work?.check();if(!result.bytesRead)throw Error('Drawing storage is truncated.');read+=result.bytesRead;}
+   const after=await handle.stat();if(!sameStat(opened,after))throw Error('Drawing storage is damaged.');options.work?.check();const decoded=decodeExtent(bytes,ref);options.work?.check();this.readBytes+=bytes.length;this.rememberStat(ref.pack,after);this.remember(ref);return decoded;
   }finally{await handle?.close();}
  }
  async publishJSON(value,maxBytes=256*1024){const bytes=Buffer.from(JSON.stringify(value));if(bytes.length>maxBytes)throw Error('Drawing index block is too large.');return this.publish(bytes);}
