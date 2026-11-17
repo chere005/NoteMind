@@ -110,5 +110,6 @@ app.whenReady().then(async () => {
   })()`);
   report.result = result;
   if (result.count !== count || result.resources.total || result.resources.extra || result.resources.ledger.size || result.resources.ledger.storageBytes) throw Error('Incomplete staged geometry or resource release.');
+  if (report.peak > report.target) { report.guard = { phase, limit: report.target }; throw Error('Combined owned app memory exceeded the staged target.'); }
   report.passed = true; await finish(0);
 }).catch(error => void finish(1, error));
