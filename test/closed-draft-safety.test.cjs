@@ -4,10 +4,10 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 async function until(predicate){for(let n=0;n<30;n++){if(predicate())return;await tick();}assert.fail('Expected asynchronous operation did not start.');}
 async function fixture({paths=true,count=2}={}){
  const makeTab=(id,text)=>({id,doc:{id,path:paths?'/fixture/'+id+'.nm':null,text,assets:{},meta:{},revision:'old-'+id},dirty:id==='A',visual:false});
- const a=makeTab('A','Latest A'),b=makeTab('B','Other B'),cTab=makeTab('C','Other C'),elements={status:{}},events=[],sessions=[],stored=new Map(),hooks={};
+ const a=makeTab('A','Latest A'),b=makeTab('B','Other B'),cTab=makeTab('C','Other C'),elements={status:{}},events=[],sessions=[],stored=new Map(),hooks={};let generation=0;
  const source={value:a.doc.text,selectionStart:0,selectionEnd:0},rich={innerHTML:'',contains:()=>false};
  const api={recover:async()=>null,onIndexProgress:noop,indexImages:async()=>({count:0,errors:[]}),
-  async draft(doc){const snap=copy(doc);events.push({type:'draft-start',doc:snap});const override=await hooks.draft?.(snap);const kept=override||{...snap,id:snap.id||'assigned',created:snap.created||'created-'+(snap.id||'assigned')};stored.set(kept.id,copy(kept));events.push({type:'draft-done',doc:copy(kept)});return copy(kept);},
+  async draft(doc){const snap=copy(doc);events.push({type:'draft-start',doc:snap});const override=await hooks.draft?.(snap);const kept={...(override||{...snap,id:snap.id||'assigned',created:snap.created||'created-'+(snap.id||'assigned')}),recoveryId:'generation-'+(++generation)};stored.set(kept.id,copy(kept));events.push({type:'draft-done',doc:copy(kept)});return copy(kept);},
   async autosave(doc){const snap=copy(doc);events.push({type:'autosave-start',doc:snap});const saved=await hooks.autosave?.(snap)||{...snap,revision:'new-'+snap.id};stored.set(saved.id,{...copy(saved),dirty:false});events.push({type:'clean-draft',doc:copy(saved)});return copy(saved);},
   async session(value){const snap=copy(value);sessions.push(snap);await hooks.session?.(snap);}
  };
@@ -98,6 +98,17 @@ test('reopening while close storage is pending preserves new edits after a faile
  h.hooks.draft=null;await h.notes.flush();assert.equal(h.stored.get('A').text,'Live reopened edit');assert.equal(h.c.doc,h.a.doc);
 });
 
+test('reopening, editing and closing again while storage is pending persists the second close',async()=>{
+ const h=await fixture(),draft=deferred();let first=true;h.hooks.draft=()=>{if(first){first=false;return draft.promise;}};const firstClose=h.c.closeTab(h.a);await until(()=>h.events.length===1);
+ h.c.addTab({...copy(h.a.doc),text:'Older public body',dirty:false});h.edit(h.a,'New writing before second close');const secondClose=h.c.closeTab(h.a);draft.resolve({...h.events[0].doc,created:'now'});
+ assert.equal(await firstClose,true);assert.equal(await secondClose,true);assert.equal(h.stored.get('A').text,'New writing before second close');assert.equal(h.events.filter(e=>e.type==='draft-start'&&e.doc.id==='A').length,2);assert.equal(h.c.closedTabs.length,1);
+});
+
+test('a reclose during session persistence is also followed by the latest durable snapshot',async()=>{
+ const h=await fixture(),session=deferred();let first=true;h.hooks.session=()=>{if(first){first=false;return session.promise;}};const firstClose=h.c.closeTab(h.a);await until(()=>h.sessions.length===1);
+ h.c.addTab({...copy(h.a.doc),text:'Older public body',dirty:false});h.edit(h.a,'Latest while session pending');const secondClose=h.c.closeTab(h.a);session.resolve();assert.equal(await firstClose,true);assert.equal(await secondClose,true);assert.equal(h.stored.get('A').text,'Latest while session pending');assert.equal(h.c.closedTabs.length,1);
+});
+
 test('restored unsaved duplicate gets a durable draft under its new identity',async()=>{
  const h=await fixture({paths:false}),draft=deferred();h.a.draftStamp=JSON.stringify([0,null,h.a.doc.revision,false]);h.hooks.draft=()=>draft.promise;const closing=h.c.closeTab(h.a);await until(()=>h.events.length===1);
  const reopened={id:'independent',doc:{...copy(h.a.doc),text:'Other open draft'},dirty:true,visual:false};h.c.tabs.push(reopened);h.c.activateTab(reopened);draft.reject(Error('Temporary failure'));assert.equal(await closing,false);const restoredId=h.a.doc.id;assert.notEqual(restoredId,reopened.doc.id);h.hooks.draft=null;await h.notes.flush();
@@ -129,4 +140,18 @@ test('session persistence failure restores the closing document after its draft 
 test('snapshot failure leaves the tab and its unsaved memory open',async()=>{
  const h=await fixture();h.notes.snapshot=()=>{throw Error('Snapshot unavailable');};
  assert.equal(await h.c.closeTab(h.a),false);assert.equal(h.c.activeTab,h.a);assert.equal(h.c.tabs.length,2);assert.equal(h.source.value,'Latest A');assert.equal(h.events.length,0);assert.match(h.elements.status.textContent,/Snapshot unavailable/);
+});
+
+test('autosave sends its freshly written recovery generation and adopts the clean response',async()=>{
+ const h=await fixture();h.hooks.autosave=async doc=>{const written=h.events.find(e=>e.type==='draft-done'&&e.doc.id==='A');assert.equal(doc.recoveryId,written.doc.recoveryId);assert.equal(h.a.doc.recoveryId,written.doc.recoveryId);return {...doc,recoveryId:'committed-generation',revision:'committed-revision'};};
+ await h.notes.flush();assert.equal(h.a.doc.recoveryId,'committed-generation');
+});
+
+test('redrafting newer edits adopts the latest generation for the next save',async()=>{
+ const h=await fixture(),save=deferred();h.hooks.autosave=()=>save.promise;const flushing=h.notes.flush();await until(()=>h.events.some(e=>e.type==='autosave-start'));h.edit(h.a,'Later edit');save.resolve({...h.events.find(e=>e.type==='autosave-start').doc,recoveryId:'older-clean-generation',revision:'new-revision'});await flushing;
+ assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);assert.notEqual(h.a.doc.recoveryId,'older-clean-generation');assert.equal(h.stored.get('A').text,'Later edit');
+});
+
+test('manual save and final closing draft retain their newly published generation',async()=>{
+ const h=await fixture();await h.notes.saveActive(true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);const before=h.a.doc.recoveryId;assert.equal(await h.c.closeTab(h.a),true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);assert.notEqual(h.a.doc.recoveryId,before);
 });

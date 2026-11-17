@@ -67,10 +67,10 @@ function closeTab(tab) {
   if(!activeTab||!tabs.includes(activeTab)){activeTab=null;activateTab(tab);}else updateTitle();
   tab.draftStamp=null;tab.saveError=error.message;$('status').textContent='Could not save closed Notepad: '+error.message;notes?.schedule();
  };
- let saving;try{saving=notes?.closeDraft?notes.closeDraft(tab,captured,restore):Promise.resolve((notes?.api||window.notemind.notes).draft(captured)).catch(error=>{restore(error);throw error;});}
+ const attempt={};tab.closeAttempt=attempt;let saving;try{saving=notes?.closeDraft?notes.closeDraft(tab,captured,restore):Promise.resolve((notes?.api||window.notemind.notes).draft(captured)).catch(error=>{restore(error);throw error;});}
  catch(error){restore(error);return Promise.resolve(false);}
  const wasActive=tab===activeTab;tabs.splice(index,1);if(wasActive){activeTab=null;if(!tabs.length)addTab({path:null,text:'',assets:{}},{placeholder:true});else activateTab(tabs[Math.min(index,tabs.length-1)]);}else updateTitle();notes?.schedule();
- return saving.then(()=>{if(tab.doc.path&&!tabs.includes(tab))closedTabs.push(tab.doc.path);return true;},()=>false);
+ return saving.then(()=>{if(tab.closeAttempt===attempt&&tab.doc.path&&!tabs.includes(tab))closedTabs.push(tab.doc.path);return true;},()=>false);
 }
 
 function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }

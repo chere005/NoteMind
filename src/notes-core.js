@@ -3,6 +3,7 @@
  let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),closingDrafts=new Map(),startupRun=null;
  const automaticTitle=text=>text.split(/\r?\n/).map(s=>s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim()).find(Boolean)?.slice(0,100)||'Untitled';
  const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
+ function adoptDraft(tab,saved){for(const key of ['id','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];}
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
  function captureInsertion(){ensureActiveTab();const tab=activeTab,snap=snapshot(tab);window.NoteMindHistory?.initialize(tab);let range=null;if(visual)try{const selected=getSelection();range=selected?.rangeCount&&rich.contains(selected.anchorNode)?selected.getRangeAt(0).cloneRange():carets.get(tab.id)?.cloneRange();}catch{}return {tab,text:snap.text,start:visual?null:source.selectionStart,end:visual?null:source.selectionEnd,range};}
  function insertionTab(target){const tab=target?.tab;if(!tab||!tabs.includes(tab))throw Error('The original Notepad is no longer open.');if(tab.doc.path&&!/\.(nm|wm|md)$/i.test(tab.doc.path))throw Error('Save the original Notepad as a .nm or .md file before inserting graphics or attachments.');return tab;}
@@ -20,13 +21,13 @@
   const snap=snapshot(tab),edit=tab.editVersion||0;
   if(!snap.path&&!snap.manualTitle)snap.title=automaticTitle(snap.text);
   const stamp=JSON.stringify([edit,snap.path,snap.revision,snap.visual]);const kept=tab.draftStamp===stamp?snap:await api.draft(snap);tab.draftStamp=stamp;
-  tab.doc.id=kept.id;tab.doc.created=kept.created;if(!tabs.includes(tab))return;
+  adoptDraft(tab,kept);if(!tabs.includes(tab))return;
   if(edit===(tab.editVersion||0))tab.doc.title=kept.title;
   if(saveFile&&tab.dirty&&snap.path){try{
-   const saved=await api.autosave({...snap,id:kept.id,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});
-   for(const key of ['id','path','revision','created'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
+   const saved=await api.autosave({...snap,id:kept.id,recoveryId:kept.recoveryId,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});
+   for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
    if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
-   else if(!closingDrafts.has(tab))await api.draft(snapshot(tab));
+   else if(!closingDrafts.has(tab))adoptDraft(tab,await api.draft(snapshot(tab)));
    if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
    tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
   }catch(error){tab.saveError=error.message;if(tab===activeTab)$('status').textContent='Draft recovered locally · '+error.message;}}
@@ -34,14 +35,16 @@
  }
  function reopenClosing(next){for(const job of closingDrafts.values()){const tab=job.tab;if(next.id&&next.id===tab.doc.id||next.path&&tab.doc.path&&notePathKey(next.path)===notePathKey(tab.doc.path)){job.reopened=true;return tab;}}return null;}
  function closeDraft(tab,captured,onFailure){
-  if(tab.placeholder)return Promise.resolve(null);const existing=closingDrafts.get(tab);if(existing)return existing.promise;
-  const kept={...captured,assets:{...captured.assets},meta:structuredClone(captured.meta||{})},job={tab,editVersion:tab.editVersion||0,persisted:false,promise:null};closingDrafts.set(tab,job);
+  if(tab.placeholder)return Promise.resolve(null);const kept={...captured,assets:{...captured.assets},meta:structuredClone(captured.meta||{})},existing=closingDrafts.get(tab);
+  if(existing){Object.assign(existing,{captured:kept,editVersion:tab.editVersion||0,onFailure,reopened:false,saved:null,persisted:false,generation:existing.generation+1});return existing.promise;}
+  const job={tab,captured:kept,editVersion:tab.editVersion||0,onFailure,generation:0,persisted:false,promise:null};closingDrafts.set(tab,job);
   job.promise=serial(async()=>{try{
    if(startupRun&&!ready)await startupRun;
-   const reopened=job.reopened&&tabs.includes(tab),latest=reopened?snapshot(tab):{...(job.saved||kept),dirty:tab.dirty};for(const key of ['id','path','revision','created'])if(Object.hasOwn(tab.doc,key))latest[key]=tab.doc[key];
-   tab.doc={...latest};if(reopened&&tab===activeTab)doc=tab.doc;const saved=await api.draft(latest);tab.doc.id=saved.id;tab.doc.created=saved.created;job.persisted=true;
-   await session();return saved;
-  }catch(error){tab.saveError=error.message;onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);}});
+   for(;;){const generation=job.generation,reopened=job.reopened&&tabs.includes(tab),latest=reopened?snapshot(tab):{...(job.saved||job.captured),dirty:tab.dirty};for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(tab.doc,key))latest[key]=tab.doc[key];
+    tab.doc={...latest};if(reopened&&tab===activeTab)doc=tab.doc;const saved=await api.draft(latest);adoptDraft(tab,saved);if(generation!==job.generation)continue;job.persisted=true;
+    await session();if(generation===job.generation)return saved;job.persisted=false;
+   }
+  }catch(error){tab.saveError=error.message;job.onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);}});
   return job.promise;
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
@@ -50,9 +53,9 @@
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
   await persist(tab,false);const snap=snapshot(tab),edit=tab.editVersion||0;
   const saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;
-  for(const key of ['id','path','revision','created'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
+  for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
   if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
-  tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)await api.draft(snapshot(tab));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
+  tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await api.draft(snapshot(tab)));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
  function changedView(){decorate();window.NoteMindHistory?.initialize(activeTab);schedule(400);}
