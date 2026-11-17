@@ -86,3 +86,12 @@ test('async signature preparation appends only the newly accepted suffix and rev
 test('async preparation recovers exact prefix reuse through several missed committed appends',async()=>{
  const api=require('../src/stroke-signature.js'),page={aspect:1,strokes:[stroke(0)],backdrop:null},sheet={name:'Batched',page,paper:{kind:'blank'}};await prepareSheetSignature(sheet);for(let i=1;i<5;i++){const original=page.strokes,next=[...original,stroke(i)];api.recordStrokeAppend(original,next,next.at(-1));page.strokes=next;}assert.equal((await prepareSheetSignature(sheet)).signature,reference(sheet));
 });
+
+test('production sync erase and bound async tail erase preserve exact history and skip survivor hash visits',async()=>{
+ const small=new TabletPage(1);small.add(stroke(1));small.add(stroke(2));small.mark();assert.doesNotThrow(()=>small.removeAt(1));assert.equal(small.strokes.length,1);assert.equal(small.undo(),true);assert.equal(small.strokes.length,2);small.removeAt(0);assert.equal(small.strokes[0].points[0].x,stroke(2).points[0].x);small.dispose();
+ const api=require('../src/stroke-signature.js'),page=new TabletPage(1),sheet={name:'Actual page',page,paper:{}},original=Array.from({length:5000},(_,i)=>stroke(i));await page.loadGeometryAsync(original,{yieldControl:async()=>{}});bindSheetSignaturePage(page,()=>sheet);await prepareSheetSignature(sheet);const read=api.writeKnownStrokeFingerprintWords;let visits=0;api.writeKnownStrokeFingerprintWords=(...args)=>{visits++;return read(...args)};
+ try{page.mark();assert.equal(await page.removeAtAsync(original.length-1,{yieldControl:async()=>{}}),true);assert.equal(visits,0,'tail erase must use the real method linkage');assert.equal(sheetSignature(sheet),reference(sheet));assert.equal(await page.undoAsync(),true);assert.equal(page.strokes,original);
+  visits=0;page.mark();assert.equal(await page.removeAtAsync(0,{yieldControl:async()=>{}}),true);assert.ok(visits>0,'a non-tail removal must prepare its changed aggregate');assert.equal(sheetSignature(sheet),reference(sheet));assert.equal(await page.undoAsync(),true);
+  visits=0;page.mark();let changed=false;assert.equal(await page.removeAtAsync(page.strokes.length-1,{yieldControl:async()=>{if(!changed){changed=true;sheet.name='Changed during erase';}}}),true);assert.ok(visits>0,'a changed name cannot reuse the old name prefix');assert.equal(sheetSignature(sheet),reference(sheet));
+ }finally{api.writeKnownStrokeFingerprintWords=read;page.dispose();}
+});

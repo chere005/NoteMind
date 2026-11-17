@@ -394,8 +394,9 @@ export class TabletPage {
   clear(): void { if (this.strokes.length > 0) this.replace([]) }
   /** Remove one stroke WITHOUT marking: an erase gesture marks once, at its first hit. */
   removeAt(index: number): void {
-    if (!Number.isInteger(index) || index < 0 || index >= this.strokes.length) return
-    const next = this.strokes.filter((_, i) => i !== index)
+    const original=this.strokes
+    if (!Number.isInteger(index) || index < 0 || index >= original.length) return
+    const next = original.filter((_, i) => i !== index)
     this.history.prepareRemoval(next, index)
     if(index===original.length-1)recordStrokeTailRemoval(original,next)
     this.strokes = next
@@ -416,6 +417,7 @@ export class TabletPage {
       }
     }
     this.history.prepareRemoval(next, index)
+    if(index===original.length-1)recordStrokeTailRemoval(original,next)
     return this.changePrepared(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})
   }
 
