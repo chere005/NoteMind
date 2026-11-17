@@ -37,31 +37,38 @@ export const localMeanRadius = (width: number, height: number): number =>
   Math.max(8, Math.floor(Math.min(width, height) / 40))
 
 /**
- * The average of a square window round every pixel, from a summed-area
- * table so the window's size does not matter.
+ * The average of a square window round every pixel, using rolling
+ * column sums so the window's size does not affect the work per pixel.
  */
 export function localMean(gray: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  const stride = width + 1
-  const sums = new Int32Array((width + 1) * (height + 1))
-  for (let y = 0; y < height; y++) {
-    let rowSum = 0
-    for (let x = 0; x < width; x++) {
-      rowSum += gray[y * width + x]!
-      sums[(y + 1) * stride + (x + 1)] = sums[y * stride + (x + 1)]! + rowSum
-    }
-  }
   const mean = new Uint8Array(width * height)
-  for (let y = 0; y < height; y++) {
-    const top = Math.max(0, y - radius), bottom = Math.min(height - 1, y + radius)
-    for (let x = 0; x < width; x++) {
-      const left = Math.max(0, x - radius), right = Math.min(width - 1, x + radius)
-      // Recover the unsigned window sum after the table's 2^32 wraps. A window can itself exceed 2^31 (a huge page's padded
-      // selection), so a signed `| 0` would make it negative. Each window must sum to less than 2^32: the renderer's 16M-pixel
-      // context is at most 4.08 billion grey levels; ordinary local windows are much smaller.
-      const total = (sums[(bottom + 1) * stride + (right + 1)]! - sums[top * stride + (right + 1)]!
-        - sums[(bottom + 1) * stride + left]! + sums[top * stride + left]!) >>> 0
-      const count = (bottom - top + 1) * (right - left + 1)
-      mean[y * width + x] = Math.max(0, Math.min(255, Math.trunc(total / count)))
+  if (!mean.length) return mean
+  // Roll over the shorter axis: exact integer sums need only one narrow row,
+  // instead of a full Int32 summed-area image (and unsigned wrap recovery).
+  const transpose = width > height, columns = transpose ? height : width, rows = transpose ? width : height
+  const sums = new Float64Array(columns)
+  const index = (column: number, row: number): number => transpose ? column * width + row : row * width + column
+  for (let row = 0; row <= Math.min(rows - 1, radius); row++)
+    for (let column = 0; column < columns; column++) sums[column] += gray[index(column, row)]!
+  for (let row = 0; row < rows; row++) {
+    if (row > 0) {
+      const remove = row - radius - 1, add = row + radius
+      for (let column = 0; column < columns; column++) {
+        if (remove >= 0) sums[column] -= gray[index(column, remove)]!
+        if (add < rows) sums[column] += gray[index(column, add)]!
+      }
+    }
+    const rowCount = Math.min(rows - 1, row + radius) - Math.max(0, row - radius) + 1
+    let total = 0
+    for (let column = 0; column <= Math.min(columns - 1, radius); column++) total += sums[column]!
+    for (let column = 0; column < columns; column++) {
+      if (column > 0) {
+        const remove = column - radius - 1, add = column + radius
+        if (remove >= 0) total -= sums[remove]!
+        if (add < columns) total += sums[add]!
+      }
+      const count = rowCount * (Math.min(columns - 1, column + radius) - Math.max(0, column - radius) + 1)
+      mean[index(column, row)] = Math.max(0, Math.min(255, Math.trunc(total / count)))
     }
   }
   return mean
@@ -83,16 +90,15 @@ export function darkerThanPaper(gray: Uint8Array, width: number, height: number,
 
 /** The 8-connected blobs of a mask, in the order their first pixel is met. */
 export function components(ink: Uint8Array, width: number, height: number): Component[] {
-  const label = new Int32Array(width * height)
+  const label = new Uint8Array(width * height)
   const found: Component[] = []
-  let next = 1
   const stack: number[] = []
 
   for (let start = 0; start < width * height; start++) {
     if (!ink[start] || label[start] !== 0) continue
     const pixels: number[] = []
     let minX = width, maxX = -1, minY = height, maxY = -1
-    label[start] = next
+    label[start] = 1
     stack.push(start)
     while (stack.length > 0) {
       const index = stack.pop()!
@@ -102,17 +108,16 @@ export function components(ink: Uint8Array, width: number, height: number): Comp
       if (x > maxX) maxX = x
       if (y < minY) minY = y
       if (y > maxY) maxY = y
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-        const nx = x + dx, ny = y + dy
+      for (let direction = 0; direction < 8; direction++) {
+        const nx = x + neighbourX[direction]!, ny = y + neighbourY[direction]!
         if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
         const neighbour = ny * width + nx
         if (ink[neighbour] && label[neighbour] === 0) {
-          label[neighbour] = next
+          label[neighbour] = 1
           stack.push(neighbour)
         }
       }
     }
-    next += 1
     found.push({ stride: width, minX, minY, maxX, maxY, pixels })
   }
   return found
@@ -137,13 +142,21 @@ export function dotLattice(all: Component[], width: number, height: number, opti
   const limit = Math.max(6, Math.floor(Math.min(width, height) / 80))
 
   const candidates: { index: number; x: number; y: number }[] = []
-  all.forEach((component, index) => {
+  for (let index = 0; index < all.length; index++) {
+    const component = all[index]!
     const w = componentWidth(component), h = componentHeight(component)
     const long = Math.max(w, h), short = Math.min(w, h)
-    if (long > limit || long > 2 * short || componentFill(component) < 0.3) return
+    if (long > limit || long > 2 * short || componentFill(component) < 0.3) continue
     const centre = componentCentre(component)
     candidates.push({ index, x: centre.x, y: centre.y })
-  })
+    if (candidates.length > maximumCandidates) return null
+  }
+  return latticeOfCandidates(candidates, tolerance, minimumDots, maximumCandidates)
+}
+
+interface DotCandidate { index: number; x: number; y: number; pixels?: Uint32Array }
+function latticeOfCandidates(candidates: DotCandidate[], tolerance = 0.15, minimumDots = 20,
+  maximumCandidates = 5000): Set<number> | null {
   const count = candidates.length
   if (count < minimumDots || count > maximumCandidates) return null
   candidates.sort((a, b) => a.x - b.x)
@@ -242,6 +255,73 @@ export function maskOf(found: Marks, indices: Iterable<number>): Uint8Array {
 
 export const writingMask = (found: Marks): Uint8Array => maskOf(found, found.writing)
 
+/** Scratch is reused across the two production classification passes. */
+export class WritingMaskWorkspace {
+  readonly visited: Uint8Array
+  queue = new Uint32Array(0)
+  length = 0
+  writingPixels = 0
+  constructor(readonly limit: number) { this.visited = new Uint8Array(limit) }
+  reset(): void { this.visited.fill(0); this.length = 0; this.writingPixels = 0 }
+  push(pixel: number): void {
+    if (this.length === this.queue.length) {
+      const next = new Uint32Array(Math.min(this.limit, Math.max(1024, this.queue.length * 2)))
+      next.set(this.queue); this.queue = next
+    }
+    this.queue[this.length++] = pixel
+  }
+}
+const neighbourX = [-1, 1, 0, 0, -1, 1, -1, 1]
+const neighbourY = [0, 0, -1, 1, -1, -1, 1, 1]
+
+/** Same classification as marks(), without retaining every noise component. */
+export function writingMaskFromInk(ink: Uint8Array, width: number, height: number, options: {
+  minimumSize?: number; minimumArea?: number; keepEdges?: boolean
+} = {}, workspace?: WritingMaskWorkspace): Uint8Array {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 0 || height < 0 || !Number.isSafeInteger(width * height) || ink.length !== width * height) throw Error('Invalid writing mask dimensions.')
+  workspace ||= new WritingMaskWorkspace(width * height)
+  if (workspace.limit !== width * height) throw Error('Writing mask workspace has another size.')
+  workspace.reset()
+  const {visited} = workspace, out = new Uint8Array(width * height), candidates: DotCandidate[] = []
+  const minimumSize = options.minimumSize ?? 7, minimumArea = options.minimumArea ?? 20
+  const candidateLimit = Math.max(6, Math.floor(Math.min(width, height) / 80))
+  let component = 0, overflow = false
+  for (let start = 0; start < ink.length; start++) {
+    if (!ink[start] || visited[start]) continue
+    workspace.length = 0; workspace.push(start); visited[start] = 1
+    let minX = width, minY = height, maxX = -1, maxY = -1
+    for (let head = 0; head < workspace.length; head++) {
+      const pixel = workspace.queue[head]!, x = pixel % width, y = (pixel - x) / width
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+      for (let direction = 0; direction < 8; direction++) {
+        const nx = x + neighbourX[direction]!, ny = y + neighbourY[direction]!
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+        const next = ny * width + nx
+        if (ink[next] && !visited[next]) { visited[next] = 1; workspace.push(next) }
+      }
+    }
+    const w = maxX - minX + 1, h = maxY - minY + 1, area = workspace.length
+    const writing = area >= minimumArea && Math.max(w, h) >= minimumSize
+      && (options.keepEdges || w <= width * 0.85 && h <= height * 0.85)
+    if (writing) { workspace.writingPixels += area; for (let at = 0; at < area; at++) out[workspace.queue[at]!] = 1 }
+    if (!overflow && Math.max(w, h) <= candidateLimit && Math.max(w, h) <= 2 * Math.min(w, h) && area / (w * h) >= 0.3) {
+      if (candidates.length === 5000) { overflow = true; candidates.length = 0 }
+      else candidates.push({ index: component, x: (minX + maxX) / 2, y: (minY + maxY) / 2,
+        ...(writing ? { pixels: workspace.queue.slice(0, area) } : {}) })
+    }
+    component++
+  }
+  const lattice = overflow ? null : latticeOfCandidates(candidates)
+  if (lattice) for (const candidate of candidates) if (lattice.has(candidate.index) && candidate.pixels) {
+    workspace.writingPixels -= candidate.pixels.length
+    for (const pixel of candidate.pixels) out[pixel] = 0
+  }
+  return out
+}
+
 /** Connected marks, with the specks, the page edges and the dot grid taken out. */
 export function inkMask(gray: Uint8Array, width: number, height: number, options: {
   threshold?: number
@@ -250,7 +330,7 @@ export function inkMask(gray: Uint8Array, width: number, height: number, options
   keepEdges?: boolean
 } = {}): Uint8Array {
   const raw = darkerThanPaper(gray, width, height, options.threshold ?? 28)
-  return writingMask(marks(raw, width, height, options))
+  return writingMaskFromInk(raw, width, height, options)
 }
 
 // MARK: - How heavy traced writing comes out (Mac commits 159e0f6, 6685cb1)

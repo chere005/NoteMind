@@ -1,0 +1,129 @@
+// The production App and PadHost run in hidden windows with synthetic media and
+// in-memory persistence. Instrumentation exposes owners; it replaces no behavior.
+const {app,BrowserWindow}=require('electron');
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
+const assert=require('node:assert/strict'),esbuild=require('esbuild');
+const root=path.resolve(__dirname,'..');
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-tablet-host-'));
+const output=path.join(root,'test-results/performance-0.37/tablet-host');
+app.setPath('userData',path.join(directory,'profile'));
+app.dock?.hide();app.disableHardwareAcceleration();
+for(const flag of ['disable-renderer-backgrounding','disable-background-timer-throttling','disable-backgrounding-occluded-windows'])app.commandLine.appendSwitch(flag);
+app.on('window-all-closed',()=>{});
+let win,finished=false,phase='setup',peak=0;
+const children=new Set(),errors=[],results=[];
+const watchdog=setTimeout(()=>finish(Error('Tablet host ownership fixture timed out.')),60000);
+const memory=setInterval(()=>{
+ if(!app.isReady())return;
+ const bytes=app.getAppMetrics().reduce((total,item)=>total+item.memory.workingSetSize*1024,0);
+ peak=Math.max(peak,bytes);
+ if(bytes>1024**3)finish(Error('Owned Electron working set exceeded 1 GiB.'));
+},40);
+function finish(error){
+ if(finished)return;finished=true;clearTimeout(watchdog);clearInterval(memory);
+ const value={ok:!error,phase,error:error?.stack,peakWorkingSetBytes:peak,results,errors};
+ fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(value,null,2));
+ console.log(JSON.stringify(value));
+ for(const child of children)if(!child.isDestroyed())child.destroy();
+ if(win&&!win.isDestroyed())win.destroy();
+ fs.rmSync(directory,{recursive:true,force:true});app.exit(error?1:0);
+}
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const evaluate=expression=>win.webContents.executeJavaScript(expression);
+async function until(expression){
+ for(let turn=0;turn<400&&!finished;turn++){if(await evaluate(expression))return;await wait(10);}
+ throw Error('Condition timed out: '+expression);
+}
+const bootstrap=`
+window.fixtureErrors=[];addEventListener('error',e=>fixtureErrors.push(e.error?.stack||e.message));
+addEventListener('unhandledrejection',e=>fixtureErrors.push(String(e.reason)));
+const canvas=document.createElement('canvas');canvas.width=96;canvas.height=144;
+canvas.getContext('2d').fillStyle='#2266cc';canvas.getContext('2d').fillRect(0,0,96,144);
+window.fixturePNG=canvas.toDataURL('image/png');window.fixtureReleased=[];
+window.fixtureCameraLoads=0;window.fixtureCameraWrites=[];window.fixtureSheetWrites=[];
+window.fixtureMediaCalls=0;window.fixtureShutdowns=0;window.fixtureMounts=0;window.fixtureDetaches=0;
+window.fixtureObserveOwners=owners=>{
+ if(window.fixtureOwners){if(fixtureOwners.camera!==owners.camera||fixtureOwners.previews!==owners.previews||fixtureOwners.sheets!==owners.sheets)throw Error('App replaced a stable owner');return;}
+ window.fixtureOwners=owners;
+ const camera=owners.camera,attach=camera.attachView.bind(camera),detach=camera.detachView.bind(camera),shutdown=camera.shutdown.bind(camera);
+ camera.attachView=(...args)=>{fixtureMounts++;return attach(...args)};
+ camera.detachView=(...args)=>{fixtureDetaches++;return detach(...args)};
+ camera.shutdown=(...args)=>{fixtureShutdowns++;return shutdown(...args)};
+};
+Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{
+ getUserMedia:async()=>{fixtureMediaCalls++;throw Error('Physical camera must not open');},
+ enumerateDevices:async()=>[],addEventListener(){},removeEventListener(){}
+}});
+localStorage.setItem('notemind.inputSource','camera');
+const subscriptions=new Set(),off=()=>()=>{},nothing=async()=>null;
+window.fixturePadState={available:true,enabled:false,owned:true,open:false,bounds:{width:1080,height:1788},rotation:0};
+window.fixtureSetPad=enabled=>{fixturePadState={...fixturePadState,enabled,open:enabled};for(const receive of subscriptions)receive(fixturePadState);return fixturePadState;};
+window.notemind={platform:'darwin',
+ loadSheets:async()=>null,saveSheets:async value=>fixtureSheetWrites.push(value),onSheetsFlush:off,sheetsFlushDone(){},
+ loadCameraPages:async()=>{fixtureCameraLoads++;return [0,1].map(i=>({name:'Saved '+i,picture:fixturePNG,strokes:[],aspect:'free',rotation:0,device:''}));},
+ saveCameraPages:async value=>fixtureCameraWrites.push(value),
+ ocrAvailable:async()=>false,preferenceGet:nothing,preferenceSet:nothing,onPreference:off,
+ previewDocument:async()=>({kind:'image',pages:[{width:96,height:144,image:fixturePNG.split(',')[1]}]}),
+ pad:{state:async()=>fixturePadState,onState:receive=>{subscriptions.add(receive);return()=>subscriptions.delete(receive)},onFrame:off,
+ set:async enabled=>fixtureSetPad(enabled),close:async()=>fixtureSetPad(false),ready:nothing,activity(){},input(){},
+ onPenSamples:off,onPenStatus:off,penStop(){},penHeartbeat(){}},
+ pen:{onSamples:off,onStatus:off,sheet(){}}
+};
+window.NoteMindNotes={api:{releaseAttachmentPreview:async token=>fixtureReleased.push(token)},captureInsertion:()=>({id:'original-note'})};
+document.getElementById('paneToggle').onclick=()=>{document.getElementById('pane').hidden=!document.getElementById('pane').hidden};
+`;
+async function setup(){
+ const entry=path.join(root,'src/tablet-entry.tsx');
+ await esbuild.build({entryPoints:[entry],bundle:true,platform:'browser',format:'iife',outfile:path.join(directory,'bundle.js'),
+  alias:{'@notemind/core':path.join(root,'src/tablet/core.js')},jsx:'automatic',plugins:[{name:'observe-production-owners',setup(build){
+   build.onLoad({filter:/\/tablet-entry\.tsx$/},async args=>{
+    let contents=await fs.promises.readFile(args.path,'utf8');
+    const marker=' const [loaded,setLoaded]';assert.ok(contents.includes(marker));
+    contents=contents.replace(marker,' window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current});\n'+marker);
+    const mount="createRoot(document.getElementById('tablet-root')).render(<App/>);";assert.ok(contents.includes(mount));
+    contents=contents.replace(mount,"const fixtureRoot=createRoot(document.getElementById('tablet-root'));window.fixtureUnmount=()=>fixtureRoot.unmount();fixtureRoot.render(<App/>);");
+    return{contents,loader:'tsx',resolveDir:path.dirname(args.path)};
+   });
+  }}]});
+ for(const name of ['drawing','camera'])await esbuild.build({entryPoints:[path.join(root,'src/'+name+'-worker.ts')],bundle:true,platform:'browser',format:'iife',outfile:path.join(directory,name+'-worker.js'),alias:{'@notemind/core':path.join(root,'src/tablet/core.js')},minify:true});
+ fs.writeFileSync(path.join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="bundle.css"><style>html,body{margin:0;height:100%;overflow:hidden}main{display:none}#pane{height:100%;width:100%}#tablet-root{height:100%}.tablet-pane{height:100%;display:flex;flex-direction:column}.camera-workspace{flex:1;min-height:0}.camera-stage{flex:1;min-height:0}</style></head><body><nav id="sidebar" hidden></nav><div id="documentTabs"></div><main><article id="rich"></article></main><button id="paneToggle" hidden></button><button id="open" hidden></button><aside id="pane"><div id="tablet-root"></div></aside><script>${bootstrap}</script><script src="bundle.js"></script></body></html>`);
+ win=new BrowserWindow({width:1100,height:900,show:false,focusable:false,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
+ win.webContents.session.setPermissionRequestHandler((_,__,done)=>done(false));
+ win.webContents.setWindowOpenHandler(()=>({action:'allow',overrideBrowserWindowOptions:{show:false,focusable:false,width:1080,height:1788,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}}}));
+ win.webContents.on('did-create-window',child=>{children.add(child);child.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message)});child.on('closed',()=>children.delete(child));});
+ win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message)});
+ await win.loadFile(path.join(directory,'index.html'));
+}
+async function run(){
+ await app.whenReady();await setup();phase='initial-camera';
+ await until('window.fixtureOwners?.camera.state.cameraLoaded&&document.querySelectorAll("#camera-tabs .sheet-tab").length===2');
+ await evaluate(`(()=>{const camera=fixtureOwners.camera,owner=camera.models.current[0].page;owner.mark();owner.add({colorHex:'#123456',width:3,points:[{x:.1,y:.2},{x:.3,y:.4}]});camera.setter('box')({x:.1,y:.2,width:.3,height:.4});})()`);
+ await evaluate('fixtureOwners.camera.flush()');
+ assert.equal(await evaluate('fixtureCameraLoads'),1);
+ results.push({phase,loads:1,mounts:await evaluate('fixtureMounts')});
+ phase='previews-and-portal';
+ await evaluate(`for(const [name,previewToken]of [['A','token-A'],['B','token-B']])dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/'+name+'.png',name,previewToken}}))`);
+ await until('document.querySelectorAll("[data-doc-tab]").length===2');
+ for(let turn=0;turn<2;turn++){
+  await evaluate('fixtureSetPad(true)');await until('!!document.querySelector(".pad-placeholder")&&fixtureMounts>fixtureDetaches');
+  assert.equal(children.size,1);assert.deepEqual(await evaluate('fixtureReleased'),[]);
+  await evaluate('fixtureSetPad(false)');await until('!document.querySelector(".pad-placeholder")&&document.querySelectorAll("[data-doc-tab]").length===2');
+  assert.deepEqual(await evaluate('fixtureReleased'),[]);assert.equal(await evaluate('fixtureShutdowns'),0);
+ }
+ assert.equal(await evaluate('fixtureCameraLoads'),1);
+ assert.equal(await evaluate('fixtureOwners.camera.models.current[0].page.strokes.length'),1);
+ assert.deepEqual(await evaluate('fixtureOwners.camera.state.box'),{x:.1,y:.2,width:.3,height:.4});
+ results.push({phase,mounts:await evaluate('fixtureMounts'),detaches:await evaluate('fixtureDetaches'),releases:0});
+ phase='close-and-root-disposal';
+ await evaluate(`dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/A.png',name:'A again',previewToken:'redundant-A'}}))`);
+ await until('fixtureReleased.includes("redundant-A")');
+ await evaluate(`document.querySelector('[data-doc-close="/fixture/A.png"]').click()`);
+ await until('fixtureReleased.includes("token-A")&&document.querySelectorAll("[data-doc-tab]").length===1');
+ assert.equal(await evaluate('fixtureReleased.includes("token-B")'),false);
+ await evaluate('fixtureUnmount()');await until('fixtureOwners.camera.closed&&fixtureReleased.includes("token-B")');
+ assert.equal(await evaluate('fixtureShutdowns'),1);assert.equal(await evaluate('fixtureMediaCalls'),0);
+ assert.deepEqual(await evaluate('fixtureReleased.slice().sort()'),['redundant-A','token-A','token-B']);
+ assert.deepEqual(await evaluate('fixtureErrors'),[]);assert.deepEqual(errors,[]);
+ results.push({phase,shutdowns:1,physicalMediaCalls:0,released:await evaluate('fixtureReleased')});finish();
+}
+run().catch(finish);

@@ -29,8 +29,10 @@ const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({s
 
 let sheetWrite = Promise.resolve();
 let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
+let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
 const sheetLoads=require('./sheet-load-transport.cjs').shared;
-app.on('will-quit',()=>{sheetLoads.dispose();void sheetPersistenceService?.dispose();});
+const sheetReads=new(require('./sheet-read-requests.cjs').SheetReadRequests)({loads:sheetLoads});
+app.on('will-quit',()=>{sheetReads.dispose();sheetLoads.dispose();void sheetPersistenceService?.dispose();void cameraPersistenceService?.dispose();});
 
 let cameraWrite = Promise.resolve();
 
@@ -195,13 +197,11 @@ ipcMain.handle('open', async event => {
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Documents', extensions: ['nm','wm', 'md', 'txt', 'py','docx','pdf','png','jpg','jpeg','webp','gif','bmp','svg','avif'] }] });
 
   if (result.canceled) return null;
-  const opened = await openPath(result.filePaths[0]);
-  if (opened && !opened.workspace) projectService.recents.remember(result.filePaths[0], 'file').catch(() => {});
-  return notesIPC.seed(event,opened);
+  return notesIPC.scope(event,async()=>{const opened=await openPath(result.filePaths[0]);if(opened&&!opened.workspace)projectService.recents.remember(result.filePaths[0],'file').catch(()=>{});return opened;});
 
 });
 
-ipcMain.handle('open-path', async(event, file) => notesIPC.seed(event,await openPath(file)));
+ipcMain.handle('open-path', async(event, file) => notesIPC.scope(event,()=>openPath(file)));
 
 ipcMain.handle('choose-folder', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
 
@@ -265,16 +265,24 @@ ipcMain.handle('search-folder', async (_, folder, query) => {
 
 ipcMain.handle('load-sheets', async () => {await sheetWrite;return sheetPersistence().load();});
 ipcMain.handle('list-sheets',async event=>{if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');await sheetWrite;const result=await sheetPersistence().listPages();if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');return result;});
-ipcMain.handle('load-sheet-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid drawing page identity.');await sheetWrite;const state=await sheetPersistence().loadPage(pageId);if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'page:'+pageId,maxBytes:256*1024*1024}):state;});
-ipcMain.handle('load-sheet-state', async (event,options) => {await sheetWrite;const state=await sheetPersistence().loadStateCompact();return options?.chunks?sheetLoads.beginFor(event.sender,state,{maxBytes:256*1024*1024}):state;});
+ipcMain.handle('load-sheet-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid drawing page identity.');return sheetReads.run(event.sender,options?.requestId,'sheet',async({signal,id,check})=>{await sheetWrite;check();const state=await sheetPersistence().loadPage(pageId,{signal});check();return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'page:'+pageId,maxBytes:256*1024*1024,requestId:options?.requestId??null,requestScope:'sheet'}):state;});});
+ipcMain.handle('load-sheet-state',async(event,options)=>sheetReads.run(event.sender,options?.requestId,'sheet',async({signal,id,check})=>{await sheetWrite;check();const state=await sheetPersistence().loadStateCompact({signal});check();return options?.chunks?sheetLoads.beginFor(event.sender,state,{maxBytes:256*1024*1024,requestId:options?.requestId??null,requestScope:'sheet'}):state;}));
+ipcMain.handle('cancel-sheet-page-load',(event,requestId)=>sheetReads.cancel(event.sender,requestId,'sheet'));
 ipcMain.handle('load-sheet-chunk',(event,session,key,offset)=>sheetLoads.read(event.sender.id,session,key,offset));
 ipcMain.handle('finish-sheet-load',(event,session)=>sheetLoads.release(event.sender.id,session));
 ipcMain.handle('save-sheets', async (_,data) => {const pending=sheetPersistence().save(data);sheetWrite=pending.catch(()=>{});await pending;});
+const sheetUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{service:()=>sheetPersistence(),onWrite:pending=>{sheetWrite=pending.catch(()=>{});}});
 ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
-ipcMain.handle('load-camera-pages', async () => { await cameraWrite; try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
-
-ipcMain.handle('save-camera-pages', async (_, data) => { if (!Array.isArray(data)) throw Error('Invalid camera page data'); const content = JSON.stringify(data); if (Buffer.byteLength(content) > 200 * 1024 * 1024) throw Error('Camera pages are too large'); const file = path.join(app.getPath('userData'), 'camera-pages.json'); const write = async () => { const temp = `${file}.${require('node:crypto').randomUUID()}.tmp`; try { await fs.writeFile(temp, content, { flag: 'wx' }); await fs.rename(temp, file); } finally { await fs.unlink(temp).catch(() => {}); } }; const pending = cameraWrite.then(write, write); cameraWrite = pending.catch(() => {}); await pending; });
+const cameraUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{prefix:'camera-delta',service:()=>cameraPersistence(),onWrite:pending=>{cameraWrite=pending.catch(()=>{});}});
+app.on('will-quit',()=>{void sheetUploads.dispose();void cameraUploads.dispose();});
+ipcMain.handle('list-camera-pages',async event=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');await cameraWrite;const state=await cameraPersistence().listPages();if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return state;});
+ipcMain.handle('load-camera-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid camera page identity.');return sheetReads.run(event.sender,options?.requestId,'camera',async({signal,id,check})=>{await cameraWrite;check();const state=await cameraPersistence().loadPage(pageId,{signal});check();return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'camera-page:'+pageId,maxBytes:256*1024*1024,requestId:options?.requestId??null,requestScope:'camera'}):state;});});
+ipcMain.handle('cancel-camera-page-load',(event,requestId)=>sheetReads.cancel(event.sender,requestId,'camera'));
+ipcMain.handle('save-camera-pages-delta',async(_,delta)=>{const pending=cameraPersistence().saveDelta(delta);cameraWrite=pending.catch(()=>{});return pending;});
+// Legacy callers still use the worker and guarded index; user data is never JSON-parsed or rewritten on main.
+ipcMain.handle('load-camera-pages',async()=>{await cameraWrite;const sheets=await cameraPersistence().load();return sheets?.map(require('./camera-schema.cjs').cameraPage)||null;});
+ipcMain.handle('save-camera-pages',async(_,data)=>{if(!Array.isArray(data)||!data.length)throw Error('Invalid camera page data.');const {cameraMetadata}=require('./camera-schema.cjs'),sheets=data.map(page=>({...cameraMetadata(page),strokes:page.strokes,backdrop:page.picture})),pending=cameraPersistence().save(sheets);cameraWrite=pending.catch(()=>{});return pending;});
 
 ipcMain.on('sheets:flush-done', (event, error) => { if (!closing || event.sender !== win.webContents) return; clearTimeout(closeTimer); if (error) { sheetSaveFailed(String(error)); return; } closing = false; win.confirmedClose = true; win.close(); });
 
@@ -343,14 +351,14 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   const ext=path.extname(file).toLowerCase();if(!['.nm','.wm','.md','.txt','.py'].includes(ext))throw Error('Choose a .nm, .md, .txt, or .py file.');
   if((doc.otherOpenPaths||[]).some(other=>keyPath(other)===key))throw Error('That file is already open in another tab.');
   if(!['.nm','.wm','.md'].includes(ext)&&Object.keys(doc.assets||{}).length)throw Error('Save as .nm to keep attachments.');
-  let previous;try{previous=await fs.readFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
-  let expected=null,oldArchive=null;
-  if(previous){if(['.nm','.wm'].includes(ext)){const input=previous.byteOffset===0&&previous.byteLength===previous.buffer.byteLength?previous:Uint8Array.from(previous);previous=null;const inspected=await require('./archive-codec.cjs').inspectOwned(input,{files:false});oldArchive=inspected.doc;expected={sha256:inspected.revision,bytes:inspected.bytes};}else expected={sha256:digest(previous),bytes:previous.length};}
+  const archive=['.nm','.wm'].includes(ext);let previous=null,expected;
+  if(archive)expected=await require('./source-file-revision.cjs').sourceFileRevision(file);
+  else{try{previous=await fs.readFile(file);}catch(error){if(error.code!=='ENOENT')throw error;}expected=previous?{sha256:digest(previous),bytes:previous.length}:null;}
   if(!saveAs&&doc.revision&&(!expected||expected.sha256!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
   const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId){delete doc.recoveryId;doc=require('./pdf-reference-reconcile.cjs').remapOwner(doc,originalId);}
-  if(expected){try{const old=oldArchive||(ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}});await notesStore.version({...old,id:doc.id,title:old.title||doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}previous=null;oldArchive=null;
+  if(expected){if(archive||ext==='.md')await notesStore.versionFromFile(file,doc,expected,'Before save');else await notesStore.version({text:previous.toString('utf8'),assets:{},id:doc.id,title:doc.title},'Before save');}previous=null;
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
-  if(['.nm','.wm'].includes(ext))doc=require('./markdown-files.cjs').canonical(doc);
+  if(['.nm','.wm'].includes(ext))doc=await require('./markdown-files.cjs').canonicalAsync(doc);
   let bytes,revision;if(['.nm','.wm'].includes(ext))({bytes,revision}=await require('./archive-codec.cjs').encodeWithDigest(doc));else{bytes=Buffer.from(doc.text);revision=digest(bytes);}
   if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,revision);if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
   const saveWarnings=[];try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
@@ -363,17 +371,8 @@ async function saveDocument(doc,saveAs=false,automatic=false){
 }
 ipcMain.handle('save',(_,doc,saveAs)=>saveDocument(doc,saveAs));
 
-ipcMain.handle('image', async () => {
-  const systemPictures=require('node:fs').existsSync('/usr/bin/sips');
-  const result=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'Images',extensions:['png','jpg','jpeg','gif','webp','svg','bmp','avif',...(systemPictures?['heic','heif','tif','tiff']:[])]}]});
-  if(result.canceled)return null;
-  const file=result.filePaths[0];let bytes,name=path.basename(file);
-  if(systemPictures&&/\.(heic|heif|tif|tiff)$/i.test(file)){
-    const temp=path.join(app.getPath('temp'),'notemind-'+require('node:crypto').randomUUID()+'.png');
-    try{await require('node:util').promisify(require('node:child_process').execFile)('/usr/bin/sips',['-s','format','png',file,'--out',temp]);bytes=await fs.readFile(temp);name=path.basename(file,path.extname(file))+'.png';}finally{await fs.unlink(temp).catch(()=>{});}
-  }else bytes=await fs.readFile(file);
-  return {name:'assets/'+Date.now()+'-'+name.replace(/[^a-zA-Z0-9._-]/g,'-'),data:bytes.toString('base64')};
-});
+const imagePickerIPC=require('./image-picker-ipc.cjs').installImagePicker(ipcMain,{scope:(event,run)=>notesIPC.scope(event,run),services:{storage:require('./archive-codec.cjs'),documentIO,dialog,getWin:()=>win,tempRoot:app.getPath('temp')}});
+app.once('will-quit',()=>imagePickerIPC.dispose());
 
 ipcMain.handle('run-python', async (_, file) => {
 

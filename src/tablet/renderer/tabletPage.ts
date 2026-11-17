@@ -277,7 +277,7 @@ export class TabletPage {
   private geometryLeases = 0
   private disposeRequested = false
   private opListeners = new Set<(op: SheetOp) => void>()
-  private changeListeners = new Set<() => void>()
+  private changeListeners = new Set<(op: SheetOp | null) => void>()
   private applying = false
 
   constructor(aspect = 16 / 9) {
@@ -309,13 +309,13 @@ export class TabletPage {
     return () => { this.opListeners.delete(listener) }
   }
   /** Hear that anything changed: strokes, history or shape. */
-  onChange(listener: () => void): () => void {
+  onChange(listener: (op: SheetOp | null) => void): () => void {
     this.changeListeners.add(listener)
     return () => { this.changeListeners.delete(listener) }
   }
   private emit(op: SheetOp | null): void {
     if (op && !this.applying) this.opListeners.forEach((listener) => listener(op))
-    this.changeListeners.forEach((listener) => listener())
+    this.changeListeners.forEach((listener) => listener(op))
   }
 
   setAspect(aspect: number): void {
@@ -418,6 +418,7 @@ export class TabletPage {
   /** Immutable history target, captured before an asynchronous action yields. */
   peekUndo(redo = false): InkStroke[] | null { return this.history.peek(redo) }
   get retainedGeometryPoints(): number { return this.history.retainedGeometryPoints }
+  get currentGeometryPoints(): number { return this.history.currentGeometryPoints }
   get retainedGeometryBytes(): number { return this.history.retainedGeometryBytes }
 
   /** Do what another view of the sheet did. Not announced again. */

@@ -37,6 +37,8 @@ export interface PadMirrorKey {
   altKey: boolean
   shiftKey: boolean
   metaKey: boolean
+  isComposing?: boolean
+  keyCode?: number
 }
 
 type Emit = <T>(send: () => T) => T
@@ -162,7 +164,9 @@ function bridgeFor(view: View, emit: Emit): Bridge {
     if (view.closed || doc.visibilityState === "hidden") return false
     const target = doc.activeElement
     if (!(target instanceof view.HTMLElement) || target === doc.body || target === doc.documentElement) return false
-    if (event.ctrlKey || event.metaKey || event.altKey || !["Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) return false
+    const preset=/^[1-9]$/.test(event.key)
+    if(event.isComposing||event.keyCode===229||preset&&(event.type!=="keydown"||event.repeat||event.shiftKey||!target.matches('[data-tablet="surface"]')))return false
+    if (event.ctrlKey || event.metaKey || event.altKey || !preset&&!["Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) return false
     const keyEvent = new view.KeyboardEvent(event.type, {
       key: event.key, code: event.code, repeat: event.repeat,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
@@ -173,7 +177,7 @@ function bridgeFor(view: View, emit: Emit): Bridge {
       && target.matches("button, [role='button'], [role='menuitem']")) {
       dispatchMirrorEvent(target, new view.MouseEvent("click", { bubbles: true, cancelable: true, composed: true, view, detail: 0 }))
     }
-    return true
+    return preset?keyEvent.defaultPrevented:true
   }
   return { pointer: dispatchPointer, key: dispatchKey, cancel: cancelContact }
 }

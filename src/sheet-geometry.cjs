@@ -33,15 +33,30 @@ async function* publishEncoded(packs,chunks){for(const packet of chunks){if(!pac
 const own=bytes=>bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?new Uint8Array(bytes.buffer):Uint8Array.from(bytes);
 class GeometryReader{
  constructor(packs,{maxCacheBytes=16*1024*1024}={}){Object.assign(this,{packs,maxCacheBytes});this.cache=new Map();this.cacheBytes=0;this.last=null;}
- async get(ref){if(this.last?.hash===ref.sha256)return this.last.value;let entry=this.cache.get(ref.sha256);if(entry){this.cache.delete(ref.sha256);this.cache.set(ref.sha256,entry);}else{const value=inspectChunk(await this.packs.read(ref,graphics.MAX_BINARY_BYTES)),bytes=value.bytes.length+value.offsets.byteLength;entry={value,bytes};if(bytes<=this.maxCacheBytes){this.cache.set(ref.sha256,entry);this.cacheBytes+=bytes;for(const [hash,old]of this.cache){if(this.cacheBytes<=this.maxCacheBytes)break;this.cache.delete(hash);this.cacheBytes-=old.bytes;}}}this.last={hash:ref.sha256,value:entry.value};return entry.value;}
- async compact(page,index){
-  graphics.validate({...page.metadata,strokes:[],backdrop:null});if(typeof page.metadata.name!=='string'||!Number.isSafeInteger(page.binaryBytes)||page.binaryBytes<0)throw Error('Invalid drawing page.');
-  const metadata={name:page.metadata.name,aspect:page.metadata.aspect,paper:page.metadata.paper,extent:page.metadata.extent,backdrop:null};if(24+Buffer.byteLength(JSON.stringify(metadata))+page.binaryBytes+page.order.count*16+(page.backdrop?.ref.rawBytes||page.backdrop?.ref.bytes||0)>256*1024*1024)throw Error('This drawing page is too large to load.');const output=header(metadata,page.order.count,page.order.points,page.binaryBytes),identities=new Uint8Array(page.order.count*16),ids=new DataView(identities.buffer);let at=output.offset,position=0;
-  for await(const record of index.records(page.order)){
-   const chunk=await this.get(record.chunk);if(record.strokeIndex>=chunk.count)throw Error('Invalid drawing chunk offset.');const start=chunk.offsets[record.strokeIndex],end=chunk.offsets[record.strokeIndex+1];if(end-start!==strokeBytes(record)||!!(chunk.bytes[start+3]&1)!==!!record.pressure||at+end-start>output.bytes.length||position>=page.order.count)throw Error('Invalid drawing stroke data.');chunk.bytes.copy(output.bytes,at,start,end);at+=end-start;ids.setFloat64(position*16,record.id,true);ids.setUint32(position*16+8,parseInt(record.hash.slice(0,8),16),true);ids.setUint32(position*16+12,parseInt(record.hash.slice(8),16),true);position++;
+ async get(ref,options={}){
+  const work=options.work;work?.check();if(this.last?.hash===ref.sha256)return this.last.value;let entry=this.cache.get(ref.sha256);
+  if(entry){this.cache.delete(ref.sha256);this.cache.set(ref.sha256,entry);}else{
+   const bytes=await this.packs.read(ref,graphics.MAX_BINARY_BYTES,options);work?.check();let value;
+   if(work){const parsed=await require('./binary-drawing.js').inspectBinaryDrawing(bytes,{signal:{get aborted(){work.check();return false;}},yieldControl:()=>work.pause()});if(parsed.metadata.backdrop)throw Error('Drawing geometry chunks cannot contain backgrounds.');value={...parsed,bytes:Buffer.from(parsed.bytes.buffer,parsed.bytes.byteOffset,parsed.bytes.byteLength),points:parsed.points};}
+   else value=inspectChunk(bytes);
+   work?.check();const size=value.bytes.length+value.offsets.byteLength;entry={value,bytes:size};if(size<=this.maxCacheBytes){this.cache.set(ref.sha256,entry);this.cacheBytes+=size;for(const[hash,old]of this.cache){if(this.cacheBytes<=this.maxCacheBytes)break;this.cache.delete(hash);this.cacheBytes-=old.bytes;}}
   }
-  if(at!==output.bytes.length||position!==page.order.count)throw Error('Invalid drawing page totals.');const backdropBytes=page.backdrop?own(await this.packs.read(page.backdrop.ref,150*1024*1024)):null;
-  return {metadata:{...page.metadata,pageId:page.pageId,geometryRevision:page.geometryRevision??page.order.ref?.sha256??null,backdrop:null},bytes:own(output.bytes),identityBytes:identities,backdropBytes};
+  this.last={hash:ref.sha256,value:entry.value};return entry.value;
+ }
+ async compact(page,index,options={}){
+  const work=options.work;work?.check();
+  graphics.validate({...page.metadata,strokes:[],backdrop:null});if(typeof page.metadata.name!=='string'||!Number.isSafeInteger(page.binaryBytes)||page.binaryBytes<0)throw Error('Invalid drawing page.');
+  const metadata={name:page.metadata.name,aspect:page.metadata.aspect,paper:page.metadata.paper,extent:page.metadata.extent,backdrop:null};if(24+Buffer.byteLength(JSON.stringify(metadata))+page.binaryBytes+page.order.count*16+(page.backdrop?.ref.rawBytes||page.backdrop?.ref.bytes||0)>256*1024*1024)throw Error('This drawing page is too large to load.');work?.check();const output=header(metadata,page.order.count,page.order.points,page.binaryBytes);work?.check();const identities=new Uint8Array(page.order.count*16),ids=new DataView(identities.buffer);let at=output.offset,position=0;
+  try{
+   for await(const record of index.records(page.order,undefined,options)){
+    work?.check();const chunk=await this.get(record.chunk,options);work?.check();if(record.strokeIndex>=chunk.count)throw Error('Invalid drawing chunk offset.');const start=chunk.offsets[record.strokeIndex],end=chunk.offsets[record.strokeIndex+1];if(end-start!==strokeBytes(record)||!!(chunk.bytes[start+3]&1)!==!!record.pressure||at+end-start>output.bytes.length||position>=page.order.count)throw Error('Invalid drawing stroke data.');
+    if(work){for(let from=start;from<end;from+=65536){work.check();const length=Math.min(65536,end-from);chunk.bytes.copy(output.bytes,at,from,from+length);at+=length;if(work.poll())await work.pause();}}
+    else{chunk.bytes.copy(output.bytes,at,start,end);at+=end-start;}
+    ids.setFloat64(position*16,record.id,true);ids.setUint32(position*16+8,parseInt(record.hash.slice(0,8),16),true);ids.setUint32(position*16+12,parseInt(record.hash.slice(8),16),true);position++;if(work?.poll())await work.pause();
+   }
+   work?.check();if(at!==output.bytes.length||position!==page.order.count)throw Error('Invalid drawing page totals.');const backdropBytes=page.backdrop?own(await this.packs.read(page.backdrop.ref,150*1024*1024,options)):null;work?.check();
+   return{metadata:{...page.metadata,pageId:page.pageId,geometryRevision:page.geometryRevision??page.order.ref?.sha256??null,backdrop:null},bytes:own(output.bytes),identityBytes:identities,backdropBytes};
+  }finally{if(work)this.last=null;}
  }
  clear(){this.cache.clear();this.cacheBytes=0;this.last=null;}
 }

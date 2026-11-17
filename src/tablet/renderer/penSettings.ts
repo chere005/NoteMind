@@ -177,13 +177,14 @@ function setSheet(next: Partial<SheetTools>): void {
   sheetListeners.forEach((listener) => listener())
 }
 export const sheetTools = (): SheetTools => sheet
+export function subscribeSheetTools(listener:()=>void):()=>void { sheetListeners.add(listener);return()=>{sheetListeners.delete(listener)} }
 export const setSheetEraser = (eraser: boolean) => setSheet(eraser ? { eraser, selectTool: false } : { eraser })
 export const setSheetSelect = (selectTool: boolean) => setSheet(selectTool ? { selectTool, eraser: false } : { selectTool })
 /** What a press ON THE SHEET is resolved with: the pen's buttons and choices, the sheet's own tools. */
 export const sheetPressSettings = (): PenSettings => ({ ...state, eraser: sheet.eraser, selectTool: sheet.selectTool })
 export function useSheetTools(): SheetTools {
   return useSyncExternalStore(
-    (listener) => { sheetListeners.add(listener); return () => sheetListeners.delete(listener) },
+    subscribeSheetTools,
     sheetTools,
   )
 }

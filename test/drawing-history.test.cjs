@@ -2,6 +2,9 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {DrawingHistoryBudget,DrawingHistory}=require('../src/drawing-history.js'),{recordStrokeAppend}=require('../src/stroke-signature.js');
 const stroke=(n=20,value=0)=>({colorHex:'#112233',width:2,points:Array.from({length:n},(_,i)=>({x:value+i*.001,y:.3})),pressures:Array(n).fill(.7)});
 function append(history,item){history.mark();const previous=history.current,next=[...previous,item];recordStrokeAppend(previous,next,item);history.setCurrent(next);return next;}
+test('current geometry point counts follow edits and history without scanning retained scenes',()=>{
+ const history=new DrawingHistory([]);assert.equal(history.currentGeometryPoints,0);const first=stroke(3),second=stroke(5);append(history,first);append(history,second);assert.equal(history.currentGeometryPoints,8);history.step();assert.equal(history.currentGeometryPoints,3);history.step(true);assert.equal(history.currentGeometryPoints,8);const points=first.points;Object.defineProperty(first,'points',{get(){throw Error('A count getter must not scan geometry.')}});assert.equal(history.currentGeometryPoints,8);Object.defineProperty(first,'points',{value:points});history.dispose();assert.equal(history.currentGeometryPoints,0);
+});
 test('complete undo and redo survive the full100-frame limit without extra eviction',()=>{
  const budget=new DrawingHistoryBudget({maxBytes:1024*1024*1024}),history=new DrawingHistory([],{budget}),states=[history.current];for(let i=0;i<120;i++)states.push(append(history,stroke(1,i)));
  for(let i=119;i>=20;i--)assert.equal(history.step(),states[i]);assert.equal(history.step(),null);
@@ -60,4 +63,24 @@ test('cached nearest-scene point totals survive append, sparse removal and Undo 
 });
 test('cached retained bytes include a large nearest Undo even when current ink is empty',()=>{
  const budget=new DrawingHistoryBudget(),history=new DrawingHistory([stroke(10000)],{budget}),before=history.retainedGeometryBytes;history.mark();history.setCurrent([]);assert.equal(history.current.length,0);assert.ok(history.retainedGeometryBytes>=before);const visits=budget.visits;for(let i=0;i<100;i++)assert.ok(history.retainedGeometryBytes>=before);assert.equal(budget.visits,visits);history.dispose();assert.equal(history.retainedGeometryBytes,0);
+});
+test('shared geometry is charged once across duplicate leaves, recolours and owners',()=>{
+ const budget=new DrawingHistoryBudget(),item=stroke(1),original=Array(70).fill(item),a=new DrawingHistory(original,{budget}),recoloured={...item,colorHex:'#ffffff'},b=new DrawingHistory([recoloured],{budget});
+ assert.equal(a.currentGeometryPoints,70);assert.equal(budget.geometry.size,4);assert.equal(budget.geometry.total,128*2+96+40);assert.equal(budget.geometry.extra,0);
+ a.mark();a.setCurrent([]);assert.equal(budget.geometry.extra,128);assert.equal(a.step(),original);assert.equal(budget.geometry.extra,0);assert.equal(a.step(true).length,0);b.dispose();assert.equal(budget.geometry.total,128+96+40);assert.equal(budget.geometry.extra,128+96+40);
+ assert.equal(a.step(),original);a.dispose();assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);
+});
+test('unheld cached trees re-acquire recycled geometry records by source identity',()=>{
+ const budget=new DrawingHistoryBudget(),first=[stroke(1)],second=[stroke(3)],history=new DrawingHistory(first,{budget}),cached=budget.state(first);
+ history.setCurrent(second);assert.equal(budget.geometry.size,3);assert.equal(budget.geometry.total,128+32+3*64+32+3*8);assert.equal(budget.state(first),cached);
+ history.setCurrent(first);assert.equal(history.current,first);assert.equal(budget.geometry.size,3);assert.equal(budget.geometry.total,128+96+40);history.dispose();assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.geometry.storageBytes,0);
+});
+test('decode priming and unheld preparation retain no per-stroke accounting records',async()=>{
+ const budget=new DrawingHistoryBudget(),source=Array.from({length:5000},()=>stroke(1));for(const item of source)budget.prime(item);await budget.stateAsync(source,async()=>{});assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);
+ const history=new DrawingHistory(source,{budget});assert.equal(budget.geometry.size,source.length*3);history.dispose();assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);
+});
+test('cancelled ownership acquisition releases ledger pages and cached scenes can retry',async()=>{
+ const budget=new DrawingHistoryBudget(),history=new DrawingHistory([],{budget}),source=Array.from({length:12000},()=>stroke(1)),controller=new AbortController();let commits=0,cancelled=false;
+ assert.equal(await history.change(source,()=>{commits++;history.setCurrent(source);},{signal:controller.signal,yieldControl:async()=>{if(budget.geometry.size&&!cancelled){cancelled=true;controller.abort();}await new Promise(resolve=>setImmediate(resolve));}}),false);assert.equal(cancelled,true);assert.equal(commits,0);assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);assert.equal(budget.pendingPreparations,0);
+ history.setCurrent(source);assert.equal(history.current,source);assert.equal(budget.geometry.size,source.length*3);history.dispose();assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.geometry.storageBytes,0);
 });

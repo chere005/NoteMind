@@ -5,9 +5,10 @@ const {spawn} = require('node:child_process');
 const {pack, unpack} = require('./zip.cjs');
 module.exports = function installFeatures(window, projectService) {
  const win = () => window();
+ const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain);app.on('will-quit',()=>drawingSaves.dispose());
  ipcMain.on('window-close',()=>win()?.close());
  const {home,root,registry,recents}=projectService;
- const preferenceKeys=['orientation','pen','view','padChromeOrientation'];
+ const preferenceKeys=['orientation','pen','view','padChromeOrientation','toolPresets'];
  let folderWatches=[],folderKey='',folderTimer;
  ipcMain.handle('watch-folders',(_,folders)=>{if(!Array.isArray(folders)||folders.some(f=>typeof f!=='string'))throw Error('Invalid folders');const key=folders.join('\n');if(key===folderKey)return;folderKey=key;folderWatches.forEach(w=>w.close());folderWatches=[];for(const folder of folders){try{const watcher=require('node:fs').watch(folder,{recursive:true},()=>{clearTimeout(folderTimer);folderTimer=setTimeout(()=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('folders-changed');},150);});watcher.on('error',()=>{});folderWatches.push(watcher);}catch{}}});
  app.on('will-quit',()=>{folderWatches.forEach(w=>w.close());clearTimeout(folderTimer);});
@@ -17,6 +18,7 @@ module.exports = function installFeatures(window, projectService) {
  const preferenceWrites=new Map();
  ipcMain.handle('preference-set',async(_,key,value)=>{
   if(!preferenceKeys.includes(key))throw Error('Invalid preference');
+  if(key==='toolPresets'&&(typeof value!=='string'||Buffer.byteLength(value)>32768))throw Error('Invalid tool presets.');
   const next=(preferenceWrites.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{await fs.mkdir(path.dirname(preferenceFile(key)),{recursive:true});const temp=preferenceFile(key)+'.'+require('node:crypto').randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify(value));await fs.rename(temp,preferenceFile(key));}finally{await fs.unlink(temp).catch(()=>{});}});
   preferenceWrites.set(key,next);try{await next;}finally{if(preferenceWrites.get(key)===next)preferenceWrites.delete(key);}
  });
@@ -47,13 +49,16 @@ module.exports = function installFeatures(window, projectService) {
   if(result.canceled)return null;
   await fs.writeFile(result.filePath,Buffer.from(data,'base64'));return result.filePath;
  });
- ipcMain.handle('save-pane',async(_, sheet, svg, file, options)=>{
-  const graphics=require('./graphics-pane.js');let sidecar;
-  if(sheet&&Object.hasOwn(sheet,'encodedGraphics')){const value=sheet.encodedGraphics;if(Object.keys(sheet).length!==1||typeof value!=='string'||!value.length||value.length%4!==0||value.length>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4||Buffer.from(value.slice(0,12),'base64').subarray(0,8).toString('ascii')!==graphics.BINARY_MAGIC||!/^[a-z0-9+/]*={0,2}$/i.test(value.slice(-4)))throw Error('Invalid encoded drawing sheet.');sidecar=value;}else sidecar=graphics.encodeBase64(sheet);
-  const result=file?{filePath:file,canceled:false}:await dialog.showSaveDialog(win(),{defaultPath:'Drawing.nm',filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;
-  const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),versioned=options?.versioned===true,expected=file&&versioned&&options.expected?options.expected:await guard.fingerprintFile(dest);
-  const encoded=await require('./archive-codec.cjs').encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});
-  const data=encoded.bytes;await guard.replaceIfUnchanged(dest,data,expected);return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
+ ipcMain.handle('save-pane',async(event,sheet,svg,file,options)=>{
+  const graphics=require('./graphics-pane.js'),token=sheet&&Object.hasOwn(sheet,'drawingUpload')?sheet.drawingUpload:null;let lease,sidecar;
+  try{
+   if(token!==null){if(Object.keys(sheet).length!==1||typeof token!=='string'||svg!==null)throw Error('Invalid uploaded drawing sheet.');lease=drawingSaves.consume(event?.sender,token);lease.check();}
+   else if(sheet&&Object.hasOwn(sheet,'encodedGraphics')){const value=sheet.encodedGraphics;if(Object.keys(sheet).length!==1||typeof value!=='string'||!value.length||value.length%4!==0||value.length>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4||Buffer.from(value.slice(0,12),'base64').subarray(0,8).toString('ascii')!==graphics.BINARY_MAGIC||!/^[a-z0-9+/]*={0,2}$/i.test(value.slice(-4)))throw Error('Invalid encoded drawing sheet.');sidecar=value;}else sidecar=graphics.encodeBase64(sheet);
+   const result=file?{filePath:file,canceled:false}:await dialog.showSaveDialog(win(),{defaultPath:'Drawing.nm',filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;lease?.check();
+   const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),versioned=options?.versioned===true,expected=file&&versioned&&options.expected?options.expected:await guard.fingerprintFile(dest),codec=require('./archive-codec.cjs');
+   const encoded=lease?await codec.encodeDrawingOwned(lease.payload):await codec.encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});lease?.check();
+   const data=encoded.bytes;await guard.replaceIfUnchanged(dest,data,expected);return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
+  }finally{if(lease)lease.release();else if(token!==null){try{drawingSaves.cancel(event?.sender,token)}catch{}}}
  });
  ipcMain.handle('open-pane',async(event,options)=>{
   const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;

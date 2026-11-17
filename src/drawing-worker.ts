@@ -1,5 +1,6 @@
 import graphics from './graphics-pane.js'
 import {transformInkBinary} from './transform-ink.js'
+import {normalizeBinaryDrawing,fingerprintBinaryDrawing} from './binary-normalize.js'
 import {inspectBinaryDrawing,cropBinaryDrawing,paintBinaryDrawing} from './binary-drawing.js'
 import {pressureScale} from '@notemind/core'
 import {snapshotDrawing,rasterDrawing} from './tablet/renderer/drawingSnapshot'
@@ -8,6 +9,7 @@ import {paintPaper,inkOn} from './tablet/renderer/tabletPaper'
 import {paintBackdrop} from './tablet/renderer/tabletBackdrop'
 import {fingerprint,canonicalStrokeFingerprintAsync} from './stroke-signature.js'
 import {InkRaster} from './tablet/renderer/inkRaster'
+import {releaseOwnedInkPacket} from './owned-ink-packet.js'
 
 async function pngOf(canvas:OffscreenCanvas):Promise<string>{
  const bytes=new Uint8Array(await (await canvas.convertToBlob({type:'image/png'})).arrayBuffer())
@@ -29,26 +31,28 @@ const ink=new InkRaster();let activeInk:any=null,pendingInk:any=null
 async function pumpInk(){
  if(activeInk)return
  while(pendingInk){const job=pendingInk;pendingInk=null;let complete:any;const done=new Promise<void>(resolve=>complete=resolve),active=activeInk={job,cancelled:false,done}
-  try{const result=await ink.render(job.ink,()=>active.cancelled),value:any=result,tiles=[...(value.tiles||[]),...(value.preview?.fixed||[]),...(value.preview?.ink?[value.preview.ink]:[])];self.postMessage({id:job.id,...result},tiles.map((tile:any)=>tile.bitmap))}
+  try{const result=await ink.render(job.ink,()=>active.cancelled,undefined,()=>releaseOwnedInkPacket(job.ink,ink.records.batches)),value:any=result,tiles=[...(value.tiles||[]),...(value.preview?.fixed||[]),...(value.preview?.ink?[value.preview.ink]:[])];self.postMessage({id:job.id,...result},tiles.map((tile:any)=>tile.bitmap))}
   catch(error){self.postMessage({id:job.id,error:error instanceof Error?error.message:String(error)})}
-  finally{activeInk=null;complete()}
+  finally{releaseOwnedInkPacket(job.ink,ink.records.batches);activeInk=null;complete()}
  }
 }
-function acceptInk(job:any){if(pendingInk)self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=job;if(activeInk)activeInk.cancelled=true;void pumpInk()}
-const background=new Map<number,AbortController>();let queue=Promise.resolve()
+function acceptInk(job:any){if(pendingInk){releaseOwnedInkPacket(pendingInk.ink,ink.records.batches);self.postMessage({id:pendingInk.id,cancelled:true,accepted:false})}pendingInk=job;if(activeInk)activeInk.cancelled=true;void pumpInk()}
+const background=new Map<number,AbortController>(),queuedExports=new Map<number,any>();let queue=Promise.resolve(),queuedBytes=0
 const sidecarAcks=new Map<number,{index:number;resolve:()=>void;reject:(error:Error)=>void}>()
 async function sidecarChunk(job:any,index:number,text:string,signal:AbortSignal){let abort:any;try{await new Promise<void>((resolve,reject)=>{sidecarAcks.set(job.id,{index,resolve,reject});abort=()=>{sidecarAcks.delete(job.id);reject(Error('Drawing export cancelled.'))};signal.addEventListener('abort',abort,{once:true});if(signal.aborted){abort();return}self.postMessage({id:job.id,index,sidecarChunk:text})});}finally{signal.removeEventListener('abort',abort);sidecarAcks.delete(job.id)}}
 async function runJob(job:any){
  const controller=new AbortController();background.set(job.id,controller);let canvas:OffscreenCanvas|null=null
  const pause=async()=>{if(controller.signal.aborted)throw Error('Drawing export cancelled.');await graphics.yieldTask();const visible=activeInk;if(visible)await visible.done;if(controller.signal.aborted)throw Error('Drawing export cancelled.')}
  try{
+  if(job?.fingerprint){const source=await inspectBinaryDrawing(job.bytes,{signal:controller.signal,yieldControl:pause}),hashBytes=await fingerprintBinaryDrawing(source,{signal:controller.signal,yieldControl:pause});self.postMessage({id:job.id,hashBytes},[hashBytes.buffer]);return}
   if(job?.transform){
    const result=await transformInkBinary(job.bytes,job.transform.from,job.transform.to,{signal:controller.signal,yieldControl:pause})
    self.postMessage({id:job.id,...result},[result.bytes.buffer,result.indexes.buffer,result.hashBytes.buffer]);return
   }
   if(job?.normalize){
    if(!Number.isSafeInteger(job.id)||!job.bytes)throw Error('Invalid drawing load request.')
-   const source=graphics.isBinary(job.bytes)?await graphics.decodeAsync(job.bytes,{signal:controller.signal,yieldControl:pause}):graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=await graphics.encodeBytesAsync({...source,backdrop:null},{signal:controller.signal,yieldControl:pause}),hashBytes=new Uint8Array(strokes.length*8),view=new DataView(hashBytes.buffer);let work=0
+   if(graphics.isBinary(job.bytes)){const result=await normalizeBinaryDrawing(job.bytes,{signal:controller.signal,yieldControl:pause});self.postMessage({id:job.id,...result},[result.bytes.buffer,result.hashBytes.buffer,...(result.backdropBytes?[result.backdropBytes.buffer]:[])]);return}
+   const source=graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=await graphics.encodeBytesAsync({...source,backdrop:null},{signal:controller.signal,yieldControl:pause}),hashBytes=new Uint8Array(strokes.length*8),view=new DataView(hashBytes.buffer);let work=0
    for(let i=0;i<strokes.length;i++){const hash=await canonicalStrokeFingerprintAsync(strokes[i],pause);view.setUint32(i*8,parseInt(hash.slice(0,8),16),true);view.setUint32(i*8+4,parseInt(hash.slice(8),16),true);work+=strokes[i].points.length+1;if(work>=8192){work=0;await pause()}}
    const backdropBytes=source.backdrop?await asciiBytes(source.backdrop,pause):null,backdropHash=source.backdrop?fingerprint(source.backdrop):null;metadata.backdrop=null
    self.postMessage({id:job.id,bytes,metadata,hashBytes,backdropBytes,backdropHash},[bytes.buffer,hashBytes.buffer,...(backdropBytes?[backdropBytes.buffer]:[])]);return
@@ -77,9 +81,9 @@ async function runJob(job:any){
 self.onmessage=event=>{
  const job=event.data
  if(job?.sidecarAck){const held=sidecarAcks.get(job.sidecarAck);if(held?.index===job.index){sidecarAcks.delete(job.sidecarAck);held.resolve()}return}
- if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
- if(job?.cancelExport){background.get(job.cancelExport)?.abort();return}
+ if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){releaseOwnedInkPacket(pendingInk.ink,ink.records.batches);self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
+ if(job?.cancelExport){const held=queuedExports.get(job.cancelExport);if(held){queuedExports.delete(job.cancelExport);queuedBytes-=held.cost;held.job.bitmap?.close();held.job.bytes=null;held.job.bitmap=null;self.postMessage({id:job.cancelExport,error:'Drawing export cancelled.'})}else background.get(job.cancelExport)?.abort();return}
  if(job?.ink){acceptInk(job);return}
- if(job?.transform){void runJob(job);return}
- queue=queue.catch(()=>{}).then(()=>runJob(job))
+ if(job?.transform||job?.fingerprint){void runJob(job);return}
+ const id=job?.id,cost=job?.bytes?.byteLength;if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(cost)||cost<0||background.has(id)||queuedExports.has(id)||queuedExports.size>=4||queuedBytes+cost>256*1024*1024){job?.bitmap?.close();self.postMessage({id,error:'Drawing exports are busy or invalid.'});return}queuedExports.set(id,{job,cost});queuedBytes+=cost;queue=queue.catch(()=>{}).then(()=>{const held=queuedExports.get(id);if(!held)return;queuedExports.delete(id);queuedBytes-=held.cost;return runJob(held.job)})
 }

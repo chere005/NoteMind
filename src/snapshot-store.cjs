@@ -1,6 +1,6 @@
 // Internal version storage. Public .nm files and recovery .wm archives remain self-contained.
 const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto');
-const {TextEncoder}=require('node:util');
+const {TextEncoder}=require('node:util'),{AsyncLocalStorage}=require('node:async_hooks'),assetContext=new AsyncLocalStorage();
 const {readLimited}=require('./read-limited.cjs');
 const {ENTRY_BYTES:ENTRY_LIMIT,TOTAL_BYTES:TOTAL_LIMIT,maximumEntryBytes,validateEntry}=require('./archive-limits.cjs');
 const ASSET_LIMIT=9998,CACHE_ENTRIES=2048,MANIFEST_LIMIT=384*1024*1024,encoder=new TextEncoder();
@@ -28,27 +28,42 @@ function prepareSnapshot(doc,{knownHashes=[],previousHash=null,copyObjectBytes=t
  if(Buffer.byteLength(JSON.stringify(metadataOf(document)))>ENTRY_LIMIT)throw Error('Version metadata is too large.');
  const entries=Object.entries(doc.assets||{});if(entries.length>ASSET_LIMIT)throw Error('Version snapshot has too many assets.');
  for(const [name,value]of entries){
-  if(!validAsset(name)||typeof value!=='string')throw Error('Invalid version asset.');
-  const bytes=Buffer.from(value,'base64');validateEntry(name,bytes);if((total+=bytes.length)>TOTAL_LIMIT)throw Error('Version snapshot is too large.');
-  const hash=sha(bytes);assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:copyObjectBytes?Uint8Array.from(bytes):bytes});
+  if(!validAsset(name))throw Error('Invalid version asset.');const hooks=assetContext.getStore();
+  const resolved=hooks?.assetBytes?.(name,value);if(resolved===undefined&&typeof value!=='string')throw Error('Invalid version asset.');const bytes=resolved===undefined?Buffer.from(value,'base64'):Buffer.from(resolved.buffer,resolved.byteOffset,resolved.byteLength);if(!hooks?.validateAsset?.(name,bytes))validateEntry(name,bytes);if((total+=bytes.length)>TOTAL_LIMIT)throw Error('Version snapshot is too large.');
+  const cached=assetContext.getStore()?.assetInfo?.(name,bytes),hash=cached?.sha256||sha(bytes);if(cached&&cached.bytes!==bytes.length)throw Error('Invalid version asset digest.');assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:copyObjectBytes?Uint8Array.from(bytes):bytes});
  }
  const manifest={format:'notemind-snapshot',version:1,document,assets,textBytes};manifest.checksum=manifestChecksum(manifest);
  // Fingerprint every persisted field, including explicit title/identity/created date.
  const contentHash='snapshot2:'+manifest.checksum;
- const legacyHash=validHash(previousHash)?sha(JSON.stringify({text:doc.text,assets:doc.assets,meta:doc.meta})):null;
+ const legacyHash=validHash(previousHash)?legacyContentHash(doc):null;
  const unchanged=previousHash===contentHash||(legacyHash!==null&&previousHash===legacyHash);
  const manifestBytes=unchanged?null:encoder.encode(JSON.stringify(manifest));if(manifestBytes?.byteLength>MANIFEST_LIMIT)throw Error('Version metadata is too large.');
  return {manifest,manifestBytes,contentHash,legacyHash,unchanged,objects:unchanged?[]:[...objects.values()]};
 }
+function legacyContentHash(doc){
+ const hooks=assetContext.getStore(),entries=Object.entries(doc.assets||{});if(!entries.some(([,value])=>typeof value!=='string'))return sha(JSON.stringify({text:doc.text,assets:doc.assets,meta:doc.meta}));
+ const hash=createHash('sha256').update('{"text":'+JSON.stringify(doc.text)+',"assets":{');let at=0;for(const [name,value]of entries){hash.update((at++?',':'')+JSON.stringify(name)+':');if(typeof value==='string')hash.update(JSON.stringify(value));else{const bytes=hooks?.assetBytes?.(name,value);if(!bytes||value.chars!==4*Math.ceil(bytes.length/3))return null;hash.update('"');for(let offset=0;offset<bytes.length;offset+=48*1024)hash.update(Buffer.from(bytes.buffer,bytes.byteOffset+offset,Math.min(48*1024,bytes.length-offset)).toString('base64'));hash.update('"');}}hash.update('}');if(doc.meta!==undefined)hash.update(',"meta":'+JSON.stringify(doc.meta));return hash.update('}').digest('hex');
+}
+function prepareReferences(doc,assets,{previousHash=null}={}){
+ if(!doc||typeof doc.text!=='string')throw Error('Invalid version document.');const document={text:doc.text,id:doc.id,title:doc.title||'',meta:doc.meta||{},created:doc.created},textBytes=Buffer.byteLength(doc.text),manifest={format:'notemind-snapshot',version:1,document,assets,textBytes};manifest.checksum=manifestChecksum(manifest);validateManifest(manifest,{verifyIntegrity:true});const contentHash='snapshot2:'+manifest.checksum,unchanged=previousHash===contentHash,manifestBytes=unchanged?null:encoder.encode(JSON.stringify(manifest));if(manifestBytes?.byteLength>MANIFEST_LIMIT)throw Error('Version metadata is too large.');return {manifest,manifestBytes,contentHash,legacyHash:null,unchanged,objects:[]};
+}
+function withAssetContext(hooks,run){return assetContext.run(hooks,run);}
 function remember(cache,hash,stat){cache.delete(hash);cache.set(hash,{dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs});while(cache.size>CACHE_ENTRIES)cache.delete(cache.keys().next().value);}
 const sameStat=(a,b)=>a&&b&&['dev','ino','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);
 async function mapLimit(values,limit,run){let next=0,failure;await Promise.all(Array.from({length:Math.min(limit,values.length)},async()=>{while(!failure&&next<values.length){const value=values[next++];try{await run(value);}catch(error){failure ||= error;}}}));if(failure)throw failure;}
-async function digestFile(file,maxBytes){const hash=createHash('sha256');let read=0;for await(const chunk of raw.createReadStream(file,{highWaterMark:64*1024})){read+=chunk.length;if(read>maxBytes)throw Error('A version asset is damaged.');hash.update(chunk);}if(read!==maxBytes)throw Error('A version asset is damaged.');return hash.digest('hex');}
+async function syncHierarchy(root,directory,options){
+ const base=path.resolve(root),target=path.resolve(directory),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Invalid durability directory.');
+ // Confirm directory entries through root's parent, including a newly created root.
+ const stop=path.dirname(base);let status={synced:true,unsupported:false};for(let current=target;;current=path.dirname(current)){const result=await require('./fs-durability.cjs').syncDirectory(current,options);if(result.unsupported)status=result;if(current===stop||current===path.dirname(current))break;}return status;
+}
+async function writeSynced(file,bytes){const handle=await fs.open(file,'wx');try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}}
+async function digestHandle(handle,maxBytes){const hash=createHash('sha256'),chunk=Buffer.allocUnsafeSlow(Math.min(256*1024,maxBytes||1));let read=0;while(read<maxBytes){const result=await handle.read(chunk,0,Math.min(chunk.length,maxBytes-read),read);if(!result.bytesRead)throw Error('A version asset is damaged.');hash.update(chunk.subarray(0,result.bytesRead));read+=result.bytesRead;}return hash.digest('hex');}
 async function verifiedObject(root,ref,cache){
- const file=objectFile(root,ref.hash);let stat;try{stat=await fs.lstat(file);}catch(error){if(error.code==='ENOENT')throw Object.assign(Error('A version asset is missing.'),{code:'SNAPSHOT_OBJECT_MISSING',hash:ref.hash});throw error;}
- if(!stat.isFile()||stat.isSymbolicLink()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');
- if(!sameStat(cache.get(ref.hash),stat)&&await digestFile(file,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
- remember(cache,ref.hash,stat);return file;
+ const file=objectFile(root,ref.hash);let handle;try{
+  try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));}catch(error){if(error.code==='ENOENT')throw Object.assign(Error('A version asset is missing.'),{code:'SNAPSHOT_OBJECT_MISSING',hash:ref.hash});throw error;}
+  const stat=await handle.stat();if(!stat.isFile()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');if(!sameStat(cache.get(ref.hash),stat)&&await digestHandle(handle,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
+  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return file;
+ }finally{await handle?.close();}
 }
 async function publishObject(root,object,ref,cache){
  // New objects were hashed and validated by prepareSnapshot in the trusted worker.
@@ -56,9 +71,10 @@ async function publishObject(root,object,ref,cache){
  if(!object||object.hash!==ref.hash||!(object.bytes instanceof Uint8Array)||object.bytes.byteLength!==ref.bytes)throw Error('Invalid prepared version asset.');
  const file=objectFile(root,ref.hash),temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
  try{
-  await fs.writeFile(temp,object.bytes,{flag:'wx'});
+  await writeSynced(temp,object.bytes);
   try{await fs.link(temp,file);remember(cache,ref.hash,await fs.lstat(file));}
   catch(error){if(error.code!=='EEXIST')throw error;await verifiedObject(root,ref,cache);}
+  await syncHierarchy(root,path.dirname(file));
  }finally{await fs.unlink(temp).catch(()=>{});}
 }
 async function publishSnapshotObjects(root,prepared,cache=new Map()){
@@ -66,15 +82,15 @@ async function publishSnapshotObjects(root,prepared,cache=new Map()){
  for(const object of prepared.objects||[]){if(!validHash(object?.hash)||objects.has(object.hash))throw Error('Invalid prepared version objects.');objects.set(object.hash,object);}
  const refs=new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref]));
  for(const hash of objects.keys())if(!refs.has(hash))throw Error('Unreferenced prepared version asset.');
- await mapLimit([...refs.values()],8,async ref=>objects.has(ref.hash)?publishObject(root,objects.get(ref.hash),ref,cache):verifiedObject(root,ref,cache));
+ await mapLimit([...refs.values()],8,async ref=>{if(objects.has(ref.hash))await publishObject(root,objects.get(ref.hash),ref,cache);else{await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(objectFile(root,ref.hash)));}});
 }
-async function publishSnapshot(root,id,prepared,cache=new Map()){
+async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}={}){
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
  if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
  await publishSnapshotObjects(root,prepared,cache);
  const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
  // Both document hashing and JSON serialization have already completed in the trusted worker.
- try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
+ try{await writeSynced(temp,manifestBytes);await beforePublish?.();await fs.link(temp,file);await syncHierarchy(root,path.dirname(file));}finally{await fs.unlink(temp).catch(()=>{});}
 }
 async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expectedHash}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});
@@ -94,4 +110,4 @@ async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expected
  }
  const doc=manifest.document;return {text:doc.text,assets,id:doc.id,title:doc.title,meta:doc.meta||{},created:doc.created};
 }
-module.exports={prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
+module.exports={syncHierarchy,withAssetContext,prepareReferences,publishObject,validAsset,prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};

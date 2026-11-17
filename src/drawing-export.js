@@ -3,6 +3,9 @@ const {backdropReady}=require('./tablet/renderer/tabletBackdrop');
 const closed=()=>Error('Drawing exporter is closed.');
 const closeTiles=value=>{for(const tile of [...(value?.tiles||[]),...(value?.preview?.fixed||[]),...(value?.preview?.ink?[value.preview.ink]:[])])tile.bitmap?.close();};
 const verifiedSidecars=new WeakSet();
+const normalizedPackets=new WeakMap();
+function ownNormalizedPacket(packet,options){if(options.owned===true&&packet&&typeof packet==='object'){const fields=[];for(const name of ['bytes','hashBytes','backdropBytes']){const value=packet[name];if(ArrayBuffer.isView(value)&&value.buffer instanceof ArrayBuffer)fields.push({name,value,buffer:value.buffer});}normalizedPackets.set(packet,fields);}return packet;}
+function releaseNormalizedPacket(packet){const fields=normalizedPackets.get(packet);if(!fields)return false;normalizedPackets.delete(packet);const buffers=new Set(fields.map(field=>field.buffer));for(const buffer of buffers)if(buffer.byteLength&&typeof buffer.transfer==='function')buffer.transfer(0);for(const field of fields)if(packet[field.name]===field.value)packet[field.name]=null;return true;}
 class DrawingExporter {
  constructor({worker=()=>new Worker(new URL('drawing-worker.js',document.baseURI)),pack=graphics.encodeBytesAsync,bitmap=async file=>{const image=await backdropReady(file);if(!image)throw Error('Could not load the drawing background.');return createImageBitmap(image);},timeout=120000,idle=10000}={}){
   Object.assign(this,{factory:worker,pack,bitmap,timeout,idle});this.queue=[];this.active=null;this.worker=null;this.running=false;this.nextId=1;this.disposed=false;this.idleTimer=null;this.responses=new Map();this.leases=0;this.rasterCount=0;this.rasterBytes=0;this.transformCount=0;this.transformBytes=0;
@@ -33,8 +36,8 @@ class DrawingExporter {
   const worker=this.worker=this.factory();
   worker.onmessage=event=>{
    if(this.worker!==worker){closeTiles(event.data);return;}const value=event.data,request=this.responses.get(value?.id);if(!request){closeTiles(value);return;}
-   if(Object.hasOwn(value,'sidecarChunk')){const chunk=value.sidecarChunk;request.chunks ||= [];request.chunkBytes ||= 0;if(value.index!==request.chunks.length||typeof chunk!=='string'||!chunk.length||chunk.length>262144||chunk.length%4||request.padded||!/^[a-z0-9+/]*={0,2}$/i.test(chunk)||(request.chunkBytes+=chunk.length)>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4){this.responses.delete(value.id);try{worker.postMessage({cancelExport:value.id});}catch{}request.reject(Error('Invalid drawing sidecar stream.'));return;}request.padded=chunk.endsWith('=');request.chunks.push(chunk);void graphics.yieldTask().then(()=>{if(this.worker===worker&&this.responses.get(value.id)===request)worker.postMessage({sidecarAck:value.id,index:value.index});}).catch(error=>{if(this.responses.get(value.id)===request){this.responses.delete(value.id);request.reject(error);}});return;}
-   this.responses.delete(value.id);if(value.error)request.reject(Error(value.error));else{if(request.chunks){if(value.sidecarLength!==request.chunkBytes){request.reject(Error('Incomplete drawing sidecar stream.'));return;}let sidecar='';for(const chunk of request.chunks)sidecar+=chunk;value.sidecar=sidecar;verifiedSidecars.add(value);}request.resolve(value);}
+   if(Object.hasOwn(value,'sidecarChunk')){const chunk=value.sidecarChunk;request.chunks ||= [];request.chunkBytes ||= 0;if(request.chunks.length>=Math.ceil(graphics.MAX_BINARY_BYTES/196608)||value.index!==request.chunks.length||typeof chunk!=='string'||!chunk.length||chunk.length>262144||chunk.length%4||request.padded||!/^[a-z0-9+/]*={0,2}$/i.test(chunk)||(request.chunkBytes+=chunk.length)>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4){this.responses.delete(value.id);try{worker.postMessage({cancelExport:value.id});}catch{}request.reject(Error('Invalid drawing sidecar stream.'));return;}request.padded=chunk.endsWith('=');request.chunks.push(chunk);void graphics.yieldTask().then(()=>{if(this.worker===worker&&this.responses.get(value.id)===request)worker.postMessage({sidecarAck:value.id,index:value.index});}).catch(error=>{if(this.responses.get(value.id)===request){this.responses.delete(value.id);request.reject(error);}});return;}
+   this.responses.delete(value.id);if(value.error)request.reject(Error(value.error));else{if(request.chunks){if(value.sidecarLength!==request.chunkBytes){request.reject(Error('Incomplete drawing sidecar stream.'));return;}let sidecar='';for(const chunk of request.chunks)sidecar+=chunk;value.sidecar=sidecar;value.sidecarChunks=Object.freeze(request.chunks);verifiedSidecars.add(value);}request.resolve(value);}
   };
   worker.onerror=event=>{event.preventDefault?.();if(this.worker===worker)this.stopWorker(Error(event.message||'Drawing export worker stopped.'));};
   worker.onmessageerror=()=>{if(this.worker===worker)this.stopWorker(Error('Drawing worker returned unreadable data.'));};
@@ -43,7 +46,7 @@ class DrawingExporter {
  send(packet,transfers){return new Promise((resolve,reject)=>{try{const worker=this.getWorker();this.responses.set(packet.id,{resolve,reject});worker.postMessage(packet,transfers);}catch(error){this.responses.delete(packet.id);reject(error);}});}
  cancelInk(session){try{this.worker?.postMessage({inkCancel:session});}catch{}}
  async raster(request,{signal}={}){
-  if(this.disposed)throw closed();const buffers=new Set();for(const value of [request.order,request.additions,request.addIds])if(ArrayBuffer.isView(value))buffers.add(value.buffer);const bytes=[...buffers].reduce((n,value)=>n+value.byteLength,0);
+  if(this.disposed)throw closed();const buffers=new Set();for(const value of [request.order,request.additions,request.addIds,...(request.patches||[]).map(patch=>patch.insert)])if(ArrayBuffer.isView(value))buffers.add(value.buffer);const bytes=[...buffers].reduce((n,value)=>n+value.byteLength,0);
   if(this.rasterCount>=2||this.rasterBytes+bytes>256*1024*1024)throw Error('Drawing paint is busy.');this.rasterCount++;this.rasterBytes+=bytes;
   const id=this.nextId++;let timer,abort;try{
    if(signal?.aborted)throw Error('Drawing paint cancelled.');
@@ -52,16 +55,18 @@ class DrawingExporter {
    const result=await Promise.race([pending,stopped]);if(!result.resync&&!result.cancelled&&(!Number.isSafeInteger(result.frame)||!Array.isArray(result.tiles))){closeTiles(result);throw Error('Invalid drawing paint response.');}return result;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.rasterCount--;this.rasterBytes-=bytes;this.maybeIdle();}
  }
- async transform(strokes,from,to,{signal}={}){
+ async geometry(strokes,operation,{signal}={}){
   if(this.disposed)throw closed();const cost=strokes.reduce((n,stroke)=>n+16+stroke.points.length*(stroke.pressures?24:16),128);
   if(this.transformCount>=2||this.transformBytes+cost*2>256*1024*1024)throw Error('Another large selection is moving. Try again shortly.');this.transformCount++;this.transformBytes+=cost*2;
   const id=this.nextId++;let timer,abort;const cancelled=()=>Error('Drawing transformation cancelled.');try{
    if(signal?.aborted)throw cancelled();const bytes=await this.pack({name:'Ink',aspect:1,strokes,backdrop:null},{signal});if(signal?.aborted)throw cancelled();if(this.disposed)throw closed();
-   const pending=this.send({id,bytes,transform:{from:{...from},to:{...to}}},[bytes.buffer]);
+   const pending=this.send({id,bytes,...operation},[bytes.buffer]);
    const stopped=new Promise((_resolve,reject)=>{const stop=error=>{try{this.worker?.postMessage({cancelExport:id});}catch{}const held=this.responses.get(id);this.responses.delete(id);held?.reject(error);reject(error);};abort=()=>stop(cancelled());signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted){abort();return;}timer=setTimeout(()=>stop(Error('Drawing transformation timed out.')),this.timeout);});
-   const result=await Promise.race([pending,stopped]);if(!ArrayBuffer.isView(result.bytes)||!graphics.isBinary(result.bytes)||!(result.indexes instanceof Uint32Array)||!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==result.indexes.length*8)throw Error('Invalid transformed drawing response.');return result;
+   const result=await Promise.race([pending,stopped]);if(operation.fingerprint){if(!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==strokes.length*8)throw Error('Invalid drawing fingerprints.');return result;}if(!ArrayBuffer.isView(result.bytes)||!graphics.isBinary(result.bytes)||!(result.indexes instanceof Uint32Array)||!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==result.indexes.length*8)throw Error('Invalid transformed drawing response.');return result;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.transformCount--;this.transformBytes-=cost*2;this.maybeIdle();}
  }
+ transform(strokes,from,to,options){return this.geometry(strokes,{transform:{from:{...from},to:{...to}}},options);}
+ fingerprint(strokes,options){return this.geometry(strokes,{fingerprint:true},options);}
  async pump(){
   if(this.running)return;this.running=true;
   while(this.queue.length&&!this.disposed){
@@ -85,8 +90,10 @@ function exporter(){if(!shared){shared=new DrawingExporter();globalThis.addEvent
 async function temporary(cost,run){if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');legacy ||= new DrawingExporter({idle:0});const owner=legacy;legacyCount++;legacyBytes+=cost;try{return await run(owner);}finally{legacyCount--;legacyBytes-=cost;if(!legacyCount){owner.dispose();if(legacy===owner)legacy=null;}}}
 function exportDrawingAssets(snapshot,options={}){if((snapshot.backdrop?.length||0)>65536){const geometry=snapshot.strokes.reduce((bytes,stroke)=>bytes+16+stroke.points.length*(stroke.pressures?24:16),24),pixels=options.png===false?0:Math.min(16*1024*1024,options.maxPixels||16*1024*1024),cost=(geometry+snapshot.backdrop.length)*2+Math.ceil(pixels*16/3);return temporary(cost,owner=>owner.run(snapshot,options));}return exporter().run(snapshot,options);}
 async function normalizeGraphicsBytes(bytes,options={}){
- if(graphics.isBinary(bytes)&&bytes.byteLength>=24&&new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(8,true)<=65536)return exporter().normalize(bytes,options);
- return temporary(bytes.byteLength*2,owner=>owner.normalize(bytes,options));
+ if(graphics.isBinary(bytes)&&bytes.byteLength>=24){const header=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);if(header.getUint32(8,true)<=65536&&header.getUint32(12,true)<50000&&header.getUint32(16,true)<50000)return ownNormalizedPacket(await exporter().normalize(bytes,options),options);}
+ // Retire transient normalization memory before the editable graph is hydrated.
+ // This owner never terminates an unrelated active drawing/export worker.
+ const cost=bytes.byteLength*2;if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');const owner=new DrawingExporter({idle:0});legacyCount++;legacyBytes+=cost;try{return ownNormalizedPacket(await owner.normalize(bytes,options),options)}finally{owner.dispose();legacyCount--;legacyBytes-=cost;}
 }
 async function transformDrawingInk(strokes,from,to,options={}){
  let result;const local=async()=>{const {transformInkBinary}=require('./transform-ink.js');return transformInkBinary(await graphics.encodeBytesAsync({name:'Ink',aspect:1,strokes,backdrop:null},options),from,to,options);};if(typeof Worker==='undefined')result=await local();else try{result=await exporter().transform(strokes,from,to,options);}catch(error){if(options.signal?.aborted)throw error;result=await local();}
@@ -97,5 +104,6 @@ async function transformDrawingInk(strokes,from,to,options={}){
 function renderInk(request,options){return exporter().raster(request,options);}
 function cancelInk(session){shared?.cancelInk(session);}
 function holdDrawingWorker(){return exporter().hold();}
-if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes};
-module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk};
+async function fingerprintStroke(stroke,options={}){const signatures=require('./stroke-signature.js');try{if(typeof Worker==='undefined')throw Error('Drawing worker unavailable.');const packet=await exporter().fingerprint([stroke],options),view=new DataView(packet.hashBytes.buffer,packet.hashBytes.byteOffset,8);return view.getUint32(0,true).toString(16).padStart(8,'0')+view.getUint32(4,true).toString(16).padStart(8,'0');}catch(error){if(options.signal?.aborted)throw error;return signatures.canonicalStrokeFingerprintAsync(stroke,graphics.yieldTask);}}
+if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes,releaseNormalizedPacket,fingerprintStroke};
+module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,releaseNormalizedPacket,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk,fingerprintStroke};
