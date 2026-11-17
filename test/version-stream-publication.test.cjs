@@ -53,3 +53,20 @@ test('streamed object directory sync and manifest failures leave prior versions 
   await assert.rejects(snapshots.publishSnapshot(root,'unsafe',prepared),/failure/);t.mock.restoreAll();assert.equal(failed,true);await assert.rejects(fs.stat(snapshots.manifestFile(root,'unsafe')),{code:'ENOENT'});await snapshots.publishSnapshot(root,'retry',prepared);assert.equal((await snapshots.readSnapshot(root,'retry')).assets['assets/a.jpg'],bytes.toString('base64'));
  }
 });
+test('manifest publication rejects replacement, in-place changes and symlinks without deleting foreign temp data',async t=>{
+ for(const mode of ['inode','bytes','symlink']){const root=await fixture(t),prepared=await snapshots.prepareSnapshotSources({text:'Intended immutable snapshot',assets:{}});let temp,foreign;
+  await assert.rejects(snapshots.publishSnapshot(root,'unsafe',prepared,new Map(),{beforePublish:async()=>{const directory=path.join(root,'versions');temp=path.join(directory,(await fs.readdir(directory)).find(name=>name.endsWith('.tmp')));if(mode==='bytes'){foreign=Buffer.alloc(prepared.manifestBytes.length,0x61);await fs.writeFile(temp,foreign);}else{await fs.rename(temp,temp+'.owned');foreign=Buffer.from('foreign replacement');if(mode==='symlink'){await fs.writeFile(temp+'.foreign',foreign);await fs.symlink(temp+'.foreign',temp);}else await fs.writeFile(temp,foreign);}}}),/ownership/);
+  assert.deepEqual(await fs.readFile(temp),foreign);if(mode==='symlink')assert.ok((await fs.lstat(temp)).isSymbolicLink());await assert.rejects(fs.stat(snapshots.manifestFile(root,'unsafe')),{code:'ENOENT'});
+ }
+});
+test('failed streamed-object rollback and manifest writes preserve substituted foreign temp inodes',async t=>{
+ for(const phase of ['object','manifest']){const root=await fixture(t),bytes=Buffer.from('exact immutable bytes'),data={'assets/a.jpg':bytes},prepared=await snapshots.withAssetContext(hooksFor(data),()=>snapshots.prepareSnapshotSources(sourceDocument(data))),open=fs.open;let temp,changed=false;
+  t.mock.method(fs,'open',async(...args)=>{const handle=await open(...args);if(args[1]==='wx'&&args[0].includes(path.sep+(phase==='object'?'objects':'versions')+path.sep)){const write=handle[phase==='object'?'write':'writeFile'].bind(handle);handle[phase==='object'?'write':'writeFile']=async(...values)=>{const result=await write(...values);if(!changed){changed=true;temp=args[0];await fs.rename(temp,temp+'.owned');await fs.writeFile(temp,'foreign replacement');throw Error('injected writer failure');}return result;};}return handle;});
+  await assert.rejects(snapshots.publishSnapshot(root,'unsafe',prepared),/ownership/);t.mock.restoreAll();assert.equal(changed,true);assert.equal(await fs.readFile(temp,'utf8'),'foreign replacement');await assert.rejects(fs.stat(snapshots.manifestFile(root,'unsafe')),{code:'ENOENT'});
+ }
+});
+test('exclusive object and manifest temp creation collisions never acquire deletion ownership',async t=>{
+ for(const phase of ['stream-object','byte-object','manifest']){const root=await fixture(t),doc={text:'Exact',assets:phase==='manifest'?{}:{'assets/a.jpg':Buffer.from('exact').toString('base64')}},prepared=phase==='byte-object'?snapshots.prepareSnapshot(doc):await snapshots.prepareSnapshotSources(doc),open=fs.open;let foreign;
+  t.mock.method(fs,'open',async(...args)=>{if(!foreign&&args[1]==='wx'&&args[0].includes(path.sep+(phase==='manifest'?'versions':'objects')+path.sep)){foreign=args[0];await fs.writeFile(foreign,'foreign collision',{flag:'wx'});throw Object.assign(Error('exclusive temp collision'),{code:'EEXIST'});}return open(...args);});await assert.rejects(snapshots.publishSnapshot(root,'unsafe',prepared),{code:'EEXIST'});t.mock.restoreAll();assert.equal(await fs.readFile(foreign,'utf8'),'foreign collision');await assert.rejects(fs.stat(snapshots.manifestFile(root,'unsafe')),{code:'ENOENT'});
+ }
+});

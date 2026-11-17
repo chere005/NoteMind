@@ -91,7 +91,9 @@ async function syncHierarchy(root,directory,options){
  // Confirm directory entries through root's parent, including a newly created root.
  const stop=path.dirname(base);let status={synced:true,unsupported:false};for(let current=target;;current=path.dirname(current)){const result=await require('./fs-durability.cjs').syncDirectory(current,options);if(result.unsupported)status=result;if(current===stop||current===path.dirname(current))break;}return status;
 }
-async function writeSynced(file,bytes){const handle=await fs.open(file,'wx');try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}}
+async function writeSynced(file,bytes,created){const handle=await fs.open(file,'wx');try{created?.(await handle.stat());await handle.writeFile(bytes);await handle.sync();return await handle.stat();}finally{await handle.close();}}
+async function assertTemp(file,identity,{stable=false}={}){const named=await fs.lstat(file);if(!named.isFile()||named.isSymbolicLink()||named.dev!==identity.dev||named.ino!==identity.ino||stable&&!sameStat(identity,named))throw Error('Version temporary ownership changed.');return named;}
+async function unlinkTemp(file,identity,options){if(!identity)return;try{await assertTemp(file,identity,options);}catch(error){if(error.code==='ENOENT')return;throw error;}await fs.unlink(file);}
 async function digestHandle(handle,maxBytes){const hash=createHash('sha256'),chunk=Buffer.allocUnsafeSlow(Math.min(256*1024,maxBytes||1));let read=0;try{while(read<maxBytes){const result=await handle.read(chunk,0,Math.min(chunk.length,maxBytes-read),read);if(!result.bytesRead)throw Error('A version asset is damaged.');hash.update(chunk.subarray(0,result.bytesRead));read+=result.bytesRead;}return hash.digest('hex');}finally{discard(chunk);}}
 
 async function verifiedObject(root,ref,cache){
@@ -114,20 +116,20 @@ async function publishSourceObject(root,object,ref,cache){
   const named=await fs.lstat(temp);if(!named.isFile()||named.isSymbolicLink()||!sameStat(written,named)||written.dev!==identity.dev||written.ino!==identity.ino||written.size!==ref.bytes)throw Error('Version object identity changed.');
   try{await fs.link(temp,file);}catch(error){if(error.code!=='EEXIST')throw error;}await verifiedObject(root,ref,cache);
   await syncHierarchy(root,path.dirname(file));
- }finally{await handle?.close();if(identity){const current=await fs.lstat(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});if(current){if(!current.isFile()||current.isSymbolicLink()||current.dev!==identity.dev||current.ino!==identity.ino)throw Error('Version object cleanup ownership changed.');await fs.unlink(temp);}}}
+ }finally{await handle?.close();await unlinkTemp(temp,identity);}
 }
 async function publishObject(root,object,ref,cache){
  if(typeof object?.source==='function')return publishSourceObject(root,object,ref,cache);
  // New objects were hashed and validated by prepareSnapshot in the trusted worker.
  // Existing files must match that digest; rescanning their graphics on main would repeat the worker's point traversal.
  if(!object||object.hash!==ref.hash||!(object.bytes instanceof Uint8Array)||object.bytes.byteLength!==ref.bytes)throw Error('Invalid prepared version asset.');
- const file=objectFile(root,ref.hash),temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
+ const file=objectFile(root,ref.hash),temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let identity,complete=false,linked=false;
  try{
-  await writeSynced(temp,object.bytes);
-  try{await fs.link(temp,file);remember(cache,ref.hash,await fs.lstat(file));}
+  identity=await writeSynced(temp,object.bytes,created=>identity=created);complete=true;await assertTemp(temp,identity,{stable:true});
+  try{await fs.link(temp,file);linked=true;remember(cache,ref.hash,await fs.lstat(file));}
   catch(error){if(error.code!=='EEXIST')throw error;await verifiedObject(root,ref,cache);}
   await syncHierarchy(root,path.dirname(file));
- }finally{await fs.unlink(temp).catch(()=>{});}
+ }finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
 }
 async function publishSnapshotObjects(root,prepared,cache=new Map()){
  const manifest=validateManifest(prepared?.manifest),objects=new Map();
@@ -140,9 +142,9 @@ async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}=
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
  if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
  await publishSnapshotObjects(root,prepared,cache);
- const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
+ const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let identity,complete=false,linked=false;
  // Both document hashing and JSON serialization have already completed in the trusted worker.
- try{await writeSynced(temp,manifestBytes);await beforePublish?.();await fs.link(temp,file);await syncHierarchy(root,path.dirname(file));}finally{await fs.unlink(temp).catch(()=>{});}
+ try{identity=await writeSynced(temp,manifestBytes,created=>identity=created);complete=true;await beforePublish?.();await assertTemp(temp,identity,{stable:true});await fs.link(temp,file);linked=true;await syncHierarchy(root,path.dirname(file));}finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
 }
 async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expectedHash}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});
