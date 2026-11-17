@@ -41,6 +41,7 @@ parentPort.on('message',async packet=>{
    const hooks={assetBytes:(_name,value)=>isRawAsset(value)?raw.resolve(value,rawContext):undefined,assetInfo:name=>isRawAsset(received.refs[name])?raw.info(received.refs[name],rawContext):undefined,validateAsset:name=>isRawAsset(received.refs[name])?raw.validate(name,received.refs[name],rawContext):false,asset:(name,bytes,info)=>assets.observe(received.refs[name],bytes,info)};
    value=await snapshots.withAssetContext(hooks,async()=>{
     if(op==='encodeDrawingOwned'){const bytes=format.encodeDrawingOwned(args[0]),encoded=owned(bytes);transfers.push(encoded.buffer);return {bytes:encoded,revision:digest(bytes)};}
+    if(op==='duplicateArchiveOwned'){const bytes=owned(format.duplicateArchiveOwned(view(args[0]),args[1]));transfers.push(bytes.buffer);return bytes;}
     if(op==='encode'||op==='encodeWithDigest'){const bytes=format.encode(...args,hooks),encoded=owned(bytes);transfers.push(encoded.buffer);return op==='encode'?encoded:{bytes:encoded,revision:digest(bytes)};}
     if(op==='inspectDrawingOwned'){
      const original=view(args[0]),parsed=format.decode(original,{asset:()=>''}),files=parsed.files,info=files['drawing.json']?JSON.parse(files['drawing.json'].toString('utf8')):{},name=info.sheet||(files['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');

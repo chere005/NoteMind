@@ -22,16 +22,27 @@ function encodeDrawingOwned(packet){
  const doc={text:'![Drawing](assets/drawing.svg)\n',meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},files={'document.md':Buffer.from(doc.text),'assets/drawing.svg':image,'assets/drawing.svg.json':graphics,'drawing.json':Buffer.from(JSON.stringify({sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}))};return encodeFiles(doc,files,'drawing');
 }
 
-function decode(bytes,hooks={}){
+function validatedFiles(bytes){
  const files=unpack(bytes);let manifest=null;
  if(files['manifest.json']){try{manifest=JSON.parse(files['manifest.json'])}catch{throw Error('The Notepad manifest is invalid.');}
   if(manifest.format!=='notemind'||manifest.version!==1||!['notepad','drawing','workspace'].includes(manifest.kind)||manifest.content!=='document.md')throw Error('This Notepad format is not supported.');
-  if(!manifest.files||typeof manifest.files!=='object')throw Error('The Notepad file index is missing.');
-  for(const [name,info] of Object.entries(manifest.files)){const value=files[name];if(!value||value.length!==info.bytes||hash(value)!==info.sha256)throw Error('The Notepad attachment is damaged: '+name);}
+  if(!manifest.files||typeof manifest.files!=='object'||Array.isArray(manifest.files))throw Error('The Notepad file index is missing.');
+  for(const [name,info] of Object.entries(manifest.files)){const value=files[name];if(!value||!info||value.length!==info.bytes||hash(value)!==info.sha256)throw Error('The Notepad attachment is damaged: '+name);}
   for(const name of Object.keys(files))if(name!=='manifest.json'&&!manifest.files[name])throw Error('The Notepad contains an unlisted attachment: '+name);
  }
  if(!files['document.md'])throw Error('The Notepad text is missing.');
- const assets={};for(const [name,value]of Object.entries(files)){if(name.startsWith('assets/')){if(!assetName(name))throw Error('Invalid image path.');assets[name]=hooks.asset?.(name,value,manifest?.files[name]||{bytes:value.length,sha256:hash(value)})??value.toString('base64');}}
- return {text:files['document.md'].toString('utf8'),assets,id:manifest?.id,title:manifest?.title,meta:manifest?.meta||{},created:manifest?.created,kind:manifest?.kind||(files['workspace.json']?'workspace':files['drawing.json']?'drawing':'notepad'),files};
+ for(const name of Object.keys(files))if(name.startsWith('assets/')&&!assetName(name))throw Error('Invalid image path.');
+ return {files,manifest,kind:manifest?.kind||(files['workspace.json']?'workspace':files['drawing.json']?'drawing':'notepad')};
 }
-module.exports={encode,decode,encodeDrawingOwned};
+function decode(bytes,hooks={}){
+ const {files,manifest,kind}=validatedFiles(bytes);
+ const assets={};for(const [name,value]of Object.entries(files)){if(name.startsWith('assets/')){if(!assetName(name))throw Error('Invalid image path.');assets[name]=hooks.asset?.(name,value,manifest?.files[name]||{bytes:value.length,sha256:hash(value)})??value.toString('base64');}}
+ return {text:files['document.md'].toString('utf8'),assets,id:manifest?.id,title:manifest?.title,meta:manifest?.meta||{},created:manifest?.created,kind,files};
+}
+function duplicateArchiveOwned(bytes,{id}={}){
+ if(typeof id!=='string'||!id||id.length>1000)throw Error('Invalid duplicate Notepad identity.');
+ const {files,manifest,kind}=validatedFiles(bytes),now=new Date().toISOString();
+ const next=manifest?{...manifest,id,created:now,modified:now}:{format:'notemind',version:1,kind,id,title:'',created:now,modified:now,meta:{},content:'document.md',files:Object.fromEntries(Object.entries(files).map(([name,data])=>[name,{bytes:data.length,sha256:hash(data)}]))};
+ const index=Buffer.from(JSON.stringify(next,null,2));if(index.length>ENTRY_BYTES)throw Error('The Notepad manifest is too large.');files['manifest.json']=index;return pack(files);
+}
+module.exports={encode,decode,encodeDrawingOwned,duplicateArchiveOwned};
