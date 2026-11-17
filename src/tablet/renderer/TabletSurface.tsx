@@ -804,7 +804,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const erasing = tools.eraser
-  const selectedMembership=inkSelect.controller.bits
+  const selectedMembership=inkSelect.controller.bits,selectionWidthScale=unit()
   const selectedAction=(action:any)=>{if(inkSelect.controller.bits===selectedMembership)void inkSelect.run(action)}
   const selectedInk=inkSelect.bounds?rectOnView(inkSelect.bounds,fit.viewport):null
   const lassoPoints=inkSelect.lasso.map(point=>pointOnView(point,fit.viewport)).map(point=>`${point.x*1000},${point.y*1000}`).join(' ')
@@ -849,7 +849,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         )}
       </div>
       <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>
-      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*unit()} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/unit()})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
+      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
         <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}
