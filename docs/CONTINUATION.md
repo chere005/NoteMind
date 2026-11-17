@@ -1,6 +1,6 @@
 # Continuation
 
-Current checkpoint November17 5:20PM Central: Root`56ac16d`, branch`perf/pipeline-top-three`, package0.37.0. Installed0.35 untouched. Stable increment target remains today by7:30PM Central, subject to gates. Hourly whole-roadmap update delivered23:02UTC; next due00:00UTC. CoreMind run20261117054520 active. No full suite/preflight/package/push/install yet.
+Current checkpoint November17 5:06PM Central: Root`56ac16d`, branch`perf/pipeline-top-three`, package0.37.0. Installed0.35 untouched. Stable increment target remains today by7:30PM Central, subject to gates. Hourly whole-roadmap update delivered23:02UTC; next due00:00UTC. CoreMind run20261117054520 active. No full suite/preflight/package/push/install yet.
 
 - Integrated raw disk spools and streamed Main/NotesStore ZIP publication preserve exact source/receipt/inode ownership. Close now joins all accepted domains and confirms recovery durability.81focused archive/stream/raw/Main/Notes cases and56close cases passed; this is not the final full suite.
 - Canonical100JPEG actual App e991cfc exits1 during autosave at1083359232B. Open1565ms and20-input typing663ms complete, p95input7.2ms; one1484408B viewportBlob, zero runtime errors and zero raw full-byte materializations. History publisher still eagerly resolves all149MB assets; Data owns streaming CAS/history fix (version-publisher/snapshot-store only). Native artifact stable-candidate/test-results/performance-0.37/real-raster-spooled-streamed-e991cfc.json. Do not claim the image pipeline passes yet.
