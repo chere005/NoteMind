@@ -1,9 +1,9 @@
 // Global Undo-only memory accounting for immutable drawing geometry.
-// Persistent 32-way trees share untouched branches so an append never walks old points.
+// Persistent trees share untouched branches; wider leaf pages bound dense-scene wrapper overhead.
 // Current ink and the nearest complete Undo/Redo are protected; inactive pages must unload.
 const { strokeAppend } = require("./stroke-signature.js");
 const { DrawingResourceLedger } = require("./drawing-resource-ledger.js");
-const WIDTH = 32, ENTRY_BYTES = 96;
+const WIDTH = 32, LEAF_WIDTH = 256, ENTRY_BYTES = 96;
 const decodedGeometry = new WeakMap();
 const freshStrokes = new WeakSet();
 let geometrySequence = 0;
@@ -108,7 +108,7 @@ class DrawingHistoryBudget {
   build(array, certified = false) {
     if (!array.length) return null;
     let nodes = [];
-    for (let i = 0; i < array.length; i += WIDTH) nodes.push(this.node(array.slice(i, i + WIDTH).map((stroke) => this.prime(stroke)), 0, certified));
+    for (let i = 0; i < array.length; i += LEAF_WIDTH) nodes.push(this.node(array.slice(i, i + LEAF_WIDTH).map((stroke) => this.prime(stroke)), 0, certified));
     let level = 0;
     while (nodes.length > 1) {
       const next = [];
@@ -120,7 +120,7 @@ class DrawingHistoryBudget {
   }
   push(node, token) {
     if (!node) return { node: this.node([token], 0), overflow: null };
-    if (!node.level) { this.materializeLeaf(node); return node.children.length < WIDTH ? { node: this.node([...node.children, token], 0), overflow: null } : { node, overflow: this.node([token], 0) }; }
+    if (!node.level) { if (node.children.length >= LEAF_WIDTH) return { node, overflow: this.node([token], 0) }; this.materializeLeaf(node); return { node: this.node([...node.children, token], 0), overflow: null }; }
     const children = node.children.slice(), last = this.push(children.at(-1), token);
     children[children.length - 1] = last.node;
     if (!last.overflow) return { node: this.node(children, node.level), overflow: null };
@@ -166,8 +166,8 @@ class DrawingHistoryBudget {
     if (!certified) await this.invalidateAggregatesAsync(pause);
     const epoch = this.aggregateEpoch;
     let nodes = [], start = clock();
-    for (let i = 0; i < array.length; i += WIDTH) {
-      nodes.push(this.node(array.slice(i, i + WIDTH).map(stroke => this.prime(stroke)), 0, certified, epoch));
+    for (let i = 0; i < array.length; i += LEAF_WIDTH) {
+      nodes.push(this.node(array.slice(i, i + LEAF_WIDTH).map(stroke => this.prime(stroke)), 0, certified, epoch));
       if (clock() - start >= 3) { await pause(); start = clock(); }
     }
     let level = 0;
