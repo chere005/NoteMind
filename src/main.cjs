@@ -32,7 +32,7 @@ let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceServ
 let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
 const sheetLoads=require('./sheet-load-transport.cjs').shared;
 const sheetReads=new(require('./sheet-read-requests.cjs').SheetReadRequests)({loads:sheetLoads});
-app.on('will-quit',()=>{sheetReads.dispose();sheetLoads.dispose();void sheetPersistenceService?.dispose();void cameraPersistenceService?.dispose();});
+app.on('will-quit',()=>{sheetReads.dispose();sheetLoads.dispose();void sheetPersistenceService?.dispose();void cameraPersistenceService?.dispose();void sheetUploads.dispose();void cameraUploads.dispose();imagePickerIPC.dispose();void require('./archive-codec.cjs').dispose();});
 
 let cameraWrite = Promise.resolve();
 
@@ -163,7 +163,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
 });
 
-app.on('will-quit',()=>{void require('./archive-codec.cjs').dispose();});
+
 app.on('window-all-closed', () => { globalShortcut.unregisterAll();pen?.dispose(); app.quit(); });
 
 ipcMain.handle('dirty', (event,value,canDelete) => {const window=BrowserWindow.fromWebContents(event.sender);if(!window)return;window.isDirty=value;if(typeof canDelete==='boolean'){window.canDelete=canDelete;if(window===win){const item=Menu.getApplicationMenu()?.getMenuItemById('delete-note');if(item)item.enabled=canDelete;}}});
@@ -275,7 +275,7 @@ const sheetUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHand
 ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
 const cameraUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{prefix:'camera-delta',service:()=>cameraPersistence(),onWrite:pending=>{cameraWrite=pending.catch(()=>{});}});
-app.on('will-quit',()=>{void sheetUploads.dispose();void cameraUploads.dispose();});
+
 ipcMain.handle('list-camera-pages',async event=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');await cameraWrite;const state=await cameraPersistence().listPages();if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return state;});
 ipcMain.handle('load-camera-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid camera page identity.');return sheetReads.run(event.sender,options?.requestId,'camera',async({signal,id,check})=>{await cameraWrite;check();const state=await cameraPersistence().loadPage(pageId,{signal});try{check();return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'camera-page:'+pageId,maxBytes:256*1024*1024,requestId:options?.requestId??null,requestScope:'camera',consume:true}):state;}catch(error){sheetLoads.discardState(state);throw error;}});});
 ipcMain.handle('cancel-camera-page-load',(event,requestId)=>sheetReads.cancel(event.sender,requestId,'camera'));
@@ -373,7 +373,7 @@ async function saveDocument(doc,saveAs=false,automatic=false){
 ipcMain.handle('save',(_,doc,saveAs)=>saveDocument(doc,saveAs));
 
 const imagePickerIPC=require('./image-picker-ipc.cjs').installImagePicker(ipcMain,{scope:(event,run)=>notesIPC.scope(event,run),services:{storage:require('./archive-codec.cjs'),documentIO,dialog,getWin:()=>win,tempRoot:app.getPath('temp')}});
-app.once('will-quit',()=>imagePickerIPC.dispose());
+
 
 ipcMain.handle('run-python', async (_, file) => {
 
