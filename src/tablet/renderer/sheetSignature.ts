@@ -3,7 +3,7 @@ import {scheduler,hashJsonAsync,hashTextAsync,equalsJsonAsync} from '../../sheet
 export { primeStrokeFingerprints }
 export async function primeStrokeFingerprintsAsync(ink:any[],hashes:any[],options:any={}){if(!Array.isArray(hashes)||hashes.length!==ink.length)throw Error('Invalid drawing fingerprints.');const pace=scheduler(options);for(let i=0;i<hashes.length;i++){if(typeof hashes[i]!=='string'||!/^[a-f0-9]{16}$/.test(hashes[i]))throw Error('Invalid drawing fingerprints.');const pending=pace.step();if(pending)await pending;}pace.check();for(let i=0;i<ink.length;i++){primeStrokeFingerprint(ink[i],hashes[i]);const pending=pace.step();if(pending)await pending;}pace.check();}
 // Cache by immutable stroke-array identity, so Undo also reuses previous hashes.
-type Cached = { name: string; aspect: number; extent: string; backdrop: string | null; backdropHash: string | null; paper: string; suffix: string; signature: string }
+type Cached = { name: string; aspect: number; extent: string; backdropHash: string | null; paper: string; suffix: string; signature: string }
 const arrays = new WeakMap<object, Cached>()
 const prefixes=new WeakMap<object,Map<string,string>>(),bindings=new WeakMap<object,()=>any>()
 const prefixKey=(name:any,aspect:number)=>JSON.stringify([name,aspect])
@@ -18,7 +18,9 @@ export const isHydratedSheet=source=>decodedSheet(source)?.validated===true
 export function sheetSignature(sheet, fallbackPaper = {}) {
   const page = sheet.page, paper = JSON.stringify(sheet.paper || fallbackPaper), backdrop = page.backdrop || null, cached = arrays.get(page.strokes)
   const extent = page.extent && (page.extent.x !== 0 || page.extent.y !== 0 || page.extent.width !== 1 || page.extent.height !== 1) ? JSON.stringify(page.extent) : ''
-  if (cached && cached.name === sheet.name && cached.aspect === page.aspect && cached.extent === extent && cached.backdrop === backdrop && cached.paper === paper) return cached.signature
+  const background = backgrounds.get(page),backdropHash=background?.data===backdrop?background.hash:backdrop?fingerprint(backdrop):null
+  backgrounds.set(page, { data: backdrop, hash: backdropHash })
+  if (cached && cached.name === sheet.name && cached.aspect === page.aspect && cached.extent === extent && cached.backdropHash === backdropHash && cached.paper === paper) return cached.signature
   let prior = cached, previous = page.strokes, added = [], count = 0
   // Usually one link. A missed render may include several committed strokes.
   while ((!prior || prior.name !== sheet.name || prior.aspect !== page.aspect) && count++ < 1024) {
@@ -26,9 +28,6 @@ export function sheetSignature(sheet, fallbackPaper = {}) {
     if (!link) { prior = null;break }
     added.push(link.stroke);previous = link.previous;prior = arrays.get(previous)
   }
-  const background = backgrounds.get(page)
-  const backdropHash = prior?.backdrop === backdrop ? prior.backdropHash : background?.data === backdrop ? background.hash : backdrop ? fingerprint(backdrop) : null
-  backgrounds.set(page, { data: backdrop, hash: backdropHash })
   const suffix = '],' + JSON.stringify([backdropHash, paper, ...(extent ? [extent] : [])]).slice(1)
   let hash: string
   const preparedPrefix=prefixes.get(page.strokes)?.get(prefixKey(sheet.name,page.aspect))
@@ -40,7 +39,7 @@ export function sheetSignature(sheet, fallbackPaper = {}) {
   } else hash = fingerprint([sheet.name, page.aspect, page.strokes.map(strokeFingerprint), backdropHash, paper, ...(extent ? [extent] : [])])
   primePrefix(page.strokes,sheet.name,page.aspect,removeSuffix(hash,suffix))
   const signature = 'nm2:' + hash
-  arrays.set(page.strokes, { name: sheet.name, aspect: page.aspect, extent, backdrop, backdropHash, paper, suffix, signature })
+  arrays.set(page.strokes, { name: sheet.name, aspect: page.aspect, extent, backdropHash, paper, suffix, signature })
   return signature
 }
 export function savedSignature(saved, sheet, fallbackPaper = {}) {

@@ -69,3 +69,9 @@ test('later metadata intent wins reversed preparation completion and unrelated f
  const background=page.setBackdropAsync('new'),aspect=page.setAspectAsync(4);waits[3].resolve();assert.equal(await aspect,true);waits[2].resolve();assert.equal(await background,true);assert.equal(page.aspect,4);assert.equal(page.backdrop,'new');
  const pending=page.setAspectAsync(5);page.setAspect(6);waits[4].resolve();assert.equal(await pending,false);assert.equal(page.aspect,6);page.dispose();
 });
+
+test('retained Undo-array signature caches own only background hashes while current page metadata stays exact',async()=>{
+ const fs=require('node:fs'),source=fs.readFileSync('src/tablet/renderer/sheetSignature.ts','utf8')+'\nexport const observedArrayCache=arrays;',built=buildSync({stdin:{contents:source,resolveDir:path.resolve('src/tablet/renderer'),loader:'ts'},bundle:true,platform:'node',format:'cjs',write:false}),observed=new Module(path.resolve('test/signature-retention-fixture.cjs'),module);observed.filename=path.resolve('test/signature-retention-fixture.cjs');observed.paths=module.paths;observed._compile(built.outputFiles[0].text,observed.filename);
+ const api=observed.exports,page=new TabletPage(1),sheet={name:'Scan',page,paper:{}},first='data:image/png;base64,'+'YQ=='.repeat(10000);page.strokes=[stroke(1)];page.backdrop=first;const original=page.strokes;assert.equal(api.sheetSignature(sheet),reference(sheet));const cached=api.observedArrayCache.get(original);assert.equal(cached.backdropHash,fingerprint(first));assert.equal(Object.values(cached).includes(first),false);
+ page.add(stroke(2));page.backdrop='data:image/png;base64,Yg==';assert.equal(api.sheetSignature(sheet),reference(sheet));page.undo();assert.equal(api.sheetSignature(sheet),reference(sheet));page.dispose();
+});
