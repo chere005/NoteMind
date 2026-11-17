@@ -51,6 +51,8 @@ export interface SurfaceHandle {
   clear(): void | Promise<void>
   /** Repaint everything (after the page was changed from outside). */
   repaint(): void
+  /** Fit the complete canonical page without changing ink or history. */
+  fitView(): void
   selectedInk(): number
   deleteSelectedInk(): boolean
   clearInkSelection(): boolean
@@ -486,6 +488,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     redo: () => { act("redo");return actionQueue.current },
     clear: () => { const p=latest.current.page;finishGesture.current();return controllerFor(p).clear() },
     repaint: () => schedule(true),
+    fitView:()=>precision.fit(),
     selectedInk:()=>inkSelectionRef.current.controller.count,
     deleteSelectedInk:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;void selection.run({type:'delete'});return true},
     clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;selection.clear();return true},
