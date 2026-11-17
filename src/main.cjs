@@ -361,17 +361,8 @@ async function saveDocument(doc,saveAs=false,automatic=false){
 }
 ipcMain.handle('save',(_,doc,saveAs)=>saveDocument(doc,saveAs));
 
-ipcMain.handle('image', async () => {
-  const systemPictures=require('node:fs').existsSync('/usr/bin/sips');
-  const result=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'Images',extensions:['png','jpg','jpeg','gif','webp','svg','bmp','avif',...(systemPictures?['heic','heif','tif','tiff']:[])]}]});
-  if(result.canceled)return null;
-  const file=result.filePaths[0];let bytes,name=path.basename(file);
-  if(systemPictures&&/\.(heic|heif|tif|tiff)$/i.test(file)){
-    const temp=path.join(app.getPath('temp'),'notemind-'+require('node:crypto').randomUUID()+'.png');
-    try{await require('node:util').promisify(require('node:child_process').execFile)('/usr/bin/sips',['-s','format','png',file,'--out',temp]);bytes=await fs.readFile(temp);name=path.basename(file,path.extname(file))+'.png';}finally{await fs.unlink(temp).catch(()=>{});}
-  }else bytes=await fs.readFile(file);
-  return {name:'assets/'+Date.now()+'-'+name.replace(/[^a-zA-Z0-9._-]/g,'-'),data:bytes.toString('base64')};
-});
+const imagePickerIPC=require('./image-picker-ipc.cjs').installImagePicker(ipcMain,{scope:(event,run)=>notesIPC.scope(event,run),services:{storage:require('./archive-codec.cjs'),documentIO,dialog,getWin:()=>win,tempRoot:app.getPath('temp')}});
+app.once('will-quit',()=>imagePickerIPC.dispose());
 
 ipcMain.handle('run-python', async (_, file) => {
 
