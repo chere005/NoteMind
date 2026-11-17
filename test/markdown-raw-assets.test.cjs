@@ -32,5 +32,9 @@ test('scoped Markdown import refuses source races and never hides a lost worker 
  try{await assert.rejects(lease.run(()=>markdown.read(file,'![Ink](image.png)')),error=>error.code==='ARCHIVE_RAW_LEASE_LOST');}
  finally{codec.importRawAssetFile=importFile;await lease.release();await codec.releaseRawAssets(owner);}
 });
+test('scoped Markdown links retain regular files with different case on a case-insensitive volume',async t=>{
+ const dir=await fixture(t),file=path.join(dir,'note.md'),requested=path.join(dir,'picture.png'),owner=require('node:crypto').randomUUID();await fs.writeFile(path.join(dir,'Picture.PNG'),'preview');try{await fs.access(requested);}catch{t.skip('The fixture volume is case-sensitive.');return;}const lease=await codec.preflightRawAssets([],{owner});
+ try{await lease.run(async()=>{const doc=await markdown.read(file,'![Picture](picture.png)');assert.equal(doc.assets['picture.png']?.bytes,7);});}finally{await lease.release();await codec.releaseRawAssets(owner);}
+});
 
 test.after(()=>codec.dispose());

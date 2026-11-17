@@ -56,10 +56,8 @@ async function read(file,text){
  const links=references(text),refs=new Set([...links,...links.map(url=>url+'.json'),...Object.keys(metadata.meta?.attachments||{}),...Object.values(metadata.meta?.attachments||{}).map(i=>i?.thumbnail).filter(Boolean),...(metadata.extraAssets||[])]);
  for(const url of refs){if(typeof url!=='string'||/^(?:[a-z][a-z0-9+.-]*:|\/|\\)/i.test(url))continue;let decoded;try{decoded=decodeURIComponent(url)}catch{continue;}
   try{
-   const requested=path.resolve(base,decoded),target=await fs.realpath(requested),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))continue;
-   if(requested!==target)continue;
-   const stat=await fs.stat(target),name='assets/linked'+path.extname(decoded).toLowerCase().replace(/[^.a-z0-9]/g,''),maximum=/\.json$/i.test(decoded)?GRAPHICS_BYTES:ENTRY_BYTES;
-   if(!stat.isFile()||stat.size>maximum||total+stat.size>TOTAL_BYTES)continue;
+   const requested=path.resolve(base,decoded),admitted=await require('./archive-version-source.cjs').linkedAssetPath(requested,{root:base});if(!admitted)continue;const target=admitted.file,name='assets/linked'+path.extname(decoded).toLowerCase().replace(/[^.a-z0-9]/g,''),maximum=/\.json$/i.test(decoded)?GRAPHICS_BYTES:ENTRY_BYTES;
+   if(admitted.bytes>maximum||total+admitted.bytes>TOTAL_BYTES)continue;
    // The scoped importer owns one validated file buffer in the archive worker.
    // Pass the original path so its confinement/identity checks see symlinks too.
    if(scoped){const asset=await codec.importRawAssetFile(requested,{name,root:base});if(total+asset.bytes>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');assets[url]=asset;total+=asset.bytes;}

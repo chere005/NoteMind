@@ -22,5 +22,9 @@ test('actual before-save ingestion, raw draft and recovered history preserve pai
  finally{await lease.release();await codec.releaseRawAssets(owner);}
  await fs.writeFile(file,format.encode(markdown.canonical({...original,text:'Changed on disk'})));await assert.rejects(store.versionFromFile(file,doc,revision),/changed/);assert.equal((await store.versions(doc.id)).length,1);
 });
+test('NotesStore routes linked Markdown Before save history to the actual streaming publisher',async t=>{
+ const {store,doc}=await fixture(t),markdown=require('../src/markdown-files.cjs'),file=path.join(store.root,'Linked.md'),original={...doc,text:'![Ink](ink.png)',assets:{'ink.png':Buffer.from('preview').toString('base64'),'ink.png.json':Buffer.from('editable').toString('base64')},meta:{tags:['old'],graphicsPanes:{'ink.png':{version:1}}}},prepared=await markdown.prepare(original,file);await fs.writeFile(file,prepared.text);const expected=markdown.canonical(prepared),revision=await require('../src/source-file-revision.cjs').sourceFileRevision(file);
+ await store.versionFromFile(file,doc,revision);await store.versionFromFile(file,doc,revision);const versions=await store.versions(doc.id);assert.equal(versions.length,1);const restored=await store.versionDoc(doc.id,versions[0].id);assert.equal(restored.text,expected.text);assert.deepEqual(restored.assets,expected.assets);assert.deepEqual(restored.meta,expected.meta);
+});
 
 test.after(()=>codec.dispose());

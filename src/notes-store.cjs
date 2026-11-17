@@ -113,7 +113,8 @@ class NotesStore {
  async versionFromFile(file,doc,expectedRevision,label='Before save') {
   if(!doc?.id)return;
   const noteId=doc.id,titleFallback=doc.title||'',expected=structuredClone(expectedRevision);
-  return this.queueVersion(noteId,label,options=>archiveCodec.publishVersionFromFile(file,{...options,noteId,titleFallback,expectedRevision:expected}));
+  const publish=path.extname(file).toLowerCase()==='.md'?'publishMarkdownVersionFromFile':'publishVersionFromFile';
+  return this.queueVersion(noteId,label,options=>archiveCodec[publish](file,{...options,noteId,titleFallback,expectedRevision:expected}));
  }
  async queueVersion(noteId,label,publishVersion) {
   // Keep calls for one note ordered, without holding the whole-library lock during hashing and asset I/O.
