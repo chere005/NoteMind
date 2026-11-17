@@ -1,4 +1,4 @@
-const {yieldTask}=require('./graphics-pane.js'),{ENTRY_BYTES,TOTAL_BYTES}=require('./archive-limits.cjs');
+const {yieldTask}=require('./graphics-pane.js'),{ENTRY_BYTES,TOTAL_BYTES}=require('./archive-limits.cjs'),limits=require('./scan-limits.js');
 const abort=()=>Object.assign(Error('Camera scan preparation cancelled.'),{name:'AbortError'});
 function check(signal){if(signal?.aborted)throw abort();}
 async function loadCameraScanPage(api,pageId,{signal,yieldControl=yieldTask}={}){
@@ -22,8 +22,10 @@ async function loadCameraScanPage(api,pageId,{signal,yieldControl=yieldTask}={})
   const {transferSession,chunkBytes,...metadata}=state;return {...metadata,encodedSheets:[page]};
  }finally{signal?.removeEventListener('abort',stop);if(session)try{await api.finishSheetLoad(session);}catch{}}
 }
-async function collectCameraScans(api,{render,encode,signal,onProgress=()=>{},maxBytes=TOTAL_BYTES}={}){
- check(signal);const catalog=await api.listCameraPages();check(signal);const pages=catalog.pages.filter(page=>page.backdropId),result=[];let bytes=0;
+async function collectCameraScans(api,{render,encode,signal,onProgress=()=>{},selectPages,maxBytes=TOTAL_BYTES,maxChars=limits.MAX_DATA_URL_CHARS}={}){
+ check(signal);const catalog=await api.listCameraPages();check(signal);let pages=catalog.pages.filter(page=>page.backdropId);const result=[];let bytes=0,characters=0;
+ if(pages.length&&selectPages){const ids=await selectPages(pages,{signal});check(signal);if(!Array.isArray(ids)||new Set(ids).size!==ids.length)throw Error('Invalid camera scan selection.');const available=new Map(pages.map(page=>[page.pageId,page]));pages=ids.map(id=>{const page=available.get(id);if(!page)throw Error('A selected camera page is no longer available.');return page;});}
+ limits.assertPageCount(pages.length);if(!Number.isSafeInteger(maxChars)||maxChars<1||maxChars>limits.MAX_DATA_URL_CHARS)throw Error('Invalid scan size limit.');
  for(let at=0;at<pages.length;at++){
   check(signal);const row=pages[at];onProgress({done:at,total:pages.length,name:row.metadata.name});
   const state=await loadCameraScanPage(api,row.pageId,{signal}),packet=state.encodedSheets[0];check(signal);
@@ -31,7 +33,7 @@ async function collectCameraScans(api,{render,encode,signal,onProgress=()=>{},ma
   if(state.session!==catalog.session||pageId!==row.pageId||geometryRevision!==row.geometryRevision||JSON.stringify(metadata)!==JSON.stringify(row.metadata)||state.signatures?.[0]!==row.signature)throw Error('A camera page changed while the scan was preparing. Try preparing it again.');
   const rendered=await render(packet,{owned:true,signal,thumbnail:true});check(signal);
   if(!rendered?.blob||rendered.blob.size>ENTRY_BYTES)throw Error('A camera image exceeds the 50 MiB image limit.');
-  bytes+=rendered.blob.size;if(bytes>maxBytes)throw Error('The selected camera pages exceed the Notepad size limit.');
+  bytes+=rendered.blob.size;characters+=limits.imageDataURLChars(rendered.blob.size);if(bytes>maxBytes||characters>maxChars)throw Error('The selected camera pages exceed the scan size limit. Choose fewer pages.');
   const data=await encode(rendered.blob),thumbnail=rendered.thumbnail?await encode(rendered.thumbnail):undefined;check(signal);result.push({name:metadata.name,data,...(thumbnail?{thumbnail}:{})});
  }
  onProgress({done:pages.length,total:pages.length});return result;
