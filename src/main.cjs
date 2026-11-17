@@ -347,7 +347,7 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   let expected=null,oldArchive=null;
   if(previous){if(['.nm','.wm'].includes(ext)){const input=previous.byteOffset===0&&previous.byteLength===previous.buffer.byteLength?previous:Uint8Array.from(previous);previous=null;const inspected=await require('./archive-codec.cjs').inspectOwned(input,{files:false});oldArchive=inspected.doc;expected={sha256:inspected.revision,bytes:inspected.bytes};}else expected={sha256:digest(previous),bytes:previous.length};}
   if(!saveAs&&doc.revision&&(!expected||expected.sha256!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
-  const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId)delete doc.recoveryId;
+  const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId){delete doc.recoveryId;doc=require('./pdf-reference-reconcile.cjs').remapOwner(doc,originalId);}
   if(expected){try{const old=oldArchive||(ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}});await notesStore.version({...old,id:doc.id,title:old.title||doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}previous=null;oldArchive=null;
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=require('./markdown-files.cjs').canonical(doc);

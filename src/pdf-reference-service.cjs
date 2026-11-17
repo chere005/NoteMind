@@ -17,7 +17,7 @@ class PDFReferenceService {
   const identity=attachment?'attachment:'+String(attachment.noteId)+':'+String(attachment.logicalId):opened.file;
   const sourceHash=previousHash||opened.sourceHash;if(sourceHash!==opened.sourceHash)throw Error('The marked PDF source is damaged.');
   for(const state of owned.values())if(state.identity===identity&&state.sourceHash===sourceHash){state.retained=true;await state.ready;return this.describe(state);}
-  while(owned.size>=this.maximumSessions){const entry=[...owned.entries()].find(([,state])=>!state.retained);if(!entry)throw Error('Finish saving the current PDF before opening another.');const [id,state]=entry;await Promise.allSettled([...state.saves]);state.client.dispose();owned.delete(id);}
+  while(owned.size>=this.maximumSessions){const entry=[...owned.entries()].find(([,state])=>!state.retained&&!state.exports?.size);if(!entry)throw Error('Finish saving the current PDF before opening another.');const [id,state]=entry;await Promise.allSettled([...state.saves]);state.client.dispose();owned.delete(id);}
   const client=this.clientFactory(),state={id:randomUUID(),identity,file:opened.file,sourceHash,pageCount:0,first:null,client,saves:new Set(),attachment,previous:[],index:null,retained:true};owned.set(state.id,state);
   state.ready=(async()=>{const value=await client.call('open',{bytes:opened.bytes,password,sourceHash});state.pageCount=value.pageCount;state.first=await client.call('info',{page:1});const saved=await this.jobs.call('state',{identity,sourceHash});state.index=saved.index;state.previous=saved.previous;})();try{await state.ready;return this.describe(state);}catch(error){owned.delete(state.id);client.dispose();throw error;}
  }
@@ -29,24 +29,26 @@ class PDFReferenceService {
  info(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('info',{page});}
  text(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('text',{page});}
  ink(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return this.jobs.call('page',{identity:state.identity,sourceHash:state.sourceHash,page});}
- async save(sender,id,{page,bytes,expectedRevision=null,noteRevision=null}){
-  const state=this.get(sender,id);this.pageNumber(state,page);const args={identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page,bytes,expectedRevision,noteRevision,sourcePath:state.file},run=(async()=>{let saved=await this.jobs.call('save',args);if(saved.needsSource){const sourceBytes=await state.client.call('source');saved=await this.jobs.call('save',{...args,bytes:saved.bytes,sourceBytes});}return saved;})();state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
+ async save(sender,id,{page,bytes,expectedRevision=null,noteRevision=null,baseline=null}){
+  const state=this.get(sender,id);this.pageNumber(state,page);const args={identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page,bytes,expectedRevision,noteRevision,baseline,sourcePath:state.file},run=(async()=>{let saved=await this.jobs.call('save',args);if(saved.needsSource){const sourceBytes=await state.client.call('source');saved=await this.jobs.call('save',{...args,bytes:saved.bytes,sourceBytes});}state.index ||= {pages:{}};state.index.pages[page]={revision:saved.revision};return saved;})();state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
  }
  async previous(sender,id,sourceHash){const current=this.get(sender,id),entry=current.previous.find(value=>value.sourceHash===sourceHash);if(!entry)throw Error('This marked PDF version is unavailable.');return this.open(sender,{file:current.file,attachment:current.attachment,previousHash:sourceHash});}
- async close(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)return;await Promise.all([...state.saves]);state.client.dispose();owned.delete(id);}
+ async close(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)return;await Promise.all([...state.saves,...(state.exports||[])]);state.client.dispose();owned.delete(id);}
  retain(sender,id,retained){if(typeof retained!=='boolean')throw Error('Invalid PDF reference ownership.');this.get(sender,id).retained=retained;}
  cancel(sender,id,requestId){this.get(sender,id).client.cancel(requestId);}
  async export(sender,id){
-  const state=this.get(sender,id);await Promise.all([...state.saves]);const lease=await this.jobs.call('captureExport',{identity:state.identity,sourceHash:state.sourceHash});
-  try{
-   const result=await dialog.showSaveDialog(BrowserWindow.fromWebContents(sender),{title:'Export annotated PDF',defaultPath:state.file.replace(/\.pdf$/i,'')+' annotated.pdf',filters:[{name:'PDF',extensions:['pdf']}]});if(result.canceled)return null;
-   const {physicalPath,keyPath}=require('./path-key.cjs'),target=physicalPath(result.filePath),original=physicalPath(state.file),relative=path.relative(physicalPath(path.join(this.root,'Originals')),target),insideOriginals=!relative||relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative);if(keyPath(target)===keyPath(original)||insideOriginals)throw Error('Choose a different file to keep the original PDF unchanged.');
-   const expectedRevision=await this.jobs.call('targetRevision',{file:target}),sourceBytes=lease?undefined:await state.client.call('source');return await this.jobs.call('export',{identity:state.identity,sourceHash:state.sourceHash,file:target,pageCount:state.pageCount,lease,sourceBytes,expectedRevision});
-  }finally{if(lease)await this.jobs.call('releaseExport',{id:lease.id}).catch(()=>{});}
+  const state=this.get(sender,id),run=(async()=>{await Promise.all([...state.saves]);const lease=await this.jobs.call('captureExport',{identity:state.identity,sourceHash:state.sourceHash});
+   try{
+    const result=await dialog.showSaveDialog(BrowserWindow.fromWebContents(sender),{title:'Export annotated PDF',defaultPath:state.file.replace(/\.pdf$/i,'')+' annotated.pdf',filters:[{name:'PDF',extensions:['pdf']}]});if(result.canceled)return null;
+    const {physicalPath,keyPath}=require('./path-key.cjs'),target=physicalPath(result.filePath),original=physicalPath(state.file),relative=path.relative(physicalPath(path.join(this.root,'Originals')),target),insideOriginals=!relative||relative!=='..'&&!relative.startsWith('..'+path.sep)&&!path.isAbsolute(relative);if(keyPath(target)===keyPath(original)||insideOriginals)throw Error('Choose a different file to keep the original PDF unchanged.');
+    const expectedRevision=await this.jobs.call('targetRevision',{file:target}),sourceBytes=lease?undefined:await state.client.call('source');return await this.jobs.call('export',{identity:state.identity,sourceHash:state.sourceHash,file:target,pageCount:state.pageCount,lease,sourceBytes,expectedRevision});
+   }finally{if(lease)await this.jobs.call('releaseExport',{id:lease.id}).catch(()=>{});}
+  })();state.exports ||= new Set();state.exports.add(run);try{return await run;}finally{state.exports.delete(run);}
  }
+
  async dispose(){if(this.closed)return;this.closed=true;for(const owned of this.owners.values())for(const state of owned.values())state.client.dispose();this.owners.clear();await this.jobs.dispose();}
 }
 module.exports={PDFReferenceService,WorkerClient};
 
-function register(options){let service;const methods=new Set(['open','stats','info','page','text','ink','save','serialize','previous','close','retain','cancel','export']);ipcMain.handle('pdf-reference-call',(event,method,args=[])=>{if(!methods.has(method)||!Array.isArray(args)||args.length>4)throw Error('Invalid PDF reference request.');service ||= new PDFReferenceService(options);return service[method](event.sender,...args);});return{dispose:()=>service?.dispose()};}
+function register(options){let service;const methods=new Set(['open','stats','info','page','text','ink','save','serialize','previous','close','retain','cancel','export']);ipcMain.handle('pdf-reference-call',(event,method,args=[])=>{if(!methods.has(method)||!Array.isArray(args)||args.length>4)throw Error('Invalid PDF reference request.');service ||= new PDFReferenceService(options);return service[method](event.sender,...args);});return{get:()=>service ||= new PDFReferenceService(options),dispose:()=>service?.dispose()};}
 module.exports.register=register;

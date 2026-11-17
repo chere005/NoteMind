@@ -4,11 +4,11 @@ function create({pdfjs,makeCanvas=()=>document.createElement('canvas'),baseURL,m
  if(!pdfjs?.getDocument)throw Error('PDF rendering is unavailable.');
  return {async open(source,{signal}={}){
   check(signal);const data=source?.data||source,password=source?.password;if(!(data instanceof Uint8Array)||data.byteLength>maxBytes)throw Error('Choose a PDF up to 150 MB.');
-  const options={data,password,isEvalSupported:false,useSystemFonts:true};if(baseURL){options.cMapUrl=new URL('./vendor/pdfjs/cmaps/',baseURL).href;options.cMapPacked=true;options.standardFontDataUrl=new URL('./vendor/pdfjs/standard_fonts/',baseURL).href;options.wasmUrl=new URL('./vendor/pdfjs/wasm/',baseURL).href;}
+  const options={data,password,isEvalSupported:false,useSystemFonts:true,maxImageSize:16000000,canvasMaxAreaInBytes:64*1024*1024,stopAtErrors:true};if(baseURL){options.cMapUrl=new URL('./vendor/pdfjs/cmaps/',baseURL).href;options.cMapPacked=true;options.standardFontDataUrl=new URL('./vendor/pdfjs/standard_fonts/',baseURL).href;options.wasmUrl=new URL('./vendor/pdfjs/wasm/',baseURL).href;}
   const task=pdfjs.getDocument(options),cancel=()=>{void Promise.resolve(task.destroy()).catch(()=>{});};signal?.addEventListener('abort',cancel,{once:true});let pdf;
   try{pdf=await task.promise;check(signal);}catch(error){await task.destroy().catch(()=>{});if(signal?.aborted)throw abort();throw error;}finally{signal?.removeEventListener('abort',cancel);}
   let closed=false;
-  return {pageCount:pdf.numPages,bytes:()=>pdf.getData(),async close(){if(closed)return;closed=true;await pdf.destroy();},async page(number,{signal}={}){
+  return {pageCount:pdf.numPages,bytes:()=>pdf.getData(),async close(){if(closed)return;closed=true;await task.destroy();},async page(number,{signal}={}){
    check(signal);if(closed)throw abort();const page=await pdf.getPage(number);if(signal?.aborted||closed){page.cleanup();throw abort();}const viewport=page.getViewport({scale:1}),view=page.view;
    return {width:viewport.width,height:viewport.height,rotation:page.rotate,crop:{x:view[0],y:view[1],width:view[2]-view[0],height:view[3]-view[1]},cleanup:()=>page.cleanup(),async text({signal}={}){check(signal);if(closed)throw abort();const content=await page.getTextContent();check(signal);if(closed)throw abort();return content.items.filter(item=>typeof item.str==='string').map(item=>item.str+(item.hasEOL?'\n':' ')).join('').trim();},async render({width,height,scale,signal}){
     check(signal);if(closed)throw abort();if(![width,height].every(value=>Number.isInteger(value)&&value>0&&value<=4096)||width*height>16*1024*1024||!Number.isFinite(scale)||scale<=0||scale>8)throw Error('Invalid PDF render size.');const canvas=makeCanvas();canvas.width=width;canvas.height=height;let rendering;
