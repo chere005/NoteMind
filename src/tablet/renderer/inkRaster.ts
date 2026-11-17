@@ -38,15 +38,17 @@ export class InkRaster{
  }
  private async paint(ctx:any,rect:any,cancelled:()=>boolean,selected?:Uint8Array,selectMode=false){
   const config=this.config!,{paintWidth:width,paintHeight:height,region,ratio}=config,unit=width/(region.width*1000);let work=0
-  ctx.lineCap='round';ctx.lineJoin='round'
+  // Keep absolute path coordinates identical for full and dirty-tile paints.
+  // Subtracting tile origins in JS changes native float32 path rounding.
+  ctx.lineCap='round';ctx.lineJoin='round';ctx.translate(-rect.x,-rect.y)
   const x=(n:number)=>(n-region.x)/region.width*width,y=(n:number)=>(n-region.y)/region.height*height
   const stroke=emptyRecord(),order=this.records.order
   for(const leaf of order.leafEntries(rect))for(let local=0;local<leaf.values.length;local++){const position=leaf.start+local;if(cancelled())return false;if(selected&&!!selected[position]!==selectMode){if(++work%2048===0)await graphics.yieldTask();continue}this.records.read(leaf.values[local]!,stroke);if(!stroke.count){if(++work%2048===0)await graphics.yieldTask();continue;}const {view,stride}=stroke;let at=stroke.at,px=x(view.getFloat64(at,true)),py=y(view.getFloat64(at+8,true)),pressure=stroke.pressure?view.getFloat64(at+16,true):.5
    ctx.strokeStyle=inkOn(config.paper,stroke.colour)
-   if(stroke.count===1){const line=Math.max(.5*ratio,stroke.width*unit);if(intersects(px,py,px,py,line/2+2,rect)){ctx.lineWidth=line;ctx.beginPath();ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(px-rect.x+.01*ratio,py-rect.y);ctx.stroke()}if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}continue}
+   if(stroke.count===1){const line=Math.max(.5*ratio,stroke.width*unit);if(intersects(px,py,px,py,line/2+2,rect)){ctx.lineWidth=line;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+.01*ratio,py);ctx.stroke()}if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}continue}
    const line=Math.max(.5*ratio,stroke.width*unit);let running=false,made=false;if(!stroke.pressure){ctx.lineWidth=line;ctx.beginPath()}
    for(let i=1;i<stroke.count;i++){at+=stride;const nx=x(view.getFloat64(at,true)),ny=y(view.getFloat64(at+8,true)),nextPressure=stroke.pressure?view.getFloat64(at+16,true):.5,thickness=stroke.pressure?Math.max(.25*ratio,stroke.width*unit*pressureScale((pressure+nextPressure)/2)):line
-    if(intersects(px,py,nx,ny,thickness/2+2,rect)){if(stroke.pressure){ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(nx-rect.x,ny-rect.y);ctx.stroke()}else{if(!running)ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(nx-rect.x,ny-rect.y);running=true;made=true}}else running=false
+    if(intersects(px,py,nx,ny,thickness/2+2,rect)){if(stroke.pressure){ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(nx,ny);ctx.stroke()}else{if(!running)ctx.moveTo(px,py);ctx.lineTo(nx,ny);running=true;made=true}}else running=false
     px=nx;py=ny;pressure=nextPressure
     if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}
    }
@@ -64,8 +66,8 @@ export class InkRaster{
   const paint=async(rect:any,mode:boolean)=>{if(rect.width<=0||rect.height<=0)return null;const canvas=canvasFactory(Math.max(1,Math.floor(rect.width*scale)),Math.max(1,Math.floor(rect.height*scale)));try{const ctx=canvas.getContext('2d');if(!ctx)throw Error('Could not paint the selected ink.');if(scale!==1)ctx.scale(scale,scale);if(!await this.paint(ctx,rect,cancelled,selected,mode))return null;return{...rect,bitmap:canvas.transferToImageBitmap()}}finally{canvas.width=1;canvas.height=1}}
   try{for(const rect of fixedRects){if(cancelled())break;const layer=await paint(rect,false);if(layer)fixed.push(layer)}if(inkRect&&!cancelled())ink=await paint(inkRect,true);if(cancelled()){for(const layer of fixed)layer.bitmap.close();ink?.bitmap.close();return{cancelled:true,accepted:true}}return{frame:this.lastFrame,tiles:[],preview:{fixed,ink,clear:!request.previewBase||allSelected,padding}}}catch(error){for(const layer of fixed)layer.bitmap.close();ink?.bitmap.close();throw error}
  }
- async render(request:any,cancelled:()=>boolean=()=>false,canvasFactory=(w:number,h:number)=>new OffscreenCanvas(w,h)){
-  const started=globalThis.performance?.now()??Date.now();let sync:any;try{sync=await this.sync(request,cancelled)}catch(error){if(cancelled())return{cancelled:true,accepted:false};throw error}if(sync.resync)return sync;const synced=globalThis.performance?.now()??Date.now();if(request.selection)return this.preview(request,cancelled,canvasFactory)
+ async render(request:any,cancelled:()=>boolean=()=>false,canvasFactory=(w:number,h:number)=>new OffscreenCanvas(w,h),prepared?:()=>void){
+  const started=globalThis.performance?.now()??Date.now();let sync:any;try{sync=await this.sync(request,cancelled)}catch(error){if(cancelled())return{cancelled:true,accepted:false};throw error}if(sync.resync)return sync;const synced=globalThis.performance?.now()??Date.now();prepared?.();if(request.selection)return this.preview(request,cancelled,canvasFactory)
   const config=this.config!,tileCount=Math.ceil(config.width/EDGE)*Math.ceil(config.height/EDGE),full=this.dirty.size>Math.max(4,tileCount*.3),rects=full?[{x:0,y:0,width:config.width,height:config.height}]:[...this.dirty].map(id=>frameRect(config,id)),tiles:any[]=[]
   try{for(const rect of rects){if(cancelled())break;const canvas=canvasFactory(rect.width,rect.height);try{const ctx=canvas.getContext('2d');if(!ctx)throw Error('Could not paint drawing ink.');const complete=await this.paint(ctx,rect,cancelled);if(!complete)break;tiles.push({...rect,bitmap:canvas.transferToImageBitmap()})}finally{canvas.width=1;canvas.height=1}}}catch(error){for(const tile of tiles)tile.bitmap.close();throw error}
   if(cancelled()){for(const tile of tiles)tile.bitmap.close();return{cancelled:true,accepted:true}}

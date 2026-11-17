@@ -1,0 +1,14 @@
+// Only Main may create this private byte-stream adapter. Never bridge file paths
+// to the converter; upload verified bytes through its existing bounded session.
+const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
+const LIMIT=50*1024*1024,CHUNK=196608,identity=stat=>['dev','ino','size','mtimeNs','ctimeNs'].map(key=>String(stat[key])).join(':'),check=signal=>{if(signal?.aborted)throw Object.assign(Error('Conversion cancelled.'),{name:'AbortError'})};
+async function withVerifiedFileInput(file,{root,bytes,sha256,signal}={},run){
+ if(typeof file!=='string'||!path.isAbsolute(file)||typeof root!=='string'||!path.isAbsolute(root)||!Number.isSafeInteger(bytes)||bytes<1||bytes>LIMIT||!/^[a-f0-9]{64}$/.test(sha256))throw Error('Invalid private image conversion source.');check(signal);
+ const relative=path.relative(path.resolve(root),path.resolve(file));if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Image conversion source is outside its private folder.');const realRoot=await fs.realpath(root),resolved=path.join(realRoot,relative);let current=realRoot;for(const part of relative.split(path.sep)){current=path.join(current,part);if((await fs.lstat(current)).isSymbolicLink())throw Error('Image conversion sources cannot contain symbolic links.');}if(await fs.realpath(file)!==resolved)throw Error('Image conversion source changed.');
+ const handle=await fs.open(resolved,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));
+ try{const before=await handle.stat({bigint:true});if(!before.isFile()||before.size!==BigInt(bytes))throw Error('Image conversion source changed.');const stamp=identity(before),assert=async()=>{check(signal);const [stat,named,nowRoot,nowFile]=await Promise.all([handle.stat({bigint:true}),fs.lstat(resolved,{bigint:true}),fs.realpath(root),fs.realpath(file)]);if(!stat.isFile()||!named.isFile()||named.isSymbolicLink()||identity(stat)!==stamp||identity(named)!==stamp||nowRoot!==realRoot||nowFile!==resolved)throw Error('Image conversion source changed.');};let consumed=false;
+  const input={byteLength:bytes,documentByteStream:async function*(){if(consumed)throw Error('Image conversion input was already consumed.');consumed=true;await assert();const buffer=Buffer.allocUnsafeSlow(Math.min(CHUNK,bytes)),hash=createHash('sha256');let at=0;while(at<bytes){check(signal);const {bytesRead}=await handle.read(buffer,0,Math.min(buffer.length,bytes-at),at);if(!bytesRead)throw Error('Image conversion source was truncated.');const part=buffer.subarray(0,bytesRead);hash.update(part);at+=bytesRead;yield part;}await assert();if(hash.digest('hex')!==sha256)throw Error('Image conversion source digest changed.');}};
+  return await run(input);
+ }finally{await handle.close()}
+}
+module.exports={withVerifiedFileInput};

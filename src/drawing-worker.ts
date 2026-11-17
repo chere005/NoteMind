@@ -9,6 +9,7 @@ import {paintPaper,inkOn} from './tablet/renderer/tabletPaper'
 import {paintBackdrop} from './tablet/renderer/tabletBackdrop'
 import {fingerprint,canonicalStrokeFingerprintAsync} from './stroke-signature.js'
 import {InkRaster} from './tablet/renderer/inkRaster'
+import {releaseOwnedInkPacket} from './owned-ink-packet.js'
 
 async function pngOf(canvas:OffscreenCanvas):Promise<string>{
  const bytes=new Uint8Array(await (await canvas.convertToBlob({type:'image/png'})).arrayBuffer())
@@ -30,12 +31,12 @@ const ink=new InkRaster();let activeInk:any=null,pendingInk:any=null
 async function pumpInk(){
  if(activeInk)return
  while(pendingInk){const job=pendingInk;pendingInk=null;let complete:any;const done=new Promise<void>(resolve=>complete=resolve),active=activeInk={job,cancelled:false,done}
-  try{const result=await ink.render(job.ink,()=>active.cancelled),value:any=result,tiles=[...(value.tiles||[]),...(value.preview?.fixed||[]),...(value.preview?.ink?[value.preview.ink]:[])];self.postMessage({id:job.id,...result},tiles.map((tile:any)=>tile.bitmap))}
+  try{const result=await ink.render(job.ink,()=>active.cancelled,undefined,()=>releaseOwnedInkPacket(job.ink,ink.records.batches)),value:any=result,tiles=[...(value.tiles||[]),...(value.preview?.fixed||[]),...(value.preview?.ink?[value.preview.ink]:[])];self.postMessage({id:job.id,...result},tiles.map((tile:any)=>tile.bitmap))}
   catch(error){self.postMessage({id:job.id,error:error instanceof Error?error.message:String(error)})}
-  finally{activeInk=null;complete()}
+  finally{releaseOwnedInkPacket(job.ink,ink.records.batches);activeInk=null;complete()}
  }
 }
-function acceptInk(job:any){if(pendingInk)self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=job;if(activeInk)activeInk.cancelled=true;void pumpInk()}
+function acceptInk(job:any){if(pendingInk){releaseOwnedInkPacket(pendingInk.ink,ink.records.batches);self.postMessage({id:pendingInk.id,cancelled:true,accepted:false})}pendingInk=job;if(activeInk)activeInk.cancelled=true;void pumpInk()}
 const background=new Map<number,AbortController>(),queuedExports=new Map<number,any>();let queue=Promise.resolve(),queuedBytes=0
 const sidecarAcks=new Map<number,{index:number;resolve:()=>void;reject:(error:Error)=>void}>()
 async function sidecarChunk(job:any,index:number,text:string,signal:AbortSignal){let abort:any;try{await new Promise<void>((resolve,reject)=>{sidecarAcks.set(job.id,{index,resolve,reject});abort=()=>{sidecarAcks.delete(job.id);reject(Error('Drawing export cancelled.'))};signal.addEventListener('abort',abort,{once:true});if(signal.aborted){abort();return}self.postMessage({id:job.id,index,sidecarChunk:text})});}finally{signal.removeEventListener('abort',abort);sidecarAcks.delete(job.id)}}
@@ -80,7 +81,7 @@ async function runJob(job:any){
 self.onmessage=event=>{
  const job=event.data
  if(job?.sidecarAck){const held=sidecarAcks.get(job.sidecarAck);if(held?.index===job.index){sidecarAcks.delete(job.sidecarAck);held.resolve()}return}
- if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
+ if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){releaseOwnedInkPacket(pendingInk.ink,ink.records.batches);self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
  if(job?.cancelExport){const held=queuedExports.get(job.cancelExport);if(held){queuedExports.delete(job.cancelExport);queuedBytes-=held.cost;held.job.bitmap?.close();held.job.bytes=null;held.job.bitmap=null;self.postMessage({id:job.cancelExport,error:'Drawing export cancelled.'})}else background.get(job.cancelExport)?.abort();return}
  if(job?.ink){acceptInk(job);return}
  if(job?.transform||job?.fingerprint){void runJob(job);return}
