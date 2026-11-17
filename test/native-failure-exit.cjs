@@ -1,5 +1,5 @@
 // Native probes must fail into artifacts before Electron can open a main-process error dialog.
-const fs = require('node:fs');
+const fs = require('node:fs'),path=require('node:path');
 function installNativeFailureExit({app,report,telemetry,processObject=process}) {
  let failing = false;
  const fail = (reason,kind) => {
@@ -7,9 +7,9 @@ function installNativeFailureExit({app,report,telemetry,processObject=process}) 
    failing = true;
    try {
     const error = reason instanceof Error ? reason : Error(String(reason));
-    telemetry.passed = false;
+    telemetry.passed = false;telemetry.ok=false;
     telemetry.fatal = {kind,name:error.name,message:error.message,stack:error.stack,pid:processObject.pid};
-    fs.writeFileSync(report,JSON.stringify(telemetry,null,2));
+    fs.mkdirSync(path.dirname(report),{recursive:true});fs.writeFileSync(report,JSON.stringify(telemetry,null,2));
    } catch (error) {
     try { fs.writeFileSync(report+'.fatal.txt','Native probe failed and could not write its structured artifact: '+String(error)); } catch {}
    }

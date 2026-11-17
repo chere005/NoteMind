@@ -12,6 +12,7 @@ for(const flag of ['disable-renderer-backgrounding','disable-background-timer-th
 app.on('window-all-closed',()=>{});
 let win,finished=false,phase='setup',peak=0;
 const children=new Set(),errors=[],results=[];
+require('./native-failure-exit.cjs').installNativeFailureExit({app,report:path.join(output,'result.json'),telemetry:{fixture:'tablet-host',results,errors}});
 const watchdog=setTimeout(()=>finish(Error('Tablet host ownership fixture timed out.')),60000);
 const memory=setInterval(()=>{
  if(!app.isReady())return;

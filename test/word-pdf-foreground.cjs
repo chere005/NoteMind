@@ -6,6 +6,7 @@ const output=path.resolve('test-results/performance/word-pdf-foreground.json'),r
 let root,codec,assets,guard,beat,deadline,finishing=false,peak=0,last=performance.now(),mainGap=0,metricsDuration=0;
 root=require('node:fs').mkdtempSync(path.join(os.tmpdir(),'notemind-word-pdf-'));app.setPath('userData',path.join(root,'Profile'));
 app.dock?.hide();app.on('window-all-closed',()=>{});
+require('./native-failure-exit.cjs').installNativeFailureExit({app,report:output,telemetry:report});
 function record(phase,detail={}){report.phases.push({phase,time:performance.now(),...detail});}
 async function finish(error){if(finishing)return;finishing=true;clearInterval(guard);clearInterval(beat);clearTimeout(deadline);if(error)report.error={message:error.message,stack:error.stack};try{assets?.dispose();await codec?.dispose();}catch(cleanup){report.cleanupError=cleanup.message;}report.peakCombinedBytes=peak;report.mainTimerGapMs=mainGap;report.metricsCallMaxMs=metricsDuration;await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify(report,null,2));if(root)await fs.rm(root,{recursive:true,force:true});console.log(JSON.stringify({passed:report.passed,error:report.error?.message,peakCombinedBytes:peak,output}));app.exit(error?1:0);}
 app.whenReady().then(async()=>{
