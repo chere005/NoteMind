@@ -3,6 +3,7 @@ function check(signal){if(signal?.aborted){const error=Error('Drawing recovery c
 async function loadSheetState(api,options={}){
  check(options.signal);const chunked=!!(api.loadSheetChunk&&api.finishSheetLoad),state=await api.loadSheetState(chunked?{chunks:true}:undefined);return pullSheetState(api,state,options);
 }
+async function loadSheetPage(api,pageId,options={}){check(options.signal);if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid drawing page identity.');const chunked=!!(api.loadSheetChunk&&api.finishSheetLoad),state=await api.loadSheetPage(pageId,chunked?{chunks:true}:undefined);return pullSheetState(api,state,options);}
 async function pullSheetState(api,state,{signal,yieldControl=yieldTask,maxBytes=256*1024*1024}={}){
  const chunked=!!(api.loadSheetChunk&&api.finishSheetLoad);
  if(!state.transferSession){check(signal);return state;}
@@ -15,4 +16,4 @@ async function pullSheetState(api,state,{signal,yieldControl=yieldTask,maxBytes=
   const {transferSession,chunkBytes,...metadata}=state;return {...metadata,encodedSheets};
  }finally{try{await api.finishSheetLoad(session);}catch{}}
 }
-module.exports={loadSheetState,pullSheetState};
+module.exports={loadSheetState,loadSheetPage,pullSheetState};

@@ -7,7 +7,7 @@ test('the real quit-flush path saves an unfinished stroke synchronously and a la
   assert.equal(h.page.strokes.length, 0);
   const model = [{ name: 'Pending', page: h.page }], cached = [{ name: 'Pending', aspect: h.page.aspect, strokes: h.page.strokes }];
   let flush, finished, written;
-  const context = {
+  const context = {crypto:require('node:crypto').webcrypto,pageIdentities:{current:new WeakMap()},flushAllInkMutations:require('../src/ink-mutations.js').flushAllInkMutations,
     sheetSaver:{current:null}, liveSheets: { current: model }, latestSheets: { current: cached }, saves: { current: Promise.resolve() }, saveTimer: { current: null },
     persistence: { current: { loaded: true, loadFailed: false } }, paper: () => ({ kind: 'blank', spacing: 'medium', colour: 'white' }),
     useEffect: fn => fn(), clearTimeout,

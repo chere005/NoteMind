@@ -263,6 +263,8 @@ ipcMain.handle('search-folder', async (_, folder, query) => {
 });
 
 ipcMain.handle('load-sheets', async () => {await sheetWrite;return sheetPersistence().load();});
+ipcMain.handle('list-sheets',async event=>{if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');await sheetWrite;const result=await sheetPersistence().listPages();if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');return result;});
+ipcMain.handle('load-sheet-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid drawing page identity.');await sheetWrite;const state=await sheetPersistence().loadPage(pageId);if(event.sender.isDestroyed())throw Error('Drawing recovery window closed.');return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'page:'+pageId,maxBytes:256*1024*1024}):state;});
 ipcMain.handle('load-sheet-state', async (event,options) => {await sheetWrite;const state=await sheetPersistence().loadStateCompact();return options?.chunks?sheetLoads.beginFor(event.sender,state,{maxBytes:256*1024*1024}):state;});
 ipcMain.handle('load-sheet-chunk',(event,session,key,offset)=>sheetLoads.read(event.sender.id,session,key,offset));
 ipcMain.handle('finish-sheet-load',(event,session)=>sheetLoads.release(event.sender.id,session));

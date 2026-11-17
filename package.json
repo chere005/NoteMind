@@ -21,6 +21,7 @@
     "pdfjs-dist": "^6.4.299",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "stream-json": "3.9.0",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "utif": "3.1.0"
