@@ -1,12 +1,11 @@
-import {paintStrokes} from './tabletPage';
-import {warpToPage,quadFromPixels} from './perspective';
+import {collectCameraScans} from '../../camera-scan-pages.js'
+import {CameraProcessing,pngBlobDataURL} from './cameraProcessing'
 
-async function scanPicture(item){
- const image=new Image();image.src=item.picture;await image.decode();const rotation=item.rotation||0,turned=rotation%180!==0,full=document.createElement('canvas');full.width=turned?image.height:image.width;full.height=turned?image.width:image.height;const fc=full.getContext('2d');fc.save();if(rotation===90){fc.translate(full.width,0);fc.rotate(Math.PI/2);}else if(rotation===180){fc.translate(full.width,full.height);fc.rotate(Math.PI);}else if(rotation===270){fc.translate(0,full.height);fc.rotate(-Math.PI/2);}fc.drawImage(image,0,0);fc.restore();
- const ratio=item.aspect&&item.aspect!=='free'?Number(item.aspect):full.width/full.height,c=document.createElement('canvas');c.width=Math.min(full.width,full.height*ratio);c.height=Math.min(full.height,full.width/ratio);const ctx=c.getContext('2d');ctx.drawImage(full,(full.width-c.width)/2,(full.height-c.height)/2,c.width,c.height,0,0,c.width,c.height);paintStrokes(ctx,item.strokes||[],p=>({x:p.x*c.width,y:p.y*c.height}),Math.max(c.width,c.height)/1000);
- let out=c;
- if(item.corners){const corners=Object.fromEntries(Object.entries(item.corners).map(([k,p]:[string,any])=>[k,{x:p.x*c.width,y:p.y*c.height}])),dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),w=Math.max(1,Math.round((dist(corners.topLeft,corners.topRight)+dist(corners.bottomLeft,corners.bottomRight))/2)),h=Math.max(1,Math.round((dist(corners.topLeft,corners.bottomLeft)+dist(corners.topRight,corners.bottomRight))/2));out=document.createElement('canvas');const scale=Math.min(1,2000/Math.max(w,h));out.width=Math.max(1,Math.round(w*scale));out.height=Math.max(1,Math.round(h*scale));out.getContext('2d').putImageData(new ImageData(warpToPage(ctx.getImageData(0,0,c.width,c.height).data,c.width,c.height,quadFromPixels(corners,c.height),{width:out.width,height:out.height}),out.width,out.height),0,0);}
- else if(item.box){out=document.createElement('canvas');out.width=Math.max(1,Math.round(item.box.width*c.width));out.height=Math.max(1,Math.round(item.box.height*c.height));out.getContext('2d').drawImage(c,item.box.x*c.width,item.box.y*c.height,item.box.width*c.width,item.box.height*c.height,0,0,out.width,out.height);}
- return {name:item.name,data:out.toDataURL('image/png')};
+// Kept scans read and render one compact page at a time without hydrating
+// every saved page's editable points in the UI.
+;(window as any).notemindScanPages=async(options:any={})=>{
+ const detail={promises:[]};window.dispatchEvent(new CustomEvent('camera-flush',{detail}));await Promise.all(detail.promises)
+ const processor=new CameraProcessing()
+ try{return await collectCameraScans((window as any).notemind,{...options,render:(packet:any,settings:any)=>processor.runCompact(packet,settings),encode:pngBlobDataURL})}
+ finally{processor.dispose()}
 }
-(window as any).notemindScanPages=async()=>{const detail={promises:[]};window.dispatchEvent(new CustomEvent('camera-flush',{detail}));await Promise.all(detail.promises);const saved=await (window as any).notemind.loadCameraPages()||[],result=[];for(const item of saved)if(item.picture)result.push(await scanPicture(item));return result;};
