@@ -57,17 +57,17 @@ class CameraSession {
   }
   set(key, next) {
     if (this.closed) return;
-    const value = typeof next === "function" ? next(this.state[key]) : next;
+    const value = typeof next === 'function' ? next(this.state[key]) : next;
     if (Object.is(value, this.state[key])) return;
-    this.state = { ...this.state, [key]: value };
-    if (key === "active") {
-      this.syncActive();
-      if (this.state.cameraLoaded) try {
-        this.storage?.setItem("notemind.activeCamera", String(value));
-      } catch {
-      }
+    if (key === 'active' && (!Number.isSafeInteger(value) || value < 0 || value >= this.models.current.length)) throw Error('Invalid active camera page.');
+    const owner = this.page.current;
+    this.state = {...this.state,[key]:value};
+    if (key === 'active') this.syncActive(false,false);
+    else if (key === 'box' || key === 'corners' || key === 'zoom') {
+      this.currentView.current = {...this.currentView.current,[key]:value};
+      this.models.update(rows=>rows.map(row=>row.page===owner?{...row,[key]:value}:row));
     }
-    if (key === "revision") this.scheduleSave();
+    if (key === 'revision') this.scheduleSave();
     this.emit();
   }
   setter(key) {
@@ -84,12 +84,20 @@ class CameraSession {
   owns(owner) {
     return this.models.current.some((row) => row.page === owner);
   }
-  syncActive() {
-    const row = this.models.current[this.state.active] || this.models.current[0];
-    if (row) {
-      this.page.current = row.page;
-      this.currentView.current = { ...this.currentView.current, page: row.page };
-    }
+  rememberActive(row,index) {
+    if (!this.state.cameraLoaded) return;
+    try { this.storage?.setItem('notemind.activeCamera',String(index));this.storage?.setItem('notemind.activeCameraId',row.pageId); } catch {}
+  }
+  syncActive(preserveOwner=true,notify=true) {
+    const rows=this.models.current,previous=this.page.current,found=preserveOwner?rows.findIndex(row=>row.page===previous):-1;
+    const index=found>=0?found:Math.min(rows.length-1,Math.max(0,this.state.active)),row=rows[index];
+    if (!row) return;
+    const indexChanged=index!==this.state.active,ownerChanged=row.page!==previous,box=row.box||null,corners=row.corners||null,zoom=row.zoom||null,changed=index!==this.state.active||box!==this.state.box||corners!==this.state.corners||zoom!==this.state.zoom||row.page!==previous;
+    this.page.current=row.page;
+    this.currentView.current={...this.currentView.current,page:row.page,box,corners,zoom};
+    if (changed) this.state={...this.state,active:index,box,corners,zoom,...(ownerChanged?{held:null,zoomArmed:false}:{})};
+    if (!preserveOwner||indexChanged||ownerChanged) this.rememberActive(row,index);
+    if (changed&&notify) this.emit();
   }
   watchOwners() {
     const next = new Set(this.models.current.map((row) => row.page));
@@ -181,14 +189,14 @@ class CameraSession {
             }
           }
         }
-        let remembered = 0;
+        let remembered = 0,rememberedId=null;
         try {
-          remembered = Number(this.storage?.getItem("notemind.activeCamera")) || 0;
+          remembered = Number(this.storage?.getItem("notemind.activeCamera")) || 0;rememberedId=this.storage?.getItem("notemind.activeCameraId");
         } catch {
         }
-        const index = Math.min(this.models.current.length - 1, Math.max(0, Number.isFinite(remembered) ? Math.floor(remembered) : 0)), selected = this.models.current[index];
+        const byId=typeof rememberedId==='string'?this.models.current.findIndex(row=>row.pageId===rememberedId):-1,index=byId>=0?byId:Math.min(this.models.current.length - 1, Math.max(0, Number.isFinite(remembered) ? Math.floor(remembered) : 0)), selected = this.models.current[index];
         this.state = { ...this.state, active: index, box: selected.box || null, corners: selected.corners || null, zoom: selected.zoom || null, cameraLoaded: true, cameraLoadError: "" };
-        this.syncActive();
+        this.syncActive(false,false);
         this.emit();
         for (const row of original) if (!this.owns(row.page)) await row.page.disposeAsync();
       } catch (error) {

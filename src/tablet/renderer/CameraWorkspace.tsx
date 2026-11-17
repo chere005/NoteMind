@@ -9,6 +9,7 @@ import {createPortal} from 'react-dom';
 
 import {validCameraPages} from './validateStorage';
 import {CameraSession} from '../../camera-session.js';
+import {ENTRY_BYTES} from '../../archive-limits.cjs';
 import {projectInkSnapshot,hasPendingInkMutations,subscribeInkMutations,flushInkMutations} from '../../ink-mutations.js';
 import {afterCameraCapture,outsideCameraSelection} from '../../camera-editing.js';
 
@@ -65,14 +66,14 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
   canvas.width=source.width;canvas.height=source.height;canvas.getContext('2d').drawImage(source,0,0);
  },[cameraActive,held,still]);
 
- const currentView=session.currentView;currentView.current={page:page.current,box,corners,active:cameraActive};
+ const currentView=session.currentView;currentView.current={page:page.current,box,corners,zoom,active:cameraActive};
  const actionsFor=owner=>session.actionsFor(owner);
  useEffect(()=>subscribeInkMutations(owner=>{if(owner===page.current)refreshPending(value=>value+1)}),[session]);
  useLayoutEffect(()=>{const token=session.attachView(()=>ink.current?.flush());return()=>session.detachView(token)},[session]);
  const trackCameraWork=work=>session.track(work);
  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),4500);return()=>clearTimeout(timer)},[toast]);
- useEffect(()=>{const entry=pages[active];if(entry&&((entry.box||null)!==box||(entry.corners||null)!==corners||(entry.zoom||null)!==zoom))setPages(old=>old.map(item=>item.page===entry.page?{...item,box,corners,zoom}:item));},[box,corners,zoom,active]);
- const selectPage=i=>{ink.current?.finish();const next=latestCamera.current[i];if(!next)return;page.current=next.page;currentView.current.page=next.page;setActive(i);setBox(next.box||null);setCorners(next.corners||null);setZoom(next.zoom||null);setHeld(null)};
+
+ const selectPage=i=>{ink.current?.finish();const next=latestCamera.current[i];if(!next)return;setActive(i);setBox(next.box||null);setCorners(next.corners||null);setZoom(next.zoom||null);setHeld(null)};
  const closePage=owner=>trackCameraWork((async()=>{
   if(page.current===owner)ink.current?.finish();await Promise.all([...cameraWork.current]);await flushInkMutations(owner);
   const before=latestCamera.current,target=before.find(item=>item.page===owner);
@@ -82,7 +83,7 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
   if(target.picture)pictures.current.forget(target.picture);
   await ink.current?.release(owner);await session.releaseActions(owner);await owner.disposeAsync();
  })().catch(failure=>setError(failure.message)));
- const movePage=(fromId,toId)=>{const before=latestCamera.current,from=before.findIndex(item=>item.pageId===fromId),to=before.findIndex(item=>item.pageId===toId);if(from<0||to<0||from===to)return;const chosen=page.current,next=[...before];next.splice(to,0,...next.splice(from,1));setPages(next);setActive(next.findIndex(item=>item.page===chosen));};
+ const movePage=(fromId,toId)=>{const before=latestCamera.current,from=before.findIndex(item=>item.pageId===fromId),to=before.findIndex(item=>item.pageId===toId);if(from<0||to<0||from===to)return;const next=[...before];next.splice(to,0,...next.splice(from,1));setPages(next);};
  const [takeMode,setTakeMode]=field('takeMode'),[showEditor,setShowEditor]=useState(!document.querySelector('main').hidden),[reader,setReader]=useState(false);
  useEffect(()=>{window.notemind.ocrAvailable?.().then(setReader);const observer=new MutationObserver(()=>setShowEditor(!document.querySelector('main').hidden));observer.observe(document.querySelector('main'),{attributes:true,attributeFilter:['hidden']});return()=>observer.disconnect()},[]);
  const aspect=pages[active]?.aspect||'free';const setAspect=value=>{setBox(null);setCorners(null);setZoom(null);const chosen=page.current;setPages(old=>old.map(item=>item.page===chosen?{...item,inkAspect:item.inkAspect??(item.aspect&&item.aspect!=='free'?Number(item.aspect):'free'),inkRotation:item.inkRotation??item.rotation??0,aspect:value}:item));};
@@ -129,7 +130,7 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
   ink.current?.finish();const canvas=snapshot();if(!canvas)return null;
   const took=taken(),releaseLease=took.page.retainGeometry();let handedOff=false,released=false;const release=()=>{if(!released){released=true;releaseLease();}},view=cameraInkView(reference,{size:{width:canvas.width,height:canvas.height},shown:{x:0,y:0,width:canvas.width,height:canvas.height},zoom:null});
   captureBusy.current=true;setCapturing(true);
-  try{const strokes=await took.strokes,blob=await processor.current.run(canvas,{strokes:includeInk?strokes:[],view,box:selected?took.box:null,corners:selected&&perspective?took.corners:null,writing,colour,ownedCanvas:true});const data=await pngBlobDataURL(blob);handedOff=holdInk;return {data,took:{...took,strokes},release};}
+  try{const strokes=await took.strokes,blob=await processor.current.run(canvas,{strokes:includeInk?strokes:[],view,box:selected?took.box:null,corners:selected&&perspective?took.corners:null,writing,colour,ownedCanvas:true});if(blob.size>ENTRY_BYTES)throw Error('The camera image exceeds the 50 MiB image limit. Select a smaller area.');const data=await pngBlobDataURL(blob);handedOff=holdInk;return {data,took:{...took,strokes},release};}
   finally{if(!handedOff)release();canvas.width=canvas.height=1;captureBusy.current=false;setCapturing(false);}
  };
 
@@ -162,8 +163,8 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
   try{
    const strokes=await captured,picture=await pictures.current.capture(canvas);keptPage=new TabletPage();await keptPage.loadGeometryAsync(strokes);
    const existing=latestCamera.current,from=existing.findIndex(item=>item.page===owner);if(from<0)return;
-   keptPage.backdrop=picture.source;const kept={name:'Page '+(existing.filter(item=>item.hasPicture||item.picture).length+1),picture,hasPicture:true,page:keptPage,...settings},selected=page.current;
-   setPages(old=>{const index=old.findIndex(item=>item.page===owner);if(index<0)return old;const next=[...old];next.splice(index,0,kept);setActive(next.findIndex(item=>item.page===selected));return next;});published=latestCamera.current.some(item=>item.page===keptPage);if(!published)return;
+   keptPage.backdrop=picture.source;const kept={name:'Page '+(existing.filter(item=>item.hasPicture||item.picture).length+1),picture,hasPicture:true,page:keptPage,...settings};
+   setPages(old=>{const index=old.findIndex(item=>item.page===owner);if(index<0)return old;const next=[...old];next.splice(index,0,kept);return next;});published=latestCamera.current.some(item=>item.page===keptPage);if(!published)return;
    await actionsFor(owner).enqueue(async(_captured,current,options)=>{const next=await afterCameraCapture(strokes,current,options);return next?{target:next,commit:changeOptions=>owner.replaceAsync(next,changeOptions)}:null;},{capture:false});
    setRevision(value=>value+1);
    if(page.current===owner){setBox(value=>value===settings.box?null:value);setCorners(value=>value===settings.corners?null:value);setHeld(value=>value===source?null:value);}
