@@ -133,6 +133,9 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const element = canvas.current
     const { view: v, page: p } = latest.current
     if (!element) return
+    // Hiding a pane can briefly report a zero stage before the next measured
+    // layout. Keep its accepted pixels until a real view can be projected.
+    if(latest.current.on&&p&&(!v.size.width||!v.size.height))return
     const ratio = Math.min(element.ownerDocument.defaultView?.devicePixelRatio||1,8192/Math.max(1,v.size.width),8192/Math.max(1,v.size.height),Math.sqrt(16*1024*1024)/Math.sqrt(Math.max(1,v.size.width))/Math.sqrt(Math.max(1,v.size.height)))
     const w = Math.max(1, Math.floor(v.size.width * ratio)), h = Math.max(1, Math.floor(v.size.height * ratio))
     const plan=latest.current.on&&p?cameraRasterPlan(v,ratio):null,previous=painted.current,newMatrix=plan?multiply(plan.workerToDevice,plan.canonicalToWorker):null

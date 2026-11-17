@@ -11,8 +11,9 @@ const abort=()=>Object.assign(Error('Camera ink paint cancelled.'),{name:'AbortE
 const plain={kind:'blank',spacing:'medium',colour:'white'}
 export function cameraRasterPlan(view:InkView,ratio=1){
  const {size,shown}=view||{},turns=view?.turns||0
- if(!size||!shown||![size.width,size.height,shown.x,shown.y,shown.width,shown.height,ratio].every(finite)||size.width<0||size.height<0||shown.width<=0||shown.height<=0||ratio<=0||!Number.isInteger(turns)||turns<0||turns>3)throw Error('Invalid camera ink frame.')
+ if(!size||!shown||![size.width,size.height,shown.x,shown.y,shown.width,shown.height,ratio].every(finite)||size.width<0||size.height<0||shown.width<0||shown.height<0||ratio<=0||!Number.isInteger(turns)||turns<0||turns>3)throw Error('Invalid camera ink frame.')
  if(!size.width||!size.height)return null
+ if(!shown.width||!shown.height)throw Error('Invalid camera ink frame.')
  const origin=inkToScreen({x:0,y:0},view),px=inkToScreen({x:1,y:0},view),py=inkToScreen({x:0,y:1},view),x={x:px.x-origin.x,y:px.y-origin.y},y={x:py.x-origin.x,y:py.y-origin.y},basisX=Math.hypot(x.x,x.y),basisY=Math.hypot(y.x,y.y)
  if(![origin.x,origin.y,x.x,x.y,y.x,y.y,basisX,basisY].every(finite)||basisX<=0||basisY<=0)throw Error('Invalid camera ink transform.')
  const picture=inkPictureRect(view),left=Math.max(0,picture.x),top=Math.max(0,picture.y),right=Math.min(size.width,picture.x+picture.width),bottom=Math.min(size.height,picture.y+picture.height)
