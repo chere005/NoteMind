@@ -75,3 +75,14 @@ test('retained Undo-array signature caches own only background hashes while curr
  const api=observed.exports,page=new TabletPage(1),sheet={name:'Scan',page,paper:{}},first='data:image/png;base64,'+'YQ=='.repeat(10000);page.strokes=[stroke(1)];page.backdrop=first;const original=page.strokes;assert.equal(api.sheetSignature(sheet),reference(sheet));const cached=api.observedArrayCache.get(original);assert.equal(cached.backdropHash,fingerprint(first));assert.equal(Object.values(cached).includes(first),false);
  page.add(stroke(2));page.backdrop='data:image/png;base64,Yg==';assert.equal(api.sheetSignature(sheet),reference(sheet));page.undo();assert.equal(api.sheetSignature(sheet),reference(sheet));page.dispose();
 });
+
+test('async signature preparation appends only the newly accepted suffix and reverses an erased tail exactly',async()=>{
+ const api=require('../src/stroke-signature.js'),before=Array.from({length:6000},(_,i)=>stroke(i)),page={aspect:1,strokes:before,backdrop:null},sheet={name:'Prepared',page,paper:{}};await prepareSheetSignature(sheet);const added=stroke(7000),next=[...before,added];api.recordStrokeAppend(before,next,added);page.strokes=next;const expected=reference(sheet);
+ for(let i=0;i<before.length;i++)Object.defineProperty(next,i,{get(){throw Error('prepared append rescanned old fingerprints');},configurable:true});assert.equal((await prepareSheetSignature(sheet)).signature,expected);
+ const kept=before.slice(0,-1);api.recordStrokeTailRemoval(before,kept);page.strokes=kept;const tailExpected=reference(sheet);for(let i=0;i<kept.length;i++)Object.defineProperty(kept,i,{get(){throw Error('prepared tail removal rescanned survivors');},configurable:true});assert.equal((await prepareSheetSignature(sheet)).signature,tailExpected);
+ for(const count of[1,2]){const original=Array.from({length:count},(_,i)=>stroke(i)),small={name:'Small',page:{aspect:1,strokes:original,backdrop:null},paper:{}};await prepareSheetSignature(small);small.page.strokes=original.slice(0,-1);api.recordStrokeTailRemoval(original,small.page.strokes);assert.equal((await prepareSheetSignature(small)).signature,reference(small));}
+});
+
+test('async preparation recovers exact prefix reuse through several missed committed appends',async()=>{
+ const api=require('../src/stroke-signature.js'),page={aspect:1,strokes:[stroke(0)],backdrop:null},sheet={name:'Batched',page,paper:{kind:'blank'}};await prepareSheetSignature(sheet);for(let i=1;i<5;i++){const original=page.strokes,next=[...original,stroke(i)];api.recordStrokeAppend(original,next,next.at(-1));page.strokes=next;}assert.equal((await prepareSheetSignature(sheet)).signature,reference(sheet));
+});

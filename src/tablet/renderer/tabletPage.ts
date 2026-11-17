@@ -18,7 +18,7 @@
 import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
-import { recordStrokeAppend } from '../../stroke-signature.js'
+import { recordStrokeAppend,recordStrokeTailRemoval } from '../../stroke-signature.js'
 import { strokeBox,strokeBoxAsync,knownStrokeBox,inkBoxAsync } from '../../stroke-bounds.js'
 import { DrawingHistory } from '../../drawing-history.js'
 import { yieldTask } from '../../graphics-pane.js'
@@ -397,6 +397,7 @@ export class TabletPage {
     if (!Number.isInteger(index) || index < 0 || index >= this.strokes.length) return
     const next = this.strokes.filter((_, i) => i !== index)
     this.history.prepareRemoval(next, index)
+    if(index===original.length-1)recordStrokeTailRemoval(original,next)
     this.strokes = next
     this.emit({ op: "removeAt", index })
   }
