@@ -19,7 +19,7 @@ export function useInkSelection(options:Options){
    void Promise.all([model.bounds({signal:job.signal}),model.style({signal:job.signal})]).then(([value,look])=>{if(mounted.current&&live.current===model&&epoch.current===version){setBounds(value);setStyle(look)}}).catch(error=>{if(error.name!=='AbortError')latest.current.onError(error)})
  }}),[options.page])
  useLayoutEffect(()=>{
-   mounted.current=true;live.current=controller;const token={};lifetimes.current.set(controller,token);controller.bind(options.page)
+   mounted.current=true;live.current=controller;setBusy(!!controller.editJob);setLasso([]);const token={};lifetimes.current.set(controller,token);controller.bind(options.page)
    return()=>{
      mounted.current=false;infoJob.current?.abort();if(drag.current?.page===options.page)drag.current=null
      // A command accepted before a portal/tab unmount still belongs to its old page.
