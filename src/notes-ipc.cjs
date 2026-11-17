@@ -3,20 +3,21 @@ const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('n
 const {digest,atomic}=require('./notes-store.cjs');
 const {mime}=require('./document-renderer.cjs');
 module.exports=function registerNotes({store,getWin,openPath,saveDocument,documentIO}) {
- const assets=new(require('./document-asset-sessions.cjs').DocumentAssetSessions)(),seed=(event,doc)=>event?.sender?assets.seed(event.sender,doc):doc;
+ const codec=require('./archive-codec.cjs'),assets=new(require('./document-asset-sessions.cjs').DocumentAssetSessions)({raw:typeof codec.preflightRawAssets==='function'?codec:null}),seed=(event,doc)=>event?.sender?assets.seed(event.sender,doc):doc,scope=(event,run)=>event?.sender&&assets.raw?assets.load(event.sender,run):Promise.resolve().then(run).then(doc=>seed(event,doc));
+ require('./document-asset-ipc.cjs')(ipcMain,assets);app.once('will-quit',()=>assets.dispose());
  const send=()=>{for(const w of BrowserWindow.getAllWindows())if(!w.isDestroyed())w.webContents.send('library:changed');};
  ipcMain.handle('notes-draft',async(_,doc)=>{const next=await store.draft(doc);send();return next;});
  ipcMain.handle('notes-session',(_,state)=>store.session(state));
- ipcMain.handle('notes-recover',async event=>{const value=await store.recover();return value?{...value,tabs:value.tabs?.map(doc=>seed(event,doc))}:value;});
- ipcMain.handle('notes-draft-open',async(event,id)=>seed(event,await store.loadDraft(id)));
+ ipcMain.handle('notes-recover',async(event,options)=>{if(options?.compact){const value=await store.session();if(!value)return null;const index=await store.readIndex();return{...value,tabs:value.tabs.filter(tab=>!index.records[tab.id]?.deleted).map(tab=>({...tab,recoveryPending:true}))}}return store.recover()});
+ ipcMain.handle('notes-draft-open',async(event,id)=>scope(event,()=>store.loadDraft(id)));
  ipcMain.handle('notes-autosave',(_,doc)=>saveDocument(doc,false,true));
  ipcMain.handle('notes-list',(_,filter)=>store.list(filter));
  ipcMain.handle('notes-settings',async(_,patch)=>{const next=await store.settings(patch);if(patch)send();return next;});
  ipcMain.handle('notes-meta',async(_,id,meta)=>{const entry=await store.patch(id,meta);send();return entry;});
- ipcMain.handle('notes-resolve',async(event,id)=>{const r=await store.record(id),draft=await store.loadDraft(id).catch(()=>null);return seed(event,await(draft?.dirty?{...draft,path:r.path}:r.path?openPath(r.path):store.loadDraft(id)));});
+ ipcMain.handle('notes-resolve',(event,id)=>scope(event,async()=>{const r=await store.record(id);if(typeof store.recoveryState==='function'){const state=await store.recoveryState(id);return state?.dirty||state?.unknown||!r.path?{...await store.loadDraft(id),path:r.path}:openPath(r.path)}const draft=await store.loadDraft(id).catch(()=>null);return draft?.dirty?{...draft,path:r.path}:r.path?openPath(r.path):store.loadDraft(id)}));
  ipcMain.handle('notes-delete-draft',async(_,id)=>{const deleted=await store.deleteDraft(id);send();return deleted;});
  ipcMain.handle('notes-versions',(_,id)=>store.versions(id));
- ipcMain.handle('notes-version',async(event,id,version)=>seed(event,await store.versionDoc(id,version)));
+ ipcMain.handle('notes-version',async(event,id,version)=>scope(event,()=>store.versionDoc(id,version)));
  ipcMain.handle('notes-snapshot',(_,doc,label)=>store.version(doc,label));
  ipcMain.handle('notes-deleted',()=>store.deleted());
  ipcMain.handle('notes-restore-deleted',async(_,id,choose)=>{let alternate;if(choose){const item=(await store.deleted()).find(x=>x.id===id);if(!item)throw Error('Deleted item unavailable.');const result=await dialog.showSaveDialog(getWin(),{title:'Restore to…',defaultPath:item.path});if(result.canceled)return null;alternate=result.filePath;try{await fs.access(alternate);throw Error('Choose a new name. Restoring never overwrites an existing item.');}catch(e){if(e.code!=='ENOENT')throw e;}}const restored=await store.restoreDeleted(id,alternate);send();return restored;});
@@ -33,5 +34,5 @@ module.exports=function registerNotes({store,getWin,openPath,saveDocument,docume
  ipcMain.handle('notes-attachment-export',async(_,name,data)=>{const result=await dialog.showSaveDialog(getWin(),{title:'Save attachment',defaultPath:path.basename(name)});if(result.canceled)return null;await atomic(result.filePath,Buffer.from(data,'base64'));return result.filePath;});
  ipcMain.handle('notes-attachment-preview',async(_,name,data)=>{if(!/\.(pdf|docx|png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(name))throw Error('Save this attachment to open it in another app.');const bytes=Buffer.from(data,'base64'),file=path.join(app.getPath('temp'),'notemind-previews',digest(bytes).slice(0,20)+path.extname(name));await atomic(file,bytes);return {path:file,name:path.basename(name)};});
  ipcMain.handle('notes-scan-pdf',async(_,pages)=>{if(!Array.isArray(pages)||!pages.length||pages.length>100)throw Error('Choose 1–100 scan pages.');let total=0;for(const p of pages){if(typeof p.data!=='string'||!/^data:image\/(png|jpeg);base64,[\w+/=]+$/.test(p.data))throw Error('Invalid scan image.');total+=p.data.length;}if(total>180*1024*1024)throw Error('This scan is too large. Use fewer pages.');const w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});try{const html='<meta charset="utf-8"><style>@page{margin:0}body{margin:0}.page{height:296mm;width:210mm;display:flex;align-items:center;justify-content:center;break-after:page}.page:last-child{break-after:auto}img{max-height:290mm;max-width:204mm;object-fit:contain}</style>'+pages.map(p=>'<div class="page"><img src="'+p.data+'"></div>').join('');await w.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html));await w.webContents.executeJavaScript('Promise.all(Array.from(document.images,i=>i.decode()))');const bytes=await w.webContents.printToPDF({printBackground:true,pageSize:'A4',margins:{top:0,left:0,right:0,bottom:0}});const name='assets/scan-'+crypto.randomUUID()+'.pdf',thumb=name+'.preview.png';return {name,assets:{[name]:bytes.toString('base64'),[thumb]:pages[0].data.split(',')[1]},info:{title:'Scan.pdf',pages:pages.length,bytes:bytes.length,thumbnail:thumb,text:pages.map(p=>p.text||'').join('\n\n')}};}finally{w.destroy();}});
- return {send,seed,assets};
+ return {send,seed,scope,assets};
 };

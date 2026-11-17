@@ -1,0 +1,12 @@
+(function(root,factory){if(typeof module==='object'&&module.exports)module.exports={create:factory};else root.NoteMindAssetUpload={create:factory};})(typeof window==='undefined'?this:window,function(api,{yieldTask=()=>new Promise(resolve=>setTimeout(resolve,0))}={}){
+ const CHUNK=262144;
+ async function upload(name,data,chunks){
+  const pieces=chunks||[data],tail=pieces.at(-1);if(typeof data!=='string'||!data.length||data.length%4||typeof tail!=='string')throw Error('Invalid document asset.');const header={name,chars:data.length,bytes:data.length/4*3-(tail.endsWith('==')?2:tail.endsWith('=')?1:0)},opened=await api.begin(header),handle=opened?.upload;if(typeof handle!=='string')throw Error('Could not prepare the document image.');let finished=false;
+  const release=()=>Promise.resolve().then(()=>api.cancel(handle)).catch(()=>{});
+  try{let offset=0;for(const piece of pieces){if(typeof piece!=='string'||piece.length%4)throw Error('Invalid document image chunk.');for(let at=0;at<piece.length;at+=CHUNK){const part=piece.slice(at,at+CHUNK),answer=await api.write(handle,{offset,data:part});if(answer?.received!==offset+part.length)throw Error('The document image upload was interrupted.');offset+=part.length;await yieldTask()}}if(offset!==data.length)throw Error('Incomplete document image.');const answer=await api.finish(handle);if(typeof answer?.token!=='string')throw Error('The document image was not accepted.');finished=true;return{token:answer.token,release};}finally{if(!finished)await release()}
+ }
+ async function pull(transfer,token,info){
+  if(typeof transfer!=='string'||!Number.isSafeInteger(info?.bytes)||info.bytes<0||!Number.isSafeInteger(info?.chars)||info.chars!==4*Math.ceil(info.bytes/3))throw Error('Invalid returned document image.');const chunks=[];let offset=0,chars=0;while(offset<info.bytes){const answer=await api.read(transfer,token,offset);if(!answer||answer.offset!==offset||typeof answer.data!=='string'||!answer.data.length||answer.data.length>CHUNK||answer.data.length%4||!Number.isSafeInteger(answer.bytes)||answer.bytes<=0||answer.bytes>196608||offset+answer.bytes>info.bytes)throw Error('The returned document image was interrupted.');chunks.push(answer.data);offset+=answer.bytes;chars+=answer.data.length;await yieldTask()}if(chars!==info.chars)throw Error('Incomplete returned document image.');let data='';for(const chunk of chunks)data+=chunk;return{data,chunks:Object.freeze(chunks)};
+ }
+ return{upload,pull,release:transfer=>Promise.resolve().then(()=>api.release(transfer)).catch(()=>{})};
+});

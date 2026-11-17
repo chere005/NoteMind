@@ -194,13 +194,11 @@ ipcMain.handle('open', async event => {
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Documents', extensions: ['nm','wm', 'md', 'txt', 'py','docx','pdf','png','jpg','jpeg','webp','gif','bmp','svg','avif'] }] });
 
   if (result.canceled) return null;
-  const opened = await openPath(result.filePaths[0]);
-  if (opened && !opened.workspace) projectService.recents.remember(result.filePaths[0], 'file').catch(() => {});
-  return notesIPC.seed(event,opened);
+  return notesIPC.scope(event,async()=>{const opened=await openPath(result.filePaths[0]);if(opened&&!opened.workspace)projectService.recents.remember(result.filePaths[0],'file').catch(()=>{});return opened;});
 
 });
 
-ipcMain.handle('open-path', async(event, file) => notesIPC.seed(event,await openPath(file)));
+ipcMain.handle('open-path', async(event, file) => notesIPC.scope(event,()=>openPath(file)));
 
 ipcMain.handle('choose-folder', async () => { const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return result.canceled ? null : result.filePaths[0]; });
 
