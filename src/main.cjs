@@ -357,11 +357,11 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   if(expected){if(archive||ext==='.md')await notesStore.versionFromFile(file,doc,expected,'Before save');else await notesStore.version({text:previous.toString('utf8'),assets:{},id:doc.id,title:doc.title},'Before save');}previous=null;
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=await require('./markdown-files.cjs').canonicalAsync(doc);
-  let bytes,revision;if(['.nm','.wm'].includes(ext))({bytes,revision}=await require('./archive-codec.cjs').encodeWithDigest(doc));else{bytes=Buffer.from(doc.text);revision=digest(bytes);}
-  const saveWarnings=[];try{
+  let bytes,revision,prepared,committed=false,failure;const saveWarnings=[];try{
+   const codec=require('./archive-codec.cjs');if(archive&&typeof codec.encodeFile==='function'){prepared=await require('./prepared-archive-file.cjs').prepareArchiveFile(file,doc);revision=prepared.revision.sha256;}else if(archive)({bytes,revision}=await codec.encodeWithDigest(doc));else{bytes=Buffer.from(doc.text);revision=digest(bytes);}
    if(notesStore.recordCommitIntent){const intent=await notesStore.recordCommitIntent(doc,file,revision);if(intent?.recoveryId)doc.recoveryId=intent.recoveryId;}
-   try{await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});}catch(error){if(!error.notemindFileCommitted)throw error;saveWarnings.push('Metadata: '+error.message);}
-  }finally{if(archive)require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(bytes);}
+   try{if(prepared){const receipt=await require('./prepared-archive-file.cjs').publishPreparedArchive(file,prepared,expected);saveWarnings.push(...receipt.warnings);}else await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,expected,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});committed=true;}catch(error){if(!error.notemindFileCommitted)throw error;committed=true;saveWarnings.push('Metadata: '+error.message);}
+  }catch(error){failure=error;throw error;}finally{if(prepared){try{await prepared.cleanup();}catch(error){if(committed)saveWarnings.push('Cleanup: '+error.message);else if(failure)failure.archiveCleanupError=error.message;else throw error;}}else if(archive)require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(bytes);}
   doc={...doc,path:file,revision};delete doc.otherOpenPaths;
   try{await notesStore.version(doc,automatic?'Autosaved':'Saved');}catch(error){saveWarnings.push('History: '+error.message);}
   let recoverySaved=false;try{const kept=await notesStore.draft({...doc,dirty:false});if(kept?.recoveryId)doc.recoveryId=kept.recoveryId;recoverySaved=true;}catch(error){saveWarnings.push('Recovery: '+error.message);}
