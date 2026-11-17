@@ -1,5 +1,7 @@
 # Continuation
 
+- Current integrated checkpoint a14b50c includes overview, bounded Word, owned metadata/raster identity, real chunk ACKs and camera forwarding. Integrated focused checks: overview63, Word55, ownership/queue/hydration80, history52, PDF leases/recovery43. Actual producer after2c3b40a has exact initial/erase/dirty/full SHA, installed heap261.51→244.75MB, but laterUndo exceeds1GiB by~0.77MiB. Fresh owns history node-counter coalescing; arch runs actualIPC2M with wide leaves. First formal data reviewer found pending-edit/page-switch selection busy state, fixing in isolation. No complete scale or stable-release claim.
+
 - Overview integrated from e330e2b: actual App/PadHost8-phase camera/3,000-page virtualization proof passes at809,402,368B; real >2MiB SVG color/cancellation gate passes at569,180,160B. PDF lease integration0524af4/4f0f07c/136d89c retains actual-exit plus cleanup barrier;43 focused integrated lease/store/reconcile/jobs checks pass. Existing installed app untouched.
 
 - Sean rejected the multi-day wait: target first reviewed stable increment in3–6h from Nov17 about1:32PM Central; give go/no-go by about2:33PM Central (20:33UTC). Prioritize supported drawing/pen/page/crash gates and the already useful feature bundle; later work ships as smaller reviewed increments, with all approved scope/review waves retained.
