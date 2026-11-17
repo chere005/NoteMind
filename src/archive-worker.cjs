@@ -1,5 +1,6 @@
 const {parentPort}=require('node:worker_threads'),{createHash}=require('node:crypto');
 const format=require('./notepad-format.cjs'),{ArchiveAssetWorker}=require('./archive-assets.cjs'),{RawAssetStore,isRawAsset}=require('./archive-raw-assets.cjs'),snapshots=require('./snapshot-store.cjs');
+const {releaseArchiveInput}=require('./archive-input-ownership.cjs');
 let assets,raw;
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const view=bytes=>Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);
@@ -76,7 +77,7 @@ parentPort.on('message',async packet=>{
     throw Error('Unknown archive operation.');
    });
   }
-  assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
- }catch(error){assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
- finally{assets?.trim();raw?.trim();args=null;assetPacket=null;}
+  releaseArchiveInput(op,args);assets.trim();raw.trim();const usage=process.memoryUsage();parentPort.postMessage({id,value,assetResult:{accepted:received.accepted,output},assetStats:assets.stats(),rawStats:raw.stats(),validationStats:require('./archive-entry-validation.cjs').validationStats(),workerBytes:usage.heapUsed+usage.external},transfers);
+ }catch(error){releaseArchiveInput(op,args);assets?.trim();raw?.trim();const usage=process.memoryUsage();parentPort.postMessage({id,error:{name:error.name,message:error.message,stack:error.stack,code:error.code,missing:error.missing},assetStats:assets?.stats(),rawStats:raw?.stats(),workerBytes:usage.heapUsed+usage.external});}
+ finally{releaseArchiveInput(op,args);assets?.trim();raw?.trim();args=null;assetPacket=null;}
 });
