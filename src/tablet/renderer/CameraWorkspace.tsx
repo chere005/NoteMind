@@ -1,4 +1,5 @@
 import {CameraHeader} from './CameraHeader';
+import {watchCameraDevices} from '../../camera-device-watch.cjs';
 import {PaneChrome} from './PaneChrome';
 import {elementPoint,elementSize} from './padCoordinates';
 import {headerFit} from './cameraHeaderFit';
@@ -102,7 +103,7 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
  const localLifetime=useRef(0);
  useEffect(()=>{if(providedSession)return;const generation=++localLifetime.current,flush=e=>{e.detail.promises.push(session.flush())};window.addEventListener('camera-flush',flush);return()=>{window.removeEventListener('camera-flush',flush);queueMicrotask(()=>{if(localLifetime.current===generation)void session.shutdown().catch(()=>{})})}},[session,providedSession]);
 
- useEffect(()=>{const changed=()=>setDeviceTick(x=>x+1);navigator.mediaDevices?.addEventListener('devicechange',changed);return()=>navigator.mediaDevices?.removeEventListener('devicechange',changed);},[]);
+ useEffect(()=>watchCameraDevices(()=>navigator.mediaDevices,cameraActive&&cameraLoaded&&!cameraLoadError&&!hasPicture&&!pageOpening,()=>setDeviceTick(x=>x+1)),[cameraActive,cameraLoaded,cameraLoadError,hasPicture,pageOpening]);
 
  useEffect(()=>{let live=true;setReady(false);if(!session.state.error.startsWith('Could not save camera pages:'))setError('');const owned=media.current;
   if(!cameraActive||!cameraLoaded||!!cameraLoadError||hasPicture||pageOpening){owned.stop();return;}
