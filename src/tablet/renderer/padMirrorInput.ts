@@ -162,7 +162,8 @@ function bridgeFor(view: View, emit: Emit): Bridge {
     if (view.closed || doc.visibilityState === "hidden") return false
     const target = doc.activeElement
     if (!(target instanceof view.HTMLElement) || target === doc.body || target === doc.documentElement) return false
-    if (event.ctrlKey || event.metaKey || event.altKey || !["Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) return false
+    const overviewArrow=event.altKey&&!event.shiftKey&&["ArrowDown","ArrowUp","ArrowLeft","ArrowRight"].includes(event.key)&&target.matches(".page-overview-page")&&!!target.closest(".page-overview")&&!target.closest("[hidden], [inert]")
+    if (event.ctrlKey || event.metaKey || event.altKey&&!overviewArrow || !["Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) return false
     const keyEvent = new view.KeyboardEvent(event.type, {
       key: event.key, code: event.code, repeat: event.repeat,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
