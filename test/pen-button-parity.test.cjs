@@ -3,6 +3,22 @@ const result=esbuild.buildSync({stdin:{contents:"export * from './src/tablet/ren
 vm.runInNewContext(result.outputFiles[0].text,{module:loaded,exports:loaded.exports,require,process,performance,Buffer,setTimeout,clearTimeout});
 const pen=loaded.exports,plain=value=>JSON.parse(JSON.stringify(value)),device={maxX:1000,maxY:1000,maxP:1000};
 
+test('positive-pressure pen contact starts a held action before the HID tip report arrives',()=>{
+ const base={present:true,range:true,tip:false,lower:false,upper:false};
+ for(const [physical,action]of [['lower','erase'],['upper','select']]){
+  pen.resetNativeButtons();pen.setNativeButtons({...base,[physical]:true});
+  for(const buttons of [1,2,3]){
+   const event={pointerType:'pen',pointerId:7,button:buttons===2?2:0,buttons,pressure:.7};
+   assert.equal(pen.inContact(event),true);assert.equal(pen.resolvePress(event,{eraser:false}).kind,action);
+   assert.equal(pen.resolvePress({...event,pressure:0},{eraser:false}).kind,'ignore');
+  }
+  const contact={pointerType:'pen',pointerId:7,button:0,buttons:1,pressure:.7};
+  pen.setNativeButtons({...base,tip:true,[physical]:true});assert.equal(pen.resolvePress(contact,{eraser:false}).kind,action);
+  const mouse={...contact,pointerType:'mouse'};assert.equal(pen.resolvePress(mouse,{eraser:false}).kind,'draw');assert.equal(pen.resolvePress({...mouse,button:2,buttons:2},{eraser:false}).kind,'select');
+ }
+ pen.resetNativeButtons();
+});
+
 test('right mouse temporarily selects regardless of the active tool or custom pen assignments',()=>{
  pen.resetNativeButtons();
  const right={pointerType:'mouse',pointerId:4243,button:2,buttons:2,pressure:.5};

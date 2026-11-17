@@ -1,6 +1,7 @@
 # Continuation
 
-- NoteMind 0.31.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- NoteMind 0.32.0 uses `.nm` for new Notepads and drawings; existing `.wm` archives remain readable. Projects use `.wmpr`.
+- Held Wacom side buttons accept real pressure before a delayed HID tip report; native button pushes supersede older snapshots, and both main and Wacom windows observe the pen.
 - Native pen pipes handle asynchronous closure errors; denied independent capture stays paused with driver input available, and installed app/helper signatures use the local Developer ID when present. Quit waits for camera hydration after a Wacom portal remount.
 - An enabled extended Wacom opens directly on launch; closing only its window preserves the chosen drawing location for the next launch. `scripts/install-preview.cjs` installs a separate Preview app and visible data folder without replacing the running app.
 - The cyan NM logo shares CalMind and PlanMind's flat black tile, proportions and monoline strokes; `assets/logo.svg` generates the master PNG and platform icons during the build.

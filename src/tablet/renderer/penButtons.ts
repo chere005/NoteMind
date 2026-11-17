@@ -237,11 +237,12 @@ export function withNative(event: PressLike): PressLike {
   const native = nativeState()
   // The display's own report is authoritative for contact. With factory Pan/Scroll mappings the driver may report the
   // side-button drag without a DOM tip bit or pressure; requiring either here turns a real tip touch into a hover.
-  // When the report has not caught up yet, accept an ordinary DOM tip bit unless the side-button tail could still be
-  // delivering its fake Left Click. Positive pressure identifies a real contact during that tail; native.tip does too.
+  // DOM contact can precede the asynchronous HID tip report, including a touch made with a side button held.
+  // Positive pen pressure identifies that real contact; a zero-pressure driver click during a held button or tail does not.
   const domTip = (event.buttons & BIT.tip) !== 0
   const sideDown = native.lower || native.upper
-  const tipDown = native.tip || (domTip && !sideDown && (!nativeSideBusy() || (event.pressure ?? 0) > 0))
+  const pressureContact = (event.pressure ?? 0) > 0 && (event.buttons & (BIT.tip | SIDE)) !== 0
+  const tipDown = native.tip || pressureContact || (domTip && !sideDown && !nativeSideBusy())
   const buttons = (event.buttons & ~(SIDE | BIT.tip)) | nativeSideMask(native) | (tipDown ? BIT.tip : 0)
   const button = event.button === 1 || event.button === 2 ? (tipDown ? 0 : -1) : event.button
   return {

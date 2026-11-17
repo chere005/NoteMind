@@ -47,7 +47,7 @@ import {backdropReady, paintBackdrop} from './tablet/renderer/tabletBackdrop';
 
 import {installPenActions, registerPenHandlers, runPenAction} from './tablet/renderer/penActions';
 
-import {useSheetTools, setSheetEraser, setSheetSelect} from './tablet/renderer/penSettings';
+import {useSheetTools, setSheetEraser, setSheetSelect, watchPen} from './tablet/renderer/penSettings';
 import {watchLive} from './tablet/renderer/penLive';
 
 import './tablet/renderer/bars.css';
@@ -55,6 +55,8 @@ import './tablet/renderer/bars.css';
 import './tablet/renderer/pane.css';
 
 installPenGate();
+
+watchPen();
 
 watchLive();
 
