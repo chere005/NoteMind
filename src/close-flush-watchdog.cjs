@@ -14,10 +14,10 @@ class CloseFlushWatchdog {
  }
  matches(owner,requestId){const record=this.active;return record&&record.owner===owner&&typeof requestId==='string'&&record.requestId===requestId?record:null;}
  arm(record){this.clearTimer(record.timer);record.timer=this.setTimer(()=>{if(this.active!==record)return;const at=this.now();if(at>=record.hard||at>=record.idle){this.stop(record);this.onCancel(record);this.onTimeout(record,at>=record.hard?'hard':'idle');}else this.arm(record);},Math.max(0,Math.min(record.idle,record.hard)-this.now()));record.timer?.unref?.();}
- progress(owner,requestId,sequence){const record=this.matches(owner,requestId);if(!record||!Number.isSafeInteger(sequence)||sequence<=record.sequence)return false;if(this.now()>=record.hard){this.expire(record);return false;}record.sequence=sequence;record.idle=this.now()+this.idleMs;this.arm(record);return true;}
- complete(owner,requestId){const record=this.matches(owner,requestId);if(!record)return false;if(this.now()>=record.hard){this.expire(record);return false;}this.stop(record);return true;}
+ progress(owner,requestId,sequence){const record=this.matches(owner,requestId);if(!record||!Number.isSafeInteger(sequence)||sequence<=record.sequence)return false;if(this.now()>=Math.min(record.idle,record.hard)){this.expire(record,this.now()>=record.hard?'hard':'idle');return false;}record.sequence=sequence;record.idle=this.now()+this.idleMs;this.arm(record);return true;}
+ complete(owner,requestId){const record=this.matches(owner,requestId);if(!record)return false;if(this.now()>=Math.min(record.idle,record.hard)){this.expire(record,this.now()>=record.hard?'hard':'idle');return false;}this.stop(record);return true;}
  stop(record){if(this.active!==record)return;this.active=null;this.clearTimer(record.timer);record.owner.removeListener?.('destroyed',record.destroyed);}
- expire(record){this.stop(record);this.onCancel(record);this.onTimeout(record,'hard');}
+ expire(record,kind){this.stop(record);this.onCancel(record);this.onTimeout(record,kind);}
  cancel(owner,requestId){const record=this.active;if(!record||owner!==undefined&&!this.matches(owner,requestId))return false;this.stop(record);this.onCancel(record);return true;}
  dispose(){this.cancel();}
 }
