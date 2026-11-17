@@ -355,7 +355,7 @@ async function wordStreamPackage(doc, images, options, { spoolRoot, check = () =
         output.write("</w:tbl>");
         table = null;
       }
-    }, { check });
+    }, { check, consumeInline: true });
     if (!paragraphs) output.write("<w:p/>");
     output.write(document.slice(section));
     relationships.write("</Relationships>");

@@ -1,6 +1,6 @@
 // Word-only semantic Markdown stream reuses rules with a compact block ledger.
 const { md, mime } = require("./document-renderer.cjs");
-const {parseInline, linkifyTokens, joinText} = require("./word-inline.cjs");
+const {parseInline, linkifyTokens, joinText, releaseInline} = require("./word-inline.cjs");
 const PAGE = 8192, MAX_TEXT = 16 * 1024 * 1024;
 class BlockSink {
   constructor(check) {
@@ -56,7 +56,7 @@ class BlockSink {
   }
 }
 function streamMarkdown(text, onToken, { check = () => {
-}, onStats, inlineThreshold = 32768 } = {}) {
+}, onStats, inlineThreshold = 32768, consumeInline = false } = {}) {
   if (typeof text !== "string" || Buffer.byteLength(text) > MAX_TEXT) throw Error("Invalid Word export text.");
   if (typeof onToken !== "function") throw TypeError("Word token consumer is required.");
   check();
@@ -73,6 +73,7 @@ function streamMarkdown(text, onToken, { check = () => {
   const inlineRules = coreRules.filter((rule) => rule.enabled && !["normalize", "block", "strip_references", "inline", "tasks"].includes(rule.name));
   sink.reset((token, previous) => {
     if (token.type === "reference_definition") return;
+    try {
     if (token.type === "inline") {
       if (token.content.length >= inlineThreshold) token.children = parseInline(token.content, md, env, {check});
       else { token.children = []; md.inline.parse(token.content, md, env, token.children); }
@@ -91,6 +92,7 @@ function streamMarkdown(text, onToken, { check = () => {
       for (const rule of inlineRules) { if (rule.name === 'linkify' && linkifyTokens(token.children, token.content, md, check)) continue; if (rule.name === 'text_join' && joinText(token.children, {normalize: true, check})) continue; rule.fn(inline); }
     }
     onToken(token);
+    } finally { if (consumeInline && token.type === 'inline') releaseInline(token.children); }
   });
   Object.assign(state, { line: 0, level: 0, tight: false, blkIndent: 0, listIndent: -1, parentType: "root" });
   md.block.tokenize(state, 0, state.lineMax);
@@ -111,7 +113,7 @@ function imageNames(doc, options) {
         if (thumb && mime(thumb) && Object.hasOwn(doc.assets || {}, thumb)) names.add(thumb);
       }
     }
-  }, options);
+  }, {...options, consumeInline: true});
   return [...names];
 }
 module.exports = { streamMarkdown, imageNames, BlockSink };

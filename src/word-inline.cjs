@@ -259,4 +259,11 @@ function joinText(children, {levels = false, normalize = false, includeChildren 
   }
   flush(); store.order.release(); store.order = order; store.count = count; return true;
 }
-module.exports = {parseInline, linkifyTokens, joinText, Tokens, Delimiters};
+function releaseInline(children) {
+  const store = owners.get(children); if (!store) return false;
+  owners.delete(children);
+  for (const nested of store.children.values()) releaseInline(nested);
+  for (const key of ['type','tag','content','attrs','meta','level','nesting','order']) store[key].release();
+  store.cache.values.clear(); store.children.clear(); store.pendingAttrs = null; store.strings.values.length = 0; store.strings.short.clear(); store.names.length = 0; store.nameIds.clear(); store.count = 0; return true;
+}
+module.exports = {parseInline, linkifyTokens, joinText, releaseInline, Tokens, Delimiters};
