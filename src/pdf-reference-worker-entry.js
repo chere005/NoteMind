@@ -3,6 +3,7 @@ import {ReferenceSession} from './pdf-reference-session.cjs';
 import {create} from './pdf-reference-provider.cjs';
 pdfjs.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdfjs/pdf.worker.mjs',location.href).href;
 const session=new ReferenceSession(create({pdfjs,baseURL:location.href})),controllers=new Map();
+window.documentTools={referenceOpen:async(input,options)=>{const owned=window.NoteMindDocumentBytes.take(input);if(!owned)throw Error('Missing private PDF source.');return session.open({data:owned.bytes,password:options.password},{identity:options.sourceHash});}};
 window.notemindPDFWorker.onRequest(async packet=>{
  const {id,method,args={}}=packet;if(method==='cancel'){controllers.get(args.requestId)?.abort();return;}const controller=new AbortController();controllers.set(args.requestId||id,controller);
  try{

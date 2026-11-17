@@ -4,7 +4,7 @@ parentPort.on('message',async packet=>{
  if(packet.cancel){controllers.get(packet.cancel)?.abort();return;}const {id,operation,args}=packet,controller=new AbortController();controllers.set(id,controller);
  try{
   let value,transfers=[];controller.signal.throwIfAborted();
-  if(operation==='inspect'){const file=await fs.realpath(args.file),stat=await fs.stat(file);if(stat.size>150*1024*1024)throw Error('Open PDFs up to 150 MB.');const bytes=await readLimited(file,150*1024*1024,'Open PDFs up to 150 MB.');value={file,sourceHash:sha(bytes),size:bytes.length,bytes:bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?new Uint8Array(bytes.buffer):Uint8Array.from(bytes)};transfers=[value.bytes.buffer];}
+  if(operation==='inspect')value=await require('./pdf-reference-source.cjs').inspectSource(store,args.file,{signal:controller.signal});
   else if(operation==='state')value={index:await store.read(args.identity,args.sourceHash),previous:await store.previous(args.identity,args.sourceHash)};
   else if(operation==='page'){const page=await store.page(args.identity,args.sourceHash,args.page);value=page?{revision:page.revision,data:page.bytes.toString('base64')}:null;}
   else if(operation==='scanBegin'){if(scanSessions.size)throw Error('A scan is already being assembled.');scanSessions.set(args.id,await require('./scan-pdf.cjs').createAssembler());value=true;}
