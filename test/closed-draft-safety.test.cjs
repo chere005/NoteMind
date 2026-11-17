@@ -155,3 +155,13 @@ test('redrafting newer edits adopts the latest generation for the next save',asy
 test('manual save and final closing draft retain their newly published generation',async()=>{
  const h=await fixture();await h.notes.saveActive(true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);const before=h.a.doc.recoveryId;assert.equal(await h.c.closeTab(h.a),true);assert.equal(h.a.doc.recoveryId,h.stored.get('A').recoveryId);assert.notEqual(h.a.doc.recoveryId,before);
 });
+
+test('manual save hydration failure adopts the committed revision while preserving newer dirty memory',async()=>{
+ const h=await fixture(),wait=deferred(),receipt={id:'A',path:'/fixture/committed.nm',revision:'committed-after-reset',recoveryId:'new-recovery'};h.hooks.save=()=>wait.promise;const saving=h.notes.saveActive(true),rejected=assert.rejects(saving,/new images/);await until(()=>h.events.some(event=>event.type==='save-start'));h.edit(h.a,'Newer body after Save');h.a.doc.assets['assets/later.png']='LATER';wait.reject(Object.assign(Error('The file was saved, but its new images could not be loaded.'),{committed:receipt}));await rejected;assert.equal(h.a.doc.revision,receipt.revision);assert.equal(h.a.doc.path,receipt.path);assert.equal(h.a.doc.recoveryId,receipt.recoveryId);assert.equal(h.source.value,'Newer body after Save');assert.equal(h.a.doc.assets['assets/later.png'],'LATER');assert.equal(h.a.dirty,true);assert.equal(h.c.dirty,true);h.hooks.save=async snap=>{assert.equal(snap.revision,receipt.revision);return{...snap,revision:'next-save',recoverySaved:true}};assert.equal(await h.notes.saveActive(),true);
+});
+test('autosave hydration failure preserves committed ownership and the native unsaved indicator',async()=>{
+ const h=await fixture(),native=[];h.c.window.notemind.dirty=(...args)=>native.push(args);h.hooks.autosave=async()=>{throw Object.assign(Error('The file was saved, but its new images could not be loaded.'),{committed:{path:'/fixture/committed.nm',revision:'new-public-revision',recoveryId:'committed-recovery'}})};await h.notes.flush();assert.equal(h.a.doc.revision,'new-public-revision');assert.equal(h.a.doc.recoveryId,'committed-recovery');assert.equal(h.a.dirty,true);assert.equal(h.c.dirty,true);assert.equal(native.at(-1)[0],true);assert.match(h.elements.status.textContent,/file was saved/);
+});
+test('an ordinary failed autosave keeps the native unsaved indicator enabled',async()=>{
+ const h=await fixture(),native=[];h.c.window.notemind.dirty=(...args)=>native.push(args);h.hooks.autosave=async()=>{throw Error('Disk full')};await h.notes.flush();assert.equal(h.a.dirty,true);assert.equal(native.at(-1)[0],true);
+});
