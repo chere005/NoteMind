@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 1:51 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 2:07 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
 
@@ -23,7 +23,7 @@ Prioritize the drawing/pen/page/crash fixes, the already integrated useful featu
 | **C2c — PDF transport and supported scale** | **Transport integrated; supported-scale and lease gates active** | Raw markup save/reopen uses the existing scoped chunk transport and archive worker. Actual 2.4 MB pressure-markup roundtrip has no Main whole-byte borrow. The strict 100-page workflow passes. Worker-loss lease cleanup and large supported workloads remain actively assigned. |
 | **D1 — page overview** | **Integrated: `42754e3`** | Actual App/PadHost eight-phase workflow passes camera reorder, portal ownership, hidden-command suspension and 3,000 pages with 30 mounted cards at 809,402,368 B sampled peak. Real >2 MiB SVG preview/color/cancellation gate passes at 569,180,160 B. 63 focused integrated checks pass. |
 | **D2 — large import** | **After its shared PDF/attachment seam** | Cancellable page selection and page-by-page text-first import; retain exact insertion ownership. Separate recoverable checkpoint. |
-| **First stable bundle** | **Target 3–6 hours from the 1:32 PM decision** | Run the first independent bugs/UI/performance panel on the useful integrated core, presets, selection, precision and PDF bundle. Fix findings, freeze, preflight, package and verify; notify before installation. |
+| **First stable bundle** | **Target 3–6 hours from the 1:32 PM decision** | First data panel passed23fa66b with three findings fixed; independent UI and performance panels are active. Integrated AppHost8phases/SVG/strict100pagePDF gates pass. Resolve repeated drawing native-memory and all fresh findings, then freeze, preflight, package and verify; notify before installation. |
 | **All-feature panel** | **Subsequent reviewed increments** | Review all approved features together, implement findings, and repeat affected end-to-end/performance stages. |
 | **Final audits and release** | **After all approved scope passes** | Three fresh whole-app audits; resolve findings; frozen stress/recovery/soak, full packaged validation and Claude handoff. |
 
@@ -57,7 +57,7 @@ Report the checkpoint in chat when reached, alongside the hourly whole-roadmap u
 
 | Work package | Owner | Present evidence | Required next result |
 |---|---|---|---|
-| Editor decode and actual reopen | Fresh memory owner + architecture owner | Integrated owned metadata, affine worker IDs, Main/preload chunk ACKs and read-worker retirement. Actual 2M lazy reopen/hydrate/seed/model install now pass at 865,697,792 B; full paint/save remains gated. Actual producer passes first/erase/dirty/full pixel oracles but later Undo crosses the unchanged cap by about 0.77 MiB after the wider-leaf change. | Fresh owns history bookkeeping object coalescing; architecture immediately repeats actual load/paint/edit/save/reopen when the dependency lands. Preserve exact identities, geometry and all pixel oracles. |
+| Editor decode and actual reopen | Fresh memory owner + architecture owner | Integrated owned metadata, affine worker IDs, Main/preload chunk ACKs and read-worker retirement. Actual 2M lazy reopen/hydrate/seed/model install now pass at 865,697,792 B; full paint/save remains gated. Actual producer passes first/erase/dirty/full pixel oracles but later Undo crosses the unchanged cap by about 0.77 MiB after the wider-leaf change. | History coalescing, compact Uint32 order and packed selection flags are integrated. One producer run completes all17 phases/five SHA checks below cap, but the repeat crosses in selection; real IPC crosses during erase-paint after metadata save. Fresh performance reviewer owns a measured dense-canvas backend comparison; architecture reruns the real IPC pipeline immediately afterward. No cap/oracle change. |
 | Sparse edit history | Root | Sparse history integrated at `48cef64`. Wider leaf pages at `2c3b40a` pass 52 focused history/model checks, including leaf/internal boundaries, aliases, cancellation and complete Undo. Installed producer heap falls 261.51 MB to 244.75 MB in the same 2M workload. | Run the actual large-selection scenario. Movement geometry and large batches remain included in acceptance. |
 | Renderer worker storage | Fresh memory owner | Compact offsets, dot bounds, affine IDs, private locator retirement and dense tiling are integrated through `6b1e7cb`. Actual full/dirty pixel hashes now match after repeated erasure; full edit/Undo cap acceptance remains active. | Finish the entire producer edit/Undo/Redo/selection gate, then preserve it through real IPC save/reopen and combined feature validation. |
 | Word export and import | Drawing owner | Bounded XML passes actual 1/4/16 MiB many-paragraph gates; 16 MiB takes 13.1 seconds at 756.6 MB sampled peak. Guarded FD/source checks pass. | Bounded Markdown/XML/inline source is now integrated through `40b6764`; 55 focused Word/export/SVG integration checks pass. Final actual 16 MiB dense inline publication plus independent streamed CRC/count verification passes on frozen `41c05ed` at 966,344,704 B and 30.66 s. Package Main gap is 6.47 ms. Foreground contention, cold startup and import scheduling remain assigned for subsequent reviewed increments. |
@@ -140,7 +140,7 @@ The withdrawn preset-layout icon request and unapproved opacity/highlighter feat
 ## Parallel work and dependency control
 
 - Each active source owner uses explicit files and an isolated branch/worktree. Shared integration and Git index mutations are coordinated.
-- Fresh memory owner owns renderer records and private stroke identity metadata; architecture owns actual lazy hydration/save-queue integration. Root owns sparse-history and PDF adapters. Drawing owns Word/converter work followed by PDF lease cleanup.
+- The first data panel has passed after three ownership fixes. Fresh UI/UX and performance/architecture reviewers are active; performance owns isolated renderer experiments, architecture owns real IPC repeats and Word/CAS foreground scheduling, and Root integrates serially and owns release validation.
 - Overview uses drawing's verified file converter instead of building a second byte-transfer broker. It resumes as soon as that dependency is available.
 - Precision gesture adapters are integrated at `09c0743`. Further Surface changes remain serially owned; memory work continues independently.
 - Merge one feature inward at a time. A feature branch being coded or passing pure tests does not mean it is integrated or release-ready.

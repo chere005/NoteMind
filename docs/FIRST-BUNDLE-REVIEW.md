@@ -24,7 +24,7 @@ Fresh independent reviewer `review_first_bundle_ui` is reviewing `5287a7a`, whos
 
 ## Performance and architecture — next dependency
 
-Start a fresh independent reviewer after the actual 2M save/reopen and clean producer confirmation establish the coherent performance checkpoint. Existing author/reciprocal reads do not substitute for this role.
+Fresh independent reviewer `review_first_bundle_performance` is active. The repeated producer run and real save/reopen gate exposed thin GPU/native memory headroom, so this panel owns an isolated dense-canvas backend A/B with unchanged pixel oracles and resource limits. Architecture owns the real IPC pipeline repeat of any accepted renderer fix. Existing author/reciprocal reads do not substitute for this role.
 
 ## Integrated native evidence
 
@@ -38,3 +38,9 @@ These tests exercised production components/services with hidden windows, dispos
 | Isolated `e17e3cf` | Actual producer 2M one-point strokes: first paint, erase, discarded ACK, dirty/full repaint, both Undo/Redo sequences, selection, disposal | All 17 functional phases and five fixed SHA oracles pass below unchanged1GiB cap, sampled peak1,070,694,400 B. Process then exited1 from temporary-profile cleanup; cleanup-only fix8300136 is integrated as5287a7a and clean-exit confirmation is queued. |
 
 The real Main/preload/staged-save lazy2M pipeline remains a separate active gate. A producer pass is not a completed save/reopen or packaged-app claim.
+
+## Repeated scale gate and current closure
+
+The cleanup-corrected producer run on `8300136` again preserved all five fixed hashes and both Undo/Redo sequences, but selection preview crossed1GiB at1,074,954,240 B. The earlier functional pass is not a stable repeated pass. Real IPC source `d41eab8` passes reopen/first paint/metadata save but fails erase-paint at1,085,014,016 B. The final observed jump is GPU101.42→128.63 MB; Main284.18 MB and Tab622.89 MB are unchanged. No repeated-pass, complete save/reopen, packaged or release claim is made.
+
+The UI panel has already fixed PDF page-number Enter before source load (`4078d36`,15 focused component/view/session checks). Its overview keyboard-focus finding is being fixed in isolation. The first performance panel owns the native renderer experiment; Word/CAS foreground scheduling is independently being implemented through a bounded file-only worker after verified media spooling.
