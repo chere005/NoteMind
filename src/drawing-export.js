@@ -3,6 +3,9 @@ const {backdropReady}=require('./tablet/renderer/tabletBackdrop');
 const closed=()=>Error('Drawing exporter is closed.');
 const closeTiles=value=>{for(const tile of [...(value?.tiles||[]),...(value?.preview?.fixed||[]),...(value?.preview?.ink?[value.preview.ink]:[])])tile.bitmap?.close();};
 const verifiedSidecars=new WeakSet();
+const normalizedPackets=new WeakMap();
+function ownNormalizedPacket(packet,options){if(options.owned===true&&packet&&typeof packet==='object'){const fields=[];for(const name of ['bytes','hashBytes','backdropBytes']){const value=packet[name];if(ArrayBuffer.isView(value)&&value.buffer instanceof ArrayBuffer)fields.push({name,value,buffer:value.buffer});}normalizedPackets.set(packet,fields);}return packet;}
+function releaseNormalizedPacket(packet){const fields=normalizedPackets.get(packet);if(!fields)return false;normalizedPackets.delete(packet);const buffers=new Set(fields.map(field=>field.buffer));for(const buffer of buffers)if(buffer.byteLength&&typeof buffer.transfer==='function')buffer.transfer(0);for(const field of fields)if(packet[field.name]===field.value)packet[field.name]=null;return true;}
 class DrawingExporter {
  constructor({worker=()=>new Worker(new URL('drawing-worker.js',document.baseURI)),pack=graphics.encodeBytesAsync,bitmap=async file=>{const image=await backdropReady(file);if(!image)throw Error('Could not load the drawing background.');return createImageBitmap(image);},timeout=120000,idle=10000}={}){
   Object.assign(this,{factory:worker,pack,bitmap,timeout,idle});this.queue=[];this.active=null;this.worker=null;this.running=false;this.nextId=1;this.disposed=false;this.idleTimer=null;this.responses=new Map();this.leases=0;this.rasterCount=0;this.rasterBytes=0;this.transformCount=0;this.transformBytes=0;
@@ -87,10 +90,10 @@ function exporter(){if(!shared){shared=new DrawingExporter();globalThis.addEvent
 async function temporary(cost,run){if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');legacy ||= new DrawingExporter({idle:0});const owner=legacy;legacyCount++;legacyBytes+=cost;try{return await run(owner);}finally{legacyCount--;legacyBytes-=cost;if(!legacyCount){owner.dispose();if(legacy===owner)legacy=null;}}}
 function exportDrawingAssets(snapshot,options={}){if((snapshot.backdrop?.length||0)>65536){const geometry=snapshot.strokes.reduce((bytes,stroke)=>bytes+16+stroke.points.length*(stroke.pressures?24:16),24),pixels=options.png===false?0:Math.min(16*1024*1024,options.maxPixels||16*1024*1024),cost=(geometry+snapshot.backdrop.length)*2+Math.ceil(pixels*16/3);return temporary(cost,owner=>owner.run(snapshot,options));}return exporter().run(snapshot,options);}
 async function normalizeGraphicsBytes(bytes,options={}){
- if(graphics.isBinary(bytes)&&bytes.byteLength>=24){const header=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);if(header.getUint32(8,true)<=65536&&header.getUint32(12,true)<50000&&header.getUint32(16,true)<50000)return exporter().normalize(bytes,options);}
+ if(graphics.isBinary(bytes)&&bytes.byteLength>=24){const header=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);if(header.getUint32(8,true)<=65536&&header.getUint32(12,true)<50000&&header.getUint32(16,true)<50000)return ownNormalizedPacket(await exporter().normalize(bytes,options),options);}
  // Retire transient normalization memory before the editable graph is hydrated.
  // This owner never terminates an unrelated active drawing/export worker.
- const cost=bytes.byteLength*2;if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');const owner=new DrawingExporter({idle:0});legacyCount++;legacyBytes+=cost;try{return await owner.normalize(bytes,options)}finally{owner.dispose();legacyCount--;legacyBytes-=cost;}
+ const cost=bytes.byteLength*2;if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');const owner=new DrawingExporter({idle:0});legacyCount++;legacyBytes+=cost;try{return ownNormalizedPacket(await owner.normalize(bytes,options),options)}finally{owner.dispose();legacyCount--;legacyBytes-=cost;}
 }
 async function transformDrawingInk(strokes,from,to,options={}){
  let result;const local=async()=>{const {transformInkBinary}=require('./transform-ink.js');return transformInkBinary(await graphics.encodeBytesAsync({name:'Ink',aspect:1,strokes,backdrop:null},options),from,to,options);};if(typeof Worker==='undefined')result=await local();else try{result=await exporter().transform(strokes,from,to,options);}catch(error){if(options.signal?.aborted)throw error;result=await local();}
@@ -102,5 +105,5 @@ function renderInk(request,options){return exporter().raster(request,options);}
 function cancelInk(session){shared?.cancelInk(session);}
 function holdDrawingWorker(){return exporter().hold();}
 async function fingerprintStroke(stroke,options={}){const signatures=require('./stroke-signature.js');try{if(typeof Worker==='undefined')throw Error('Drawing worker unavailable.');const packet=await exporter().fingerprint([stroke],options),view=new DataView(packet.hashBytes.buffer,packet.hashBytes.byteOffset,8);return view.getUint32(0,true).toString(16).padStart(8,'0')+view.getUint32(4,true).toString(16).padStart(8,'0');}catch(error){if(options.signal?.aborted)throw error;return signatures.canonicalStrokeFingerprintAsync(stroke,graphics.yieldTask);}}
-if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes,fingerprintStroke};
-module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk,fingerprintStroke};
+if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes,releaseNormalizedPacket,fingerprintStroke};
+module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,releaseNormalizedPacket,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk,fingerprintStroke};
