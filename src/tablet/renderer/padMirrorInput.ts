@@ -164,9 +164,11 @@ function bridgeFor(view: View, emit: Emit): Bridge {
     if (view.closed || doc.visibilityState === "hidden") return false
     const target = doc.activeElement
     if (!(target instanceof view.HTMLElement) || target === doc.body || target === doc.documentElement) return false
+    const overviewArrow=event.altKey&&!event.shiftKey&&["ArrowDown","ArrowUp","ArrowLeft","ArrowRight"].includes(event.key)&&target.matches(".page-overview-page")&&!!target.closest(".page-overview")&&!target.closest("[hidden], [inert]")
     const preset=/^[1-9]$/.test(event.key)
     if(event.isComposing||event.keyCode===229||preset&&(event.type!=="keydown"||event.repeat||event.shiftKey||!target.matches('[data-tablet="surface"]')))return false
-    if (event.ctrlKey || event.metaKey || event.altKey || !preset&&!["Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) return false
+    if(event.ctrlKey||event.metaKey||event.altKey&&!overviewArrow||!preset&&!["Escape","ArrowDown","ArrowUp","ArrowLeft","ArrowRight","Home","End","Enter"," "].includes(event.key))return false
+
     const keyEvent = new view.KeyboardEvent(event.type, {
       key: event.key, code: event.code, repeat: event.repeat,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,

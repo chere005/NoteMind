@@ -13,13 +13,13 @@ async function write(handle, bytes) {
     at += result.bytesWritten;
   }
 }
-async function waitWorking(storage, signal) {
+async function waitWorking(storage, signal, bytes=WORKING) {
   for (; ; ) {
     check(signal);
     let wake;
     const changed = new Promise((resolve) => wake = resolve), off = storage.subscribeRawCapacity(wake);
     try {
-      return await storage.acquireScopedRawWorking(WORKING);
+      return await storage.acquireScopedRawWorking(bytes);
     } catch (error) {
       if (error.code !== "ARCHIVE_RAW_BUSY") throw error;
       await new Promise((resolve, reject) => {
@@ -45,10 +45,10 @@ function dimensions(header) {
   const rotated = info.orientation >= 5 && info.orientation <= 8;
   return { ...info, width: rotated ? info.height : info.width, height: rotated ? info.width : info.height };
 }
-async function spool(value, file, storage, signal) {
+async function spool(value, file, storage, signal, {handle:borrowedHandle}={}) {
   let bytes = isRawAsset(value) ? value.bytes : ArrayBuffer.isView(value) ? value.byteLength : typeof value === "string" ? value.length / 4 * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0) : NaN;
   if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > ENTRY_BYTES) throw Error("Word images must be at most 50 MiB.");
-  const handle = await fs.open(file, "wx", 384), hash = createHash("sha256"), header = Buffer.allocUnsafe(Math.min(bytes, 1024 * 1024));
+  const handle = borrowedHandle||await fs.open(file, "wx", 384), hash = createHash("sha256"), header = Buffer.allocUnsafe(Math.min(bytes, 1024 * 1024));
   let at = 0;
   try {
     while (at < bytes) {
@@ -64,7 +64,7 @@ async function spool(value, file, storage, signal) {
     const stat = await handle.stat({ bigint: true }), sha256 = hash.digest("hex");
     return { file, bytes, sha256, identity: require("./word-file.cjs").identity(stat), info: dimensions(header) };
   } finally {
-    await handle.close();
+    if(!borrowedHandle)await handle.close();
   }
 }
 function discard(bytes) {
@@ -208,4 +208,4 @@ async function exportWordWithMedia(doc, file, options = {}, services = {}) {
     }
   }
 }
-module.exports = { exportWordWithMedia };
+module.exports = { exportWordWithMedia,spoolImageInput:spool,acquireImageWorking:waitWorking };

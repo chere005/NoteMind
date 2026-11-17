@@ -1,5 +1,7 @@
 # Continuation
 
+- Overview integrated from e330e2b: actual App/PadHost8-phase camera/3,000-page virtualization proof passes at809,402,368B; real >2MiB SVG color/cancellation gate passes at569,180,160B. PDF lease integration0524af4/4f0f07c/136d89c retains actual-exit plus cleanup barrier;43 focused integrated lease/store/reconcile/jobs checks pass. Existing installed app untouched.
+
 - Sean rejected the multi-day wait: target first reviewed stable increment in3–6h from Nov17 about1:32PM Central; give go/no-go by about2:33PM Central (20:33UTC). Prioritize supported drawing/pen/page/crash gates and the already useful feature bundle; later work ships as smaller reviewed increments, with all approved scope/review waves retained.
 - Desktop interruption fixed: our Word test PID30524 was stopped; idle worker packets no longer enter ArchiveCodec/PDF job completion without an active job (c3db0a1/6b2dd27). Actual Electron throw/reject proof passes with final ffcd16e test-only fatal boundary. Use this exact corrected helper in every new native entry; the earlier app.exit-only helper was insufficient. Word16MiB retirement repeat passed on41c05ed at966,344,704B/30.66s; no installed app was changed.
 
