@@ -43,7 +43,7 @@ window.fixturePNG=canvas.toDataURL('image/png');window.fixtureReleased=[];
 window.fixtureCameraLoads=0;window.fixtureCameraWrites=[];window.fixtureSheetWrites=[];
 window.fixtureMediaCalls=0;window.fixtureShutdowns=0;window.fixtureMounts=0;window.fixtureDetaches=0;
 window.fixtureObserveOwners=owners=>{
- if(window.fixtureOwners){if(fixtureOwners.camera!==owners.camera||fixtureOwners.previews!==owners.previews||fixtureOwners.sheets!==owners.sheets)throw Error('App replaced a stable owner');return;}
+ if(window.fixtureOwners){if(fixtureOwners.camera!==owners.camera||fixtureOwners.previews!==owners.previews||fixtureOwners.sheets!==owners.sheets||fixtureOwners.pdf!==owners.pdf)throw Error('App replaced a stable owner');return;}
  window.fixtureOwners=owners;
  const camera=owners.camera,attach=camera.attachView.bind(camera),detach=camera.detachView.bind(camera),shutdown=camera.shutdown.bind(camera);
  camera.attachView=(...args)=>{fixtureMounts++;return attach(...args)};
@@ -69,6 +69,17 @@ window.notemind={platform:'darwin',
  onPenSamples:off,onPenStatus:off,penStop(){},penHeartbeat(){}},
  pen:{onSamples:off,onStatus:off,sheet(){}}
 };
+window.fixturePDF={opens:0,closes:[],saves:[],pages:new Map(),saveGate:null,openGate:null};
+window.fixtureHoldPDFSave=()=>{fixturePDF.saveGate=new Promise(resolve=>{fixturePDF.releaseSave=()=>{fixturePDF.saveGate=null;resolve();};});};
+window.fixtureHoldPDFOpen=()=>{fixturePDF.openGate=new Promise(resolve=>{fixturePDF.releaseOpen=()=>{fixturePDF.openGate=null;resolve();};});};
+window.notemind.reference={
+ open:async()=>{const id='source-'+(++fixturePDF.opens);await fixturePDF.openGate;return{id,sourceHash:'a'.repeat(64),pageCount:3,index:{pages:{}},previous:[]};},
+ info:async()=>({width:600,height:900,rotation:0}),page:async()=>({data:fixturePNG.split(',')[1],width:96,height:144}),text:async()=>'',cancel:async()=>{},retain:async()=>{},
+ ink:async(id,page)=>fixturePDF.pages.get(id+':'+page)||null,
+ save:async(id,value)=>{fixturePDF.saves.push({id,page:value.page,bytes:value.bytes.length});await fixturePDF.saveGate;const revision='saved-'+fixturePDF.saves.length,data=btoa(String.fromCharCode(...value.bytes));fixturePDF.pages.set(id+':'+value.page,{revision,data});return{revision};},
+ close:async id=>fixturePDF.closes.push(id),export:async()=>null
+};
+window.NoteMindPDFReferences={isOwnerOpen:()=>true};
 window.NoteMindNotes={api:{releaseAttachmentPreview:async token=>fixtureReleased.push(token)},captureInsertion:()=>({id:'original-note'})};
 document.getElementById('paneToggle').onclick=()=>{document.getElementById('pane').hidden=!document.getElementById('pane').hidden};
 `;
@@ -79,7 +90,7 @@ async function setup(){
    build.onLoad({filter:/\/tablet-entry\.tsx$/},async args=>{
     let contents=await fs.promises.readFile(args.path,'utf8');
     const marker=' const [loaded,setLoaded]';assert.ok(contents.includes(marker));
-    contents=contents.replace(marker,' window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current});\n'+marker);
+    contents=contents.replace(marker,' window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current,pdf:pdfViews.current});\n'+marker);
     const mount="createRoot(document.getElementById('tablet-root')).render(<App/>);";assert.ok(contents.includes(mount));
     contents=contents.replace(mount,"const fixtureRoot=createRoot(document.getElementById('tablet-root'));window.fixtureUnmount=()=>fixtureRoot.unmount();fixtureRoot.render(<App/>);");
     return{contents,loader:'tsx',resolveDir:path.dirname(args.path)};
@@ -114,6 +125,28 @@ async function run(){
  assert.equal(await evaluate('fixtureOwners.camera.models.current[0].page.strokes.length'),1);
  assert.deepEqual(await evaluate('fixtureOwners.camera.state.box'),{x:.1,y:.2,width:.3,height:.4});
  results.push({phase,mounts:await evaluate('fixtureMounts'),detaches:await evaluate('fixtureDetaches'),releases:0});
+ phase='pdf-ink-portal-save';
+ await evaluate(`dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/reference.pdf',name:'Reference',previewToken:'token-PDF'}}))`);
+ await until(`!!document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]')&&!document.querySelector('.pdf-reference-loading')`);
+ await evaluate(`window.fixturePDFView=fixtureOwners.pdf.values.get('/fixture/reference.pdf');window.fixturePDFModel=fixturePDFView.refs.current.current.model;fixtureHoldPDFSave();(()=>{const el=document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]'),r=el.getBoundingClientRect();for(const[type,x,y,buttons]of[['pointerdown',.2,.2,1],['pointermove',.6,.5,1],['pointerup',.6,.5,0]])el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:31,button:0,buttons,pressure:buttons?.5:0,clientX:r.left+x*r.width,clientY:r.top+y*r.height}));})()`);
+ await until('fixturePDFModel.strokes.length===1');
+ for(let turn=0;turn<2;turn++){
+  await evaluate('fixtureSetPad(true)');await until('!!document.querySelector(".pad-placeholder")&&fixtureMounts>fixtureDetaches');
+  assert.equal(await evaluate(`fixtureOwners.pdf.values.get('/fixture/reference.pdf')===fixturePDFView&&fixturePDFView.refs.models.current.get(1).model===fixturePDFModel`),true);
+  assert.equal(await evaluate('fixturePDF.closes.length'),0);assert.equal(await evaluate('fixturePDF.opens'),1);
+  if(turn===0){await until('fixturePDF.saves.length===1');await evaluate('fixturePDF.releaseSave()');}
+  await evaluate('fixtureSetPad(false)');await until(`!document.querySelector('.pad-placeholder')&&!!document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]')&&!document.querySelector('.pdf-reference-loading')`);
+  assert.equal(await evaluate('fixturePDFModel.strokes.length'),1);assert.equal(await evaluate('fixturePDFModel.canUndo'),true);
+ }
+ await evaluate(`fixtureHoldPDFSave();(()=>{const el=document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]'),r=el.getBoundingClientRect();for(const[type,x,y,buttons]of[['pointerdown',.3,.3,1],['pointermove',.7,.6,1],['pointerup',.7,.6,0]])el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:32,button:0,buttons,pressure:buttons?.5:0,clientX:r.left+x*r.width,clientY:r.top+y*r.height}));})()`);
+ await until('fixturePDFModel.strokes.length===2');await evaluate(`document.querySelector('[data-doc-close="/fixture/reference.pdf"]').click()`);await until('fixturePDF.saves.length===2');
+ assert.equal(await evaluate('fixtureReleased.includes("token-PDF")'),false);assert.equal(await evaluate('fixturePDF.closes.length'),0);
+ await evaluate('fixturePDF.releaseSave()');await until('fixtureReleased.includes("token-PDF")');assert.equal(await evaluate('fixturePDF.closes.length'),1);assert.equal(await evaluate('fixtureOwners.pdf.values.size'),0);
+ results.push({phase,opens:1,closes:1,strokes:2,portalMoves:4,keptUndo:true,releaseAfterSave:true});
+ phase='pdf-close-during-open';await evaluate(`fixtureHoldPDFOpen();dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/pending.pdf',name:'Pending',previewToken:'token-Pending'}}))`);await until('fixturePDF.opens===2');
+ await evaluate(`document.querySelector('[data-doc-close="/fixture/pending.pdf"]').click()`);await wait(20);assert.equal(await evaluate('fixtureReleased.includes("token-Pending")'),false);
+ await evaluate('fixturePDF.releaseOpen()');await until('fixtureReleased.includes("token-Pending")');assert.equal(await evaluate('fixturePDF.closes.length'),2);assert.equal(await evaluate('fixtureOwners.pdf.values.size'),0);
+ results.push({phase,returnedSourceClosedOnce:true,releaseAfterOpenSettles:true});
  phase='close-and-root-disposal';
  await evaluate(`dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/A.png',name:'A again',previewToken:'redundant-A'}}))`);
  await until('fixtureReleased.includes("redundant-A")');
@@ -122,7 +155,7 @@ async function run(){
  assert.equal(await evaluate('fixtureReleased.includes("token-B")'),false);
  await evaluate('fixtureUnmount()');await until('fixtureOwners.camera.closed&&fixtureReleased.includes("token-B")');
  assert.equal(await evaluate('fixtureShutdowns'),1);assert.equal(await evaluate('fixtureMediaCalls'),0);
- assert.deepEqual(await evaluate('fixtureReleased.slice().sort()'),['redundant-A','token-A','token-B']);
+ assert.deepEqual(await evaluate('fixtureReleased.slice().sort()'),['redundant-A','token-A','token-B','token-PDF','token-Pending']);
  assert.deepEqual(await evaluate('fixtureErrors'),[]);assert.deepEqual(errors,[]);
  results.push({phase,shutdowns:1,physicalMediaCalls:0,released:await evaluate('fixtureReleased')});finish();
 }
