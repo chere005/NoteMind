@@ -23,8 +23,10 @@ function watchCloseChanges({sheets,camera,pdfs,subscribeInk}={}){
  for(const models of [sheets,camera?.models])if(models?.subscribe)releases.push(models.subscribe(()=>{changed();refresh()}));if(subscribeInk)releases.push(subscribeInk(changed));refresh();
  return{revision:()=>{refresh();return revision},dispose(){if(closed)return;closed=true;for(const release of [...releases,...owners.values(),...views.values()])release();owners.clear();views.clear()}};
 }
+function closeDurabilityWarning(value){if(Array.isArray(value)){for(const answer of value){const warning=closeDurabilityWarning(answer);if(warning)return warning;}return null}return value?.durabilityWarning||(value?.durabilityConfirmed===false?'The latest checkpoint disk durability could not be confirmed.':null);}
+async function confirmCloseWrite(write,{current=()=>true}={}){let answer=await write(),warning=closeDurabilityWarning(answer);if(!warning||!current())return answer;answer=await write();warning=closeDurabilityWarning(answer);if(warning)throw Error(String(warning));return answer;}
 async function flushToQuiescence({capture,flush,current=()=>true,onStable=()=>{}}){
  while(current()){const before=capture();await flush();if(!current())return false;const after=capture();if(same(before,after)){if(!current())return false;onStable();return true;}}
  return false;
 }
-module.exports={SheetActions,syncClosePaper,closeFlushState,watchCloseChanges,flushToQuiescence};
+module.exports={closeDurabilityWarning,confirmCloseWrite,SheetActions,syncClosePaper,closeFlushState,watchCloseChanges,flushToQuiescence};
