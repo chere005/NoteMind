@@ -107,9 +107,9 @@ function App(){
 
  // Orientation and window size change the viewport, never the canonical ink or its undo history.
 
- useEffect(()=>{if(sheets[active]?.paper)setPaper(sheets[active].paper);},[active,loaded]);
+ useEffect(()=>{if(source==='tablet'&&!documentId&&sheets[active]?.paper)setPaper(sheets[active].paper);},[active,loaded,source,documentId,sheets[active]?.page,sheets[active]?.loaded]);
 
- useEffect(()=>{sheets[active].paper=activePaper;refresh();},[activePaper]);
+ useEffect(()=>{if(!loaded||source!=='tablet'||documentId||sheets[active]?.loaded===false)return;const current=paper();if(sheets[active].paper!==current){sheets[active].paper=current;refresh();}},[activePaper,active,loaded,source,documentId,sheetReady]);
 
  useEffect(()=>{const edit=e=>{const saved=e.detail.sheet,valid=saved&&validSheets([{...saved,strokes:isHydratedSheet(saved)?[]:saved.strokes}]);const p=new TabletPage(valid?saved.aspect:screenAspect());p.backdrop=valid?saved.backdrop:e.detail.url;if(valid){p.strokes=saved.strokes;p.restoreExtent(saved.extent);primeSheetSource(saved,p);}else if(p.backdrop)void backdropReady(p.backdrop).then(image=>{if(image){p.setAspect(image.naturalWidth/image.naturalHeight);refresh();}else setSaveError('Could not load the picture for editing.');});p.target=e.detail.target||null;setSheets(old=>[...old,{name:saved?.name||'Image',page:p,paper:valid?saved.paper:paper(),fixedAspect:true}]);setActive(sheets.length);setSource('tablet');setBox(null);};window.addEventListener('tablet-edit-image',edit);return()=>window.removeEventListener('tablet-edit-image',edit);},[sheets.length]);
 
