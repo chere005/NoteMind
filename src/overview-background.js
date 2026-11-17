@@ -1,4 +1,4 @@
-const graphics=require('./graphics-pane.js');
+const graphics=require('./graphics-pane.js'),{ownOverviewBytes}=require('./overview-packet.cjs');
 function create({sync,yieldControl=graphics.yieldTask}={}){
  return async(packet,{signal}={})=>{
   const source=packet.backdropBytes;if(!ArrayBuffer.isView(source))return packet;const bytes=new Uint8Array(source.buffer,source.byteOffset,source.byteLength),decoder=new TextDecoder(),prefix=decoder.decode(bytes.subarray(0,128)),match=/^data:image\/svg\+xml;base64,/i.exec(prefix);if(!match)return packet;
@@ -9,7 +9,7 @@ function create({sync,yieldControl=graphics.yieldTask}={}){
   // Only this private thumbnail packet is consumed; live page/user buffers stay intact.
   if(packet.owned&&source.buffer!==packet.bytes?.buffer&&source.byteOffset===0&&source.byteLength===source.buffer.byteLength&&typeof source.buffer.transfer==='function')source.buffer.transfer(0);
   const result=await sync.overviewThumbnail({text:'',assets},{signal});check();const png=result.assets?.['assets/overview.png'];if(typeof png!=='string'||png.length>4*Math.ceil(1024*1024/3))throw Error('Invalid SVG page preview.');
-  return{...packet,backdropBytes:new TextEncoder().encode('data:image/png;base64,'+png)};
+  return{...packet,backdropBytes:ownOverviewBytes(new TextEncoder().encode('data:image/png;base64,'+png),packet)};
  };
 }
 module.exports={create};

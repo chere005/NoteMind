@@ -1,4 +1,6 @@
 const { yieldTask } = require("./graphics-pane.js");
+const {pullSheetState}=require("./load-sheet-state.js");
+const {ownOverviewBytes,discardOverviewPacket}=require("./overview-packet.cjs");
 const { thumbnailMetadata } = require("./overview-thumbnail-client.cjs");
 const abort = () => Object.assign(Error("Page overview cancelled."), { name: "AbortError" }), check = (signal) => {
   if (signal?.aborted) throw abort();
@@ -40,40 +42,25 @@ async function pullOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 256 * 1024 * 1024) throw Error("Invalid overview source budget.");
   check(signal);
   const chunks = !!(api.loadSheetChunk && api.finishSheetLoad), state = await api.loadSheetPage(pageId, chunks ? { chunks: true, background: true, ...(requestId ? {requestId} : {}) } : requestId ? {requestId} : void 0), session = state.transferSession;
+  let delegated=false;
   try {
     check(signal);
     if (!Array.isArray(state.encodedSheets) || state.encodedSheets.length !== 1) throw Error("Invalid overview page response.");
     const source = state.encodedSheets[0];
     if (source.metadata?.pageId && source.metadata.pageId !== pageId) throw Error("Overview page ownership changed.");
-    const packet = { metadata: source.metadata, owned: true };
-    let total = 0;
-    for (const key of ["bytes", "backdropBytes"]) {
-      const value = source[key];
-      if (value == null) continue;
-      if (session) {
-        if (!value.chunked || typeof value.key !== "string" || !Number.isSafeInteger(value.bytes) || value.bytes < 0 || (total += value.bytes) > maxBytes || !Number.isSafeInteger(state.chunkBytes) || state.chunkBytes < 1 || state.chunkBytes > 1024 * 1024) throw Error("Invalid overview page size.");
-        check(signal);const bytes = new Uint8Array(value.bytes);
-        for (let at = 0; at < bytes.length; ) {
-          check(signal);
-          const part = await api.loadSheetChunk(session, value.key, at);
-          check(signal);
-          if (!ArrayBuffer.isView(part) || part.byteLength !== Math.min(state.chunkBytes, bytes.length - at)) throw Error("Invalid overview page chunk.");
-          bytes.set(new Uint8Array(part.buffer, part.byteOffset, part.byteLength), at);
-          at += part.byteLength;
-          await yieldControl();check(signal);
-        }
-        packet[key] = bytes;
-      } else {
-        if (!ArrayBuffer.isView(value) || (total += value.byteLength) > maxBytes) throw Error("Invalid overview page size.");
-        packet[key] = value;
-        packet.owned = false;
-      }
+    if(!source.bytes)throw Error("Overview geometry is missing.");
+    if(session){
+      delegated=true;
+      const selected={metadata:source.metadata,bytes:source.bytes,...source.backdropBytes!=null?{backdropBytes:source.backdropBytes}:{}};
+      const result=await pullSheetState(api,{transferSession:session,chunkBytes:state.chunkBytes,encodedSheets:[selected]},{signal,yieldControl,maxBytes,consume:true});
+      const sheet=result.encodedSheets[0];ownOverviewBytes(sheet.bytes);if(sheet.backdropBytes)ownOverviewBytes(sheet.backdropBytes);
+      return{metadata:sheet.metadata,bytes:sheet.bytes,...sheet.backdropBytes?{backdropBytes:sheet.backdropBytes}:{},owned:true};
     }
-    if (!packet.bytes) throw Error("Overview geometry is missing.");
-    check(signal);
-    return packet;
+    const packet={metadata:source.metadata,owned:false};let total=0;
+    for(const key of ["bytes","backdropBytes"]){const value=source[key];if(value==null)continue;if(!ArrayBuffer.isView(value)||(total+=value.byteLength)>maxBytes)throw Error("Invalid overview page size.");packet[key]=value;}
+    check(signal);return packet;
   } finally {
-    if (session) try { await api.finishSheetLoad(session); } catch {}
+    if(session&&!delegated)try{await api.finishSheetLoad(session);}catch{}
   }
 }
 let nextOverviewRead=0;
@@ -82,7 +69,7 @@ async function loadOverviewPage(api,pageId,options={}){
  if(id!==undefined&&(typeof id!=='string'||!/^[a-z0-9_.:-]{1,128}$/i.test(id)))throw Error('Invalid overview read request.');
  let rejectCancelled;const cancelled=new Promise((_,reject)=>rejectCancelled=reject),onAbort=()=>{if(canCancel&&id)try{void Promise.resolve(api.cancelSheetPageLoad(id)).catch(()=>{});}catch{}rejectCancelled(abort());};signal?.addEventListener('abort',onAbort,{once:true});
  const task=pullOverviewPage(api,pageId,{...options,requestId:id});
- try{return await Promise.race([task,cancelled]);}catch(error){check(signal);throw error;}finally{signal?.removeEventListener('abort',onAbort);}
+ let published=false;try{const packet=await Promise.race([task,cancelled]);check(signal);published=true;return packet;}catch(error){check(signal);throw error;}finally{signal?.removeEventListener('abort',onAbort);if(!published)void task.then(discardOverviewPacket,()=>{});}
 }
 function smallExistingPreview(page) {
   const preview = page.preview, expected = page.revision ?? page.signature ?? page.geometryRevision;
@@ -207,12 +194,12 @@ class OverviewCoordinator {
       if (!pending) return;
       const [id, row] = pending;
       const controller = new AbortController(), job = this.active = { id, key: row.key, controller };
-      let resource;
+      let resource,packet;
       try {
         resource = await this.existingPreview(row.page, { signal: controller.signal });
         check(controller.signal);
         if (!resource) {
-          const packet = await this.load(id, { signal: controller.signal, background: true });
+          packet = await this.load(id, { signal: controller.signal, background: true });
           check(controller.signal);
           if (packet.metadata?.geometryRevision && row.page.geometryRevision && packet.metadata.geometryRevision !== row.page.geometryRevision) throw Error("The overview page changed while loading.");
           resource = await this.render(packet, { signal: controller.signal });
@@ -245,6 +232,7 @@ class OverviewCoordinator {
           this.emit();
         }
       } finally {
+        discardOverviewPacket(packet);
         if (this.active === job) this.active = null;
       }
     }

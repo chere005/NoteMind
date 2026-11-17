@@ -1,4 +1,5 @@
 const graphics = require("./graphics-pane.js");
+const {ownOverviewBytes,discardOverviewPacket}=require("./overview-packet.cjs");
 const { thumbnailMetadata } = require("./overview-thumbnail-client.cjs");
 const MAX_BYTES = 256 * 1024 * 1024;
 const abort = () => Object.assign(Error("Page overview cancelled."), { name: "AbortError" });
@@ -26,7 +27,8 @@ async function backdropBytes(data, limit, { signal, yieldControl }) {
   if (typeof data !== "string" || data.length > limit || !/^data:image\/(png|jpeg|webp|gif|bmp|avif|svg\+xml);base64,/i.test(data.slice(0, 128))) throw Error("Invalid overview background.");
   const start = data.indexOf(",") + 1;
   if (start === data.length) throw Error("Invalid overview background.");
-  const bytes = new Uint8Array(data.length), encoder = new TextEncoder();
+  const bytes = ownOverviewBytes(new Uint8Array(data.length)), encoder = new TextEncoder();
+  let completed=false;try{
   for (let at = 0; at < data.length; at += 65536) {
     check(signal);
     const text = data.slice(at, at + 65536);
@@ -35,7 +37,8 @@ async function backdropBytes(data, limit, { signal, yieldControl }) {
     await yieldControl();
   }
   check(signal);
-  return bytes;
+  completed=true;return bytes;
+  }finally{if(!completed)discardOverviewPacket({backdropBytes:bytes});}
 }
 function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeBytesAsync, project=(_page,strokes)=>strokes, yieldControl = graphics.yieldTask, maxBytes = MAX_BYTES }) {
   if (typeof getPage !== "function" || typeof loadSaved !== "function" || typeof encode !== "function" || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES) throw Error("Invalid overview source adapter.");
@@ -46,15 +49,18 @@ function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeByte
     const captured = captureOverviewPage(row);
     if (!captured) {
       const metadata=row?thumbnailMetadata({...row.metadata,aspect:row.page?.aspect??row.metadata?.aspect,paper:row.paper??row.metadata?.paper,extent:row.page?.extent??row.metadata?.extent}):null;const saved = await loadSaved(pageId, { signal, background: true });
-      check(signal);
+      try{check(signal);}catch(error){discardOverviewPacket(saved);throw error;}
       return metadata&&Object.keys(metadata).length?{...saved,metadata:{...saved.metadata,...metadata,pageId,...(row.geometryRevision===undefined?{}:{geometryRevision:row.geometryRevision}),...(row.revision===undefined?{}:{revision:row.revision})}}:saved;
     }
-    const release=row.page.retainGeometry?.()||(()=>{});try{let strokes=project(row.page,captured.sheet.strokes);if(strokes&&typeof strokes.then==='function')strokes=await strokes;check(signal);const bytes = await encode({...captured.sheet,strokes}, { signal, yieldControl });
+    const release=row.page.retainGeometry?.()||(()=>{});let packet,published=false;try{let strokes=project(row.page,captured.sheet.strokes);if(strokes&&typeof strokes.then==='function')strokes=await strokes;check(signal);let bytes = await encode({...captured.sheet,strokes}, { signal, yieldControl });
+    if(encode===graphics.encodeBytesAsync)packet={metadata:captured.metadata,bytes:ownOverviewBytes(bytes),owned:true};
     check(signal);
     if (!ArrayBuffer.isView(bytes) || bytes.byteLength > maxBytes) throw Error("Overview source exceeds its byte budget.");
+    if(encode!==graphics.encodeBytesAsync){const copy=ownOverviewBytes(new Uint8Array(bytes.byteLength));packet={metadata:captured.metadata,bytes:copy,owned:true};for(let at=0;at<copy.length;at+=65536){check(signal);copy.set(new Uint8Array(bytes.buffer,bytes.byteOffset+at,Math.min(65536,copy.length-at)),at);await yieldControl();}bytes=copy;}
+    packet ||= {metadata:captured.metadata,bytes:ownOverviewBytes(bytes),owned:true};
     const background = await backdropBytes(captured.backdrop, maxBytes - bytes.byteLength, { signal, yieldControl });
     check(signal);
-    return { metadata: captured.metadata, bytes, ...background ? { backdropBytes: background } : {}, owned: true };}finally{release();}
+    if(background)packet.backdropBytes=background;published=true;return packet;}finally{if(!published)discardOverviewPacket(packet);release();}
   };
 }
 module.exports = { captureOverviewPage, createOverviewLoader };
