@@ -117,7 +117,7 @@ async function run(){
  results.push({phase,loads:1,mounts:await evaluate('fixtureMounts')});
  phase='camera-page-overview';
  await evaluate(`document.querySelector('[aria-label="Page overview"]').click()`);await until(`!!document.querySelector('.page-overview')&&document.querySelectorAll('.page-overview-preview img').length===2`);
- await evaluate('window.fixtureOverviewCoordinator=fixtureOverview.coordinator;window.fixtureOverviewCamera=fixtureOwners.camera.page.current');
+ await evaluate('window.fixtureOverviewCoordinator=fixtureOverview.coordinator;window.fixtureOverviewCamera=fixtureOwners.camera.page.current;void 0');
  await evaluate(`document.querySelector('.page-overview-page[aria-current="page"]').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',altKey:true,bubbles:true}))`);
  await until('fixtureOwners.camera.models.current[1].page===fixtureOverviewCamera');assert.equal(await evaluate('fixtureOwners.camera.page.current===fixtureOverviewCamera'),true);
  await evaluate(`document.querySelector('.page-overview-page[aria-current="page"]').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',altKey:true,bubbles:true}))`);await until('fixtureOwners.camera.models.current[0].page===fixtureOverviewCamera');
