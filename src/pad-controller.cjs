@@ -1,12 +1,14 @@
 const {findPenDisplay,moveOffDisplay}=require('./pad-display.cjs');
 const FRAME='notemind-pen-display';
 function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocus=()=>{},dark=()=>false,enabled=true,owned=true}){
- let pad=null,ready=false,closed=false,mirrorTimer=null,mirrorGeneration=0,mirrorActive=false,mirrorTick=null,mirrorDue=0,lastMirror=null,idleFrames=0;const handlers=[];
+ let pad=null,ready=false,closed=false,mirrorTimer=null,mirrorGeneration=0,mirrorActive=false,mirrorTick=null,mirrorDue=0,lastMirror=null,idleFrames=0,throttled=null;const handlers=[];
  function physicalDisplay(){return findPenDisplay(screen.getAllDisplays(),screen.getPrimaryDisplay().id);}
  function display(){return enabled&&owned?physicalDisplay():null;}
- function state(){const d=physicalDisplay();return {enabled,owned,available:!!d,bounds:d?{...d.bounds}:null,label:d?.label||null,rotation:d?.rotation||0,open:!!pad&&!pad.isDestroyed()};}
+ function padVisible(){return !closed&&!!display()&&ready&&!!pad&&!pad.isDestroyed()&&pad.isVisible()&&!owner.isMinimized?.()&&owner.isVisible();}
+ function syncThrottling(){if(owner.isDestroyed?.())return;const next=!padVisible(),contents=owner.webContents;if(next===throttled||!contents?.setBackgroundThrottling||contents.isDestroyed?.())return;contents.setBackgroundThrottling(next);throttled=next;}
+ function state(){const d=physicalDisplay();return {enabled,owned,available:!!d,bounds:d?{...d.bounds}:null,label:d?.label||null,rotation:d?.rotation||0,open:padVisible()};}
  function publish(){onChange(state());}
- function stopMirror(){mirrorActive=false;mirrorGeneration++;if(mirrorTimer!==null)clearTimeout(mirrorTimer);mirrorTimer=null;mirrorTick=null;lastMirror=null;idleFrames=0;}
+ function stopMirror(){mirrorActive=false;mirrorGeneration++;if(mirrorTimer!==null)clearTimeout(mirrorTimer);mirrorTimer=null;mirrorTick=null;lastMirror=null;idleFrames=0;syncThrottling();}
  function activity(){idleFrames=0;if(mirrorActive&&mirrorTimer!==null&&mirrorTick&&mirrorDue-Date.now()>100){clearTimeout(mirrorTimer);mirrorDue=Date.now()+100;mirrorTimer=setTimeout(mirrorTick,100);mirrorTimer.unref?.();}}
  function startMirror(){
   if(mirrorActive||!pad?.webContents.capturePage)return;mirrorActive=true;const generation=++mirrorGeneration;
@@ -14,7 +16,7 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
   mirrorTick=tick;
   mirrorTimer=setTimeout(tick,0);mirrorTimer.unref?.();
  }
- function hide(){stopMirror();if(pad&&!pad.isDestroyed()&&pad.isVisible())pad.hide();}
+ function hide(){stopMirror();if(pad&&!pad.isDestroyed()&&pad.isVisible())pad.hide();syncThrottling();}
  function refresh(){
   if(closed)return;const d=display();
   if(!d){hide();publish();return;}
@@ -22,7 +24,7 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
    pad.setBounds(d.bounds);const primary=screen.getPrimaryDisplay();const corrected=moveOffDisplay(owner.getBounds(),d.bounds,primary.workArea);if(corrected)owner.setBounds(corrected);
    if(ready&&!owner.isMinimized?.()&&owner.isVisible()){pad.showInactive();startMirror();}else hide();
   }
-  publish();
+  syncThrottling();publish();
  }
  function decision(details){
   const d=display();if(details.frameName!==FRAME||details.url!=='about:blank'||!d||closed||pad&&!pad.isDestroyed())return {action:'deny'};
@@ -30,8 +32,8 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
  }
  function attach(window){
   if(closed||!display()||pad&&!pad.isDestroyed()){window.close();return false;}
-  pad=window;ready=false;window.setAlwaysOnTop(true,'status');owner.webContents?.setBackgroundThrottling(false);window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',e=>e.preventDefault());
-  window.on('closed',()=>{if(pad===window){stopMirror();owner.webContents?.setBackgroundThrottling(true);pad=null;ready=false;publish();}});window.on('focus',()=>{onFocus();scheduleRefresh()});window.on('blur',scheduleRefresh);publish();return true;
+  pad=window;ready=false;window.setAlwaysOnTop(true,'status');syncThrottling();window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',e=>e.preventDefault());
+  window.on('closed',()=>{if(pad===window){pad=null;ready=false;stopMirror();publish();}});window.on('show',syncThrottling);window.on('hide',()=>{stopMirror();publish();});window.on('focus',()=>{onFocus();scheduleRefresh()});window.on('blur',scheduleRefresh);publish();return true;
  }
  function markReady(){if(!pad||pad.isDestroyed())return;ready=true;refresh();}
  function input(event){
@@ -48,6 +50,6 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
  for(const event of ['focus','blur','minimize','restore','show','hide']){owner.on?.(event,scheduleRefresh);handlers.push(()=>owner.removeListener?.(event,scheduleRefresh));}
  for(const event of ['display-added','display-removed','display-metrics-changed']){screen.on(event,refresh);handlers.push(()=>screen.removeListener(event,refresh));}
  function dispose(){if(closed)return;closed=true;stopMirror();handlers.forEach(fn=>fn());if(pad&&!pad.isDestroyed())pad.close();pad=null;}
- return {state,decision,attach,markReady,setEnabled,setOwned,refresh,input,activity,captureEligible:()=>!!display()&&ready&&!!pad&&!pad.isDestroyed()&&pad.isVisible()&&!owner.isMinimized?.()&&owner.isVisible(),contents:()=>ready&&pad&&!pad.isDestroyed()?pad.webContents:null,dispose};
+ return {state,decision,attach,markReady,setEnabled,setOwned,refresh,input,activity,captureEligible:padVisible,contents:()=>ready&&pad&&!pad.isDestroyed()?pad.webContents:null,dispose};
 }
 module.exports={FRAME,createPadController};

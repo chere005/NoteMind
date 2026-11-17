@@ -18,6 +18,7 @@ const manifest=JSON.parse(fs.readFileSync(path.join(appDir,'package.json'),'utf8
 Object.assign(manifest,{name:'notemind-preview',productName:'NoteMind Preview',main:'preview.cjs'});
 fs.writeFileSync(path.join(appDir,'package.json'),JSON.stringify(manifest,null,2)+'\n');
 fs.writeFileSync(path.join(appDir,'preview.cjs'),`const {app}=require('electron'),fs=require('node:fs'),path=require('node:path');
+process.env.NOTEMIND_PAD_OWNER=path.join(app.getPath('documents'),'NoteMind','Devices','pad-owner.json');
 app.setName('NoteMind Preview');
 const documents=path.join(app.getPath('documents'),'NoteMind Preview'),data=path.join(documents,'App Data');
 fs.mkdirSync(data,{recursive:true});app.setPath('documents',documents);app.setPath('userData',data);

@@ -35,3 +35,18 @@ test('idle mirroring slows down, wakes for input and stops before capturing a hi
  c.activity();await tick(50);c.activity();await tick(50);assert.equal(captures,6,'continuous interaction cannot postpone a scheduled capture');
  h.owner.isVisible=()=>false;await tick(1000);assert.equal(captures,6,'visibility is checked before capture');c.dispose();
 });
+test('background throttling follows the actually visible display and returns on every hiding path',()=>{
+ const h=setup(),c=h.controller,p=h.window(),changes=[];let minimized=false,visible=true;h.owner.webContents={setBackgroundThrottling:value=>changes.push(value)};h.owner.isMinimized=()=>minimized;h.owner.isVisible=()=>visible;
+ c.attach(p);assert.equal(changes.at(-1),true);assert.equal(c.state().open,false);c.markReady();assert.equal(changes.at(-1),false);assert.equal(c.state().open,true);
+ minimized=true;c.refresh();assert.equal(changes.at(-1),true);assert.equal(c.state().open,false);minimized=false;c.refresh();assert.equal(changes.at(-1),false);
+ visible=false;c.refresh();assert.equal(changes.at(-1),true);visible=true;c.refresh();assert.equal(changes.at(-1),false);
+ c.setOwned(false);assert.equal(changes.at(-1),true);c.setOwned(true);assert.equal(changes.at(-1),false);
+ p.hide();p.emit('hide');assert.equal(changes.at(-1),true);c.refresh();assert.equal(changes.at(-1),false);p.close();assert.equal(changes.at(-1),true);c.dispose();
+});
+test('disposing a visible display restores owner background throttling',()=>{
+ const h=setup(),p=h.window(),changes=[];h.owner.webContents={setBackgroundThrottling:value=>changes.push(value)};h.controller.attach(p);h.controller.markReady();assert.equal(changes.at(-1),false);h.controller.dispose();assert.equal(changes.at(-1),true);
+});
+
+test('closing the main window disposes the pad without reading destroyed web contents',()=>{
+ const h=setup(),p=h.window();h.controller.attach(p);h.controller.markReady();h.owner.isDestroyed=()=>true;Object.defineProperty(h.owner,'webContents',{get(){throw Error('Object has been destroyed');}});assert.doesNotThrow(()=>h.controller.dispose());assert.equal(p.destroyed,true);
+});

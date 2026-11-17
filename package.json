@@ -1,6 +1,6 @@
 {
   "name": "notemind",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "private": true,
   "description": "A simple desktop notepad for Markdown and Python.",
   "main": "src/main.cjs",
@@ -22,10 +22,11 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "turndown": "^7.2.4",
-    "turndown-plugin-gfm": "^1.0.2"
+    "turndown-plugin-gfm": "^1.0.2",
+    "utif": "3.1.0"
   },
   "devDependencies": {
-    "electron": "44.4.3",
+    "electron": "44.11.3",
     "esbuild": "^0.28.2",
     "rcedit": "^5.0.2"
   }

@@ -1,0 +1,9 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{buildSync}=require('esbuild'),vm=require('node:vm');
+const built=buildSync({entryPoints:['src/tablet/renderer/drawingSnapshot.ts'],bundle:true,platform:'node',format:'cjs',write:false}),loaded={exports:{}};vm.runInNewContext(built.outputFiles[0].text,{module:loaded,exports:loaded.exports,require});
+const {snapshotDrawing,rasterDrawing}=loaded.exports;
+test('a delayed drawing export keeps its original backdrop, ink, selection, paper and target',async()=>{
+ const stroke={colorHex:'#123456',width:3,points:[{x:.2,y:.3}]},paper={kind:'dots',spacing:'small',colour:'cream'},selection={x:.1,y:.2,width:.4,height:.5},source={name:'A',aspect:2,backdrop:'background-A',strokes:[stroke],paper,target:{tabId:'A',assetName:'A.png'}},snapshot=snapshotDrawing(source,selection);let decode;const calls=[];
+ const ctx={save(){},scale(){},translate(){},restore(){}},canvas={getContext:()=>ctx},pending=rasterDrawing(snapshot,true,{canvas:()=>canvas,paintPaper:(_ctx,p)=>calls.push(['paper',p.colour]),backdropReady:name=>{calls.push(['decode',name]);return new Promise(resolve=>decode=resolve)},paintBackdrop:(_ctx,image)=>calls.push(['background',image]),paintStrokes:(_ctx,strokes)=>calls.push(['ink',strokes[0]]),inkOn:(_p,c)=>c});
+ source.strokes=[];source.aspect=.5;source.backdrop='background-B';source.target.assetName='B.png';paper.colour='dark';selection.width=.9;decode('image-A');await pending;
+ assert.equal(canvas.width,400);assert.equal(canvas.height,250);assert.equal(snapshot.strokes[0],stroke);assert.equal(snapshot.target.assetName,'A.png');assert.equal(snapshot.region.width,.4);assert.deepEqual(calls.map(call=>call[0]),['paper','decode','background','ink']);assert.equal(calls[0][1],'cream');assert.equal(calls[1][1],'background-A');assert.equal(calls[2][1],'image-A');assert.equal(calls[3][1],stroke);
+});

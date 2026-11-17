@@ -8,6 +8,7 @@ import {ShellChrome} from './tablet/renderer/ShellChrome';
 import React, {useEffect, useRef, useState} from 'react';
 
 import graphics from './graphics-pane.js';
+import {snapshotDrawing, rasterDrawing} from './tablet/renderer/drawingSnapshot';
 import {sheetSignature as signatureOf, savedSignature} from './tablet/renderer/sheetSignature';
 import {TabletHeader} from './tablet/renderer/CameraHeader';
 import {PenControl} from './tablet/renderer/PenControl';
@@ -124,14 +125,15 @@ function App(){
 
   return btoa(svg); };
 
- const editableSheet=(full=false)=>{const chosen=page.current,region=full?null:box,result=graphics.crop({name:sheets[active].name,aspect:chosen.aspect,strokes:chosen.strokes,backdrop:chosen.backdrop,paper:paper()},region);if(region&&chosen.backdrop){const w=1000,h=1000/chosen.aspect;result.backdrop='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${region.x*w} ${region.y*h} ${region.width*w} ${region.height*h}"><image href="${chosen.backdrop}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/></svg>`);}return result;};
+ const captureDrawing=(full=false)=>{const chosen=page.current;return snapshotDrawing({name:sheets.find(sheet=>sheet.page===chosen)?.name||'Drawing',aspect:chosen.aspect,strokes:chosen.strokes,backdrop:chosen.backdrop,paper:paper(),target:chosen.target},full?null:box);};
+ const editableSheet=(full=false,snapshot=captureDrawing(full))=>{const region=full?null:snapshot.selection,result=graphics.crop({name:snapshot.name,aspect:snapshot.aspect,strokes:snapshot.strokes,backdrop:snapshot.backdrop,paper:snapshot.paper},region);if(region&&snapshot.backdrop){const w=1000,h=1000/snapshot.aspect;result.backdrop='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${region.x*w} ${region.y*h} ${region.width*w} ${region.height*h}"><image href="${snapshot.backdrop}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet"/></svg>`);}return result;};
  const insert=()=>{const data=drawingSvg();if(data)window.dispatchEvent(new CustomEvent('tablet-insert',{detail:{name:`assets/drawing-${Date.now()}.svg`,data,sheet:editableSheet()}}));};
 
- const selectionRaster=async(withPaper,full=false)=>{const region=(!full&&box)||{x:0,y:0,width:1,height:1}, w=1000, h=1000/page.current.aspect;const c=document.createElement('canvas');c.width=Math.max(1,Math.round(region.width*w));c.height=Math.max(1,Math.round(region.height*h));const ctx=c.getContext('2d');if(withPaper)paintPaper(ctx,paper(),{width:w,height:h},{x:region.x*w,y:region.y*h,width:region.width*w,height:region.height*h},{width:c.width,height:c.height});if(page.current.backdrop){const image=await backdropReady(page.current.backdrop);if(image)paintBackdrop(ctx,image,{width:w,height:h},{x:region.x*w,y:region.y*h,width:region.width*w,height:region.height*h},{width:c.width,height:c.height});}ctx.save();ctx.scale(c.width/(region.width*w),c.height/(region.height*h));ctx.translate(-region.x*w,-region.y*h);paintStrokes(ctx,page.current.strokes,p=>({x:p.x*w,y:p.y*h}),1,undefined,0,withPaper?colour=>inkOn(paper(),colour):undefined);ctx.restore();return c;};
+ const selectionRaster=(withPaper,full=false,snapshot=captureDrawing(full))=>rasterDrawing(snapshot,withPaper,{canvas:()=>document.createElement('canvas'),paintPaper,paintBackdrop,paintStrokes,inkOn,backdropReady});
 
- const insertPicture=async(full=false)=>{const c=await selectionRaster(true,full);window.dispatchEvent(new CustomEvent('tablet-insert',{detail:{name:`assets/sheet-${Date.now()}.png`,data:c.toDataURL('image/png').split(',')[1],sheet:editableSheet(full)}}));};
+ const insertPicture=async(full=false)=>{const snapshot=captureDrawing(full),insertion=window.NoteMindNotes?.captureInsertion();const c=await selectionRaster(true,full,snapshot);window.dispatchEvent(new CustomEvent('tablet-insert',{detail:{name:`assets/sheet-${Date.now()}.png`,data:c.toDataURL('image/png').split(',')[1],sheet:editableSheet(full,snapshot),insertion}}));};
 
- const readText=async(full=false)=>{if(reading)return;setReading(true);try{const c=await selectionRaster(true,full);window.dispatchEvent(new CustomEvent('notemind-read-image',{detail:{data:c.toDataURL('image/png').split(',')[1]}}));}catch(e){setSaveError(e.message)}finally{setReading(false)}};
+ const readText=async(full=false)=>{if(reading)return;const snapshot=captureDrawing(full),insertion=window.NoteMindNotes?.captureInsertion();setReading(true);try{const c=await selectionRaster(true,full,snapshot);window.dispatchEvent(new CustomEvent('notemind-read-image',{detail:{data:c.toDataURL('image/png').split(',')[1],insertion}}));}catch(e){setSaveError(e.message)}finally{setReading(false)}};
  const copyDrawing=async()=>{try{const data=(await selectionRaster(false)).toDataURL('image/png').split(',')[1];await window.notemind.copyPng(data);}catch(e){alert('Could not copy image: '+(e.message||e));}};
 
 
@@ -149,7 +151,7 @@ function App(){
 
  const openPicture=async()=>{const image=await window.notemind.image();if(!image)return;const ext=image.name.split('.').pop().toLowerCase(),mime=({svg:'image/svg+xml',jpg:'image/jpeg',jpeg:'image/jpeg'})[ext]||'image/'+ext;window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url:'data:'+mime+';base64,'+image.data}}));};
 
- const saveOriginal=async()=>{const c=await selectionRaster(true,true);window.dispatchEvent(new CustomEvent('tablet-replace',{detail:{target:page.current.target,name:'assets/edited-'+Date.now()+'.png',data:c.toDataURL('image/png').split(',')[1],sheet:editableSheet(true)}}));};
+ const saveOriginal=async()=>{const chosen=page.current,binding=chosen.target,originalName=binding?.assetName,snapshot=captureDrawing(true);const c=await selectionRaster(true,true,snapshot);if(!snapshot.target)return;if(chosen.target!==binding||binding?.assetName!==originalName)throw Error('The original drawing changed while this update was preparing. Try Update again.');const accepted=window.dispatchEvent(new CustomEvent('tablet-replace',{cancelable:true,detail:{target:snapshot.target,name:'assets/edited-'+Date.now()+'.png',data:c.toDataURL('image/png').split(',')[1],sheet:editableSheet(true,snapshot)}}));if(accepted&&chosen.target===binding&&binding.assetName===originalName)chosen.target=snapshot.target;};
 
  useEffect(()=>{const hear=e=>{const id=e.detail;if(id.startsWith('pen:'))runPenAction(id.slice(4));if(id==='source:tablet'||id==='source:camera'){setDocumentId(null);setSource(id.slice(7));if(document.getElementById('pane').hidden)document.getElementById('paneToggle').click();}if(id==='inputOff'){setDocumentId(null);setSource('off');}if(id.startsWith('cameraAspect:'))window.dispatchEvent(new CustomEvent('notemind-input',{detail:{aspect:id.slice(13)}}));if(id==='cameraRefresh')window.dispatchEvent(new CustomEvent('notemind-input',{detail:{refresh:true}}));if(id==='penSettings')setPenSheet(true);if(id==='exportDrawing'){const data=drawingSvg();if(data)window.notemind.exportImage(data,'svg');}};window.addEventListener('notemind-command',hear);return()=>window.removeEventListener('notemind-command',hear);},[source,active,box,revision]);
 

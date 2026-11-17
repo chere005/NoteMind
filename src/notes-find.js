@@ -14,8 +14,11 @@
  // The [start,end) spans of the query in `text`, honouring match case and whole word.
  function scan(text){
   const found=[],query=input.value;if(!query)return found;
-  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase();let from=0,at;
-  while((at=hay.indexOf(needle,from))>=0){const end=at+needle.length;if(!options.wholeWord||(!(at>0&&word.test(text[at-1]))&&!(end<text.length&&word.test(text[end]))))found.push([at,end]);from=end;}
+  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase(),starts=[],ends=[];let offset=0;
+  if(!options.matchCase)for(const character of text){const length=character.toLocaleLowerCase().length;for(let i=0;i<length;i++){starts.push(offset);ends.push(offset+character.length);}offset+=character.length;}
+  let from=0,at;while((at=hay.indexOf(needle,from))>=0){const stop=at+needle.length,start=options.matchCase?at:starts[at],end=options.matchCase?stop:ends[stop-1];let before=start-1;if(before>0&&/[\uDC00-\uDFFF]/.test(text[before]))before--;const left=start>0?text.slice(before,start):'',right=end<text.length?String.fromCodePoint(text.codePointAt(end)):'';
+   if((!options.wholeWord||(!word.test(left)&&!word.test(right)))&&!(found.at(-1)?.[0]===start&&found.at(-1)?.[1]===end))found.push([start,end]);from=stop;}
+
   return found;
  }
  const clearHighlights=()=>{CSS.highlights?.delete('note-find');CSS.highlights?.delete('note-current');};

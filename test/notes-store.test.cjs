@@ -36,6 +36,32 @@ test('an interrupted empty library lock does not delay recovery',async()=>{
  try{const lock=path.join(root,'.lock');await fs.writeFile(lock,'');const old=new Date(Date.now()-2000);await fs.utimes(lock,old,old);await store.draft({text:'Recovered promptly',assets:{}});assert.equal((await store.list()).length,1);await assert.rejects(()=>fs.access(lock),{code:'ENOENT'});}
  finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('overlapping recovery writes retain the newest complete draft across store instances',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-draft-order-')),olderStore=new NotesStore(root),newerStore=new NotesStore(root);let release,reached;
+ const gate=new Promise(resolve=>release=resolve),paused=new Promise(resolve=>reached=resolve);t.after(async()=>{release();await fs.rm(root,{recursive:true,force:true});});
+ const original=await olderStore.draft({id:'same-note',text:'Initial',assets:{},dirty:true}),rename=fs.rename;let newerReached=false;
+ t.mock.method(fs,'rename',async(from,to)=>{if(to===path.join(olderStore.recoveryRoot,'same-note.wm')){const doc=format.decode(await fs.readFile(from));if(doc.text==='Older snapshot'){reached();await gate;}if(doc.text==='Newest edits')newerReached=true;}return rename(from,to);});
+ const older=olderStore.draft({...original,text:'Older snapshot',dirty:false});await paused;
+ const newer=newerStore.draft({...original,text:'Newest edits',dirty:true});await new Promise(resolve=>setTimeout(resolve,30));assert.equal(newerReached,false,'the first transaction owns its recovery files until both writes finish');release();await Promise.all([older,newer]);
+ assert.equal((await olderStore.record(original.id)).text,'Newest edits');const recovered=await olderStore.loadDraft(original.id);assert.equal(recovered.text,'Newest edits');assert.equal(recovered.dirty,true);
+});
+test('restoring a saved dirty Notepad elsewhere retargets its recovery state and retains current edits',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-restore-dirty-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const store=new NotesStore(path.join(root,'library')),old=path.join(root,'Old.nm'),target=path.join(root,'Restored.nm'),saved={id:'saved-note',path:old,text:'On disk',assets:{}};
+ const bytes=format.encode(saved),revision=require('../src/notes-store.cjs').digest(bytes);await fs.writeFile(old,bytes);await store.draft({...saved,text:'Latest unsaved edits',dirty:true,revision});const item=await store.captureDeleted(old);await fs.unlink(old);await store.finishDeleted(item);await store.restoreDeleted(item.id,target);
+ const recovered=await store.loadDraft(saved.id),state=JSON.parse(await fs.readFile(path.join(store.recoveryRoot,saved.id+'.json'),'utf8'));assert.equal(recovered.path,target);assert.equal(state.path,target);assert.equal(recovered.text,'Latest unsaved edits');assert.equal(recovered.dirty,true);assert.equal(recovered.revision,require('../src/notes-store.cjs').digest(await fs.readFile(target)));assert.equal(format.decode(await fs.readFile(target)).text,'On disk');
+});
+test('library path changes remain authoritative over old recovery states from another workspace',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-draft-path-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const store=new NotesStore(path.join(root,'library')),old=path.join(root,'Old.nm'),target=path.join(root,'Moved.nm');const doc=await store.draft({path:old,text:'Recovered edits',assets:{},dirty:true});await store.rename(old,target);
+ const recovered=await store.loadDraft(doc.id);assert.equal(recovered.path,target);assert.equal(recovered.text,'Recovered edits');
+});
+test('fresh document metadata replaces cached metadata while explicit patches retain priority',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-meta-reload-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const store=new NotesStore(root),file=path.join(root,'note.nm');const old=await store.register({path:file,text:'First',assets:{},meta:{tags:['old'],pinned:true}});
+ const fresh=await store.register({...old,text:'External change',meta:{tags:['new'],pinned:false}});assert.deepEqual(fresh.meta.tags,['new']);assert.equal(fresh.meta.pinned,false);
+ const plain=await store.register({path:file,text:'Plain text source',assets:{}});assert.deepEqual(plain.meta.tags,['new']);const patched=await store.register({...fresh,meta:{tags:['incoming']}},{meta:{tags:['explicit']}});assert.deepEqual(patched.meta.tags,['explicit']);
+});
+test('distinct case-sensitive paths keep distinct Notepad identities',{skip:process.platform==='win32'},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-case-paths-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const store=new NotesStore(path.join(root,'library')),upper=await store.register({path:path.join(root,'A.nm'),text:'Upper',assets:{}}),lower=await store.register({path:path.join(root,'a.nm'),text:'Lower',assets:{}});assert.notEqual(upper.id,lower.id);assert.equal((await store.list()).length,2);
+});
 test('writing and attachment markup round trips without editor decoration',()=>{
  const text='# Heading\n\n- [ ] Open\n- [x] Done\n    - Nested\n\n==Marked==\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n[Report](assets/report.pdf)\n\n[Linked note](notemind:abc)',assets={'assets/report.pdf':Buffer.from('PDF').toString('base64')},meta={attachments:{'assets/report.pdf':{title:'Report',pages:3}}};const html=render.render(text,assets,meta);assert.match(html,/type="checkbox"/);assert.match(html,/<mark>Marked<\/mark>/);assert.match(html,/data-attachment/);const back=render.toMarkdown(html.replace('Heading','Heading<button data-editor-control="fold">▾</button>'));assert.match(back,/-\s+\[ \]\s+Open/);assert.match(back,/-\s+\[x\]\s+Done/);assert.match(back,/==Marked==/);assert.match(back,/\[Report\]\(assets\/report.pdf\)/);assert.ok(!back.includes('▾'));assert.match(back,/notemind:abc/);const decoded=format.decode(format.encode({text,assets,meta}));assert.equal(decoded.meta.attachments['assets/report.pdf'].pages,3);
 });

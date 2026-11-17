@@ -6,10 +6,10 @@
  const say=message=>{$('status').textContent=message;};
  // An HTML-only clipboard (no plain text beside it) becomes Markdown; pictures, scripts and styles are left out.
  function markdownFromHtml(html){const parsed=new DOMParser().parseFromString(html,'text/html');parsed.querySelectorAll('script,style,img,iframe,object,link,meta').forEach(n=>n.remove());return NoteMindDocument.toMarkdown(parsed.body.innerHTML).trim();}
- async function insertImages(files){
+ async function insertImages(files,target=window.NoteMindNotes.captureInsertion()){
   for(const file of files){
    const stem=(file.name||'pasted-image').replace(/\.[^.]+$/,'').replace(/[^a-zA-Z0-9._-]/g,'-')||'pasted-image';
-   if(!insertAsset('assets/'+Date.now()+'-'+(serial++)+'-'+stem+'.'+types[file.type],await readBase64(file)))return;
+   if(!window.NoteMindNotes.insertAssetFor(target,'assets/'+Date.now()+'-'+(serial++)+'-'+stem+'.'+types[file.type],await readBase64(file)))return;
   }
  }
  const insertHtml=html=>{const markdown=markdownFromHtml(html);if(markdown)window.NoteMindWriting.insertMarkdown(markdown);return !!markdown;};

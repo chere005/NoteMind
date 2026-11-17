@@ -1,5 +1,5 @@
 (() => {
- const fence=/^\s*(```|~~~)/,heading=/^(#{1,6})\s/;
+ const heading=/^(#{1,6})\s/;
  // A section is a heading with everything under it, up to the next heading of the same or a higher level.
  // `levels[i]` is the heading level of block i (0 for anything else); the result says which blocks move and where to.
  function plan(levels,caret,direction){
@@ -12,14 +12,14 @@
   return {start,end,target:next};
  }
  const reorder=(list,{start,end,target})=>{const moved=list.splice(start,end-start);list.splice(target>start?target-(end-start):target,0,...moved);return start<target?target-(end-start):target;};
- function sourceLevels(lines){let inside=false;return lines.map(line=>{if(fence.test(line)){inside=!inside;return 0;}const match=!inside&&line.match(heading);return match?match[1].length:0;});}
+ function reorderSource(lines,{start,end,target}){const split=list=>{let at=list.length;while(at&&!list[at-1].trim())at--;return [list.slice(0,at),list.slice(at)];};if(target>start){const [own,between]=split(lines.slice(start,end)),[other,tail]=split(lines.slice(end,target));lines.splice(start,target-start,...other,...between,...own,...tail);return start+other.length+between.length;}const [other,between]=split(lines.slice(target,start)),[own,tail]=split(lines.slice(start,end));lines.splice(target,end-target,...own,...between,...other,...tail);return target;}
+ function sourceLevels(lines){const protectedLines=window.NoteMindWriting.fenceState(lines).protectedLines;return lines.map((line,i)=>{const match=!protectedLines[i]&&line.match(heading);return match?match[1].length:0;});}
  function moveSection(direction){
   if(!visual){
-   const lines=source.value.split('\n'),caretLine=source.value.slice(0,source.selectionStart).split('\n').length-1,tidy=lines[lines.length-1]!=='';
-   // Every section ends with a blank line while it moves, so the last one is not glued to the next.
-   if(tidy)lines.push('');
+   const lines=source.value.split('\n'),caretLine=source.value.slice(0,source.selectionStart).split('\n').length-1,trailing=source.value.endsWith('\n');
+   if(trailing)lines.pop();
    const move=plan(sourceLevels(lines),caretLine,direction);
-   if(!move)return;const at=reorder(lines,move);if(tidy)lines.pop();source.value=lines.join('\n');
+   if(!move)return;const at=reorderSource(lines,move);source.value=lines.join('\n')+(trailing?'\n':'');
    const offset=lines.slice(0,at).reduce((n,line)=>n+line.length+1,0);source.setSelectionRange(offset,offset);markDirty();return;
   }
   const blocks=[...rich.children],selection=getSelection();let node=selection.anchorNode;while(node&&node.parentElement!==rich)node=node.parentElement;
@@ -44,13 +44,13 @@
  source.addEventListener('keydown',e=>{
   if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||source.selectionStart!==source.selectionEnd)return;
   const at=source.selectionStart,from=source.value.lastIndexOf('\n',at-1)+1,line=source.value.slice(from,at);
-  if(e.key==='Enter'&&!e.shiftKey){const quote=line.match(/^(\s*>+ ?)(.*)$/);if(!quote)return;e.preventDefault();if(!quote[2].trim())source.setRangeText('',from,at,'end');else source.setRangeText('\n'+quote[1],at,at,'end');markDirty();}
+  if(e.key==='Enter'&&!e.shiftKey&&!window.NoteMindWriting.insideFence(source.value,at)){const quote=line.match(/^(\s*>+ ?)(.*)$/);if(!quote)return;e.preventDefault();if(!quote[2].trim())source.setRangeText('',from,at,'end');else source.setRangeText('\n'+quote[1],at,at,'end');markDirty();}
   if(e.key==='Backspace'&&/^ +$/.test(line)){e.preventDefault();const remove=((line.length-1)%4)+1;source.setRangeText('',at-remove,at,'end');markDirty();}
  });
 
  // Code blocks close what they open: ( [ { " ' ` — typing the closer steps over it and Backspace takes both.
  const pairs={'(':')','[':']','{':'}','"':'"',"'":"'",'`':'`'},closers=new Set(Object.values(pairs));
- const insideSourceFence=at=>source.value.slice(0,at).split('\n').reduce((open,line)=>fence.test(line)?!open:open,false);
+ const insideSourceFence=at=>window.NoteMindWriting.insideFence(source.value,at);
  source.addEventListener('keydown',e=>{
   if(e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;
   const start=source.selectionStart,end=source.selectionEnd;if(!insideSourceFence(start))return;

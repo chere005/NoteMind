@@ -62,9 +62,9 @@ function ask(away: Worker, pixels: ArrayBuffer, width: number, height: number, o
 }
 
 
-export async function cleanCanvas(canvas: HTMLCanvasElement, options: CleanOptions = {}): Promise<boolean> {
+export async function cleanCanvas(canvas: HTMLCanvasElement, options: CleanOptions = {}, current: () => boolean = () => true): Promise<boolean> {
   const { width, height } = canvas
-  if (width < 1 || height < 1) return false
+  if (width < 1 || height < 1 || !current()) return false
   try {
     const context = canvas.getContext("2d")
     if (!context) return false
@@ -73,15 +73,16 @@ export async function cleanCanvas(canvas: HTMLCanvasElement, options: CleanOptio
     if (away) {
       // (The bytes are handed over, not copied: `image` is of no use after this.)
       const answer = await ask(away, image.data.buffer as ArrayBuffer, width, height, options)
+      if (!current() || canvas.width !== width || canvas.height !== height) return false
       if (answer && "pixels" in answer) {
         paperStats.worker += 1
         if (answer.cleaned) context.putImageData(new ImageData(new Uint8ClampedArray(answer.pixels), width, height), 0, 0)
         return answer.cleaned
       }
       // The worker failed: the pixels it was given are gone, so they are read again and done here.
-      return await cleanHere(context, context.getImageData(0, 0, width, height), options)
+      return await cleanHere(context, context.getImageData(0, 0, width, height), options, current)
     }
-    return await cleanHere(context, image, options)
+    return await cleanHere(context, image, options, current)
   } catch (error) {
     console.warn("NoteMind: the page's background could not be removed:", error)
     return false
@@ -97,10 +98,11 @@ export function paperPageOfCanvas(canvas: HTMLCanvasElement): { level: number; d
 }
 
 
-async function cleanHere(context: CanvasRenderingContext2D, image: ImageData, options: CleanOptions): Promise<boolean> {
+async function cleanHere(context: CanvasRenderingContext2D, image: ImageData, options: CleanOptions, current: () => boolean): Promise<boolean> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  if (!current()) return false
   paperStats.here += 1
   const cleaned = cleanPaper(image.data, image.width, image.height, options)
-  if (cleaned) context.putImageData(image, 0, 0)
+  if (cleaned && current()) context.putImageData(image, 0, 0)
   return cleaned
 }

@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, screen, powerMonitor, session, shel
 const fs = require('node:fs/promises');
 
 const path = require('node:path');
+const {keyPath,physicalPath}=require('./path-key.cjs');
 
 const { runPython, stopPython } = require('./python.cjs');
 
@@ -64,7 +65,8 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
   const external=url=>{try{if(['https:','http:','mailto:'].includes(new URL(url).protocol))void shell.openExternal(url);}catch{}};
   win.webContents.on('will-navigate',(event,url)=>{event.preventDefault();external(url);});
   let claimingPad=false;
-  const padOwnership=require('./pad-ownership.cjs').createPadOwnership({file:path.join(projectHome,'pad-owner.json'),onChange:owned=>padController?.setOwned(owned)});
+  const padOwnerFile=process.env.NOTEMIND_PAD_OWNER||(process.env.NOTEMIND_DATA?path.join(projectHome,'pad-owner.json'):path.join(app.getPath('documents'),'NoteMind','Devices','pad-owner.json'));
+  const padOwnership=require('./pad-ownership.cjs').createPadOwnership({file:padOwnerFile,onChange:owned=>padController?.setOwned(owned)});
   const claimPad=()=>{if(claimingPad||!padController?.state().available||!padController.state().enabled)return;claimingPad=true;padOwnership.claim().catch(error=>console.error('Pen display ownership:',error)).finally(()=>{claimingPad=false;});};
   padController=require('./pad-controller.cjs').createPadController({screen,owner:win,enabled:padEnabled,owned:false,onFocus:claimPad,dark:()=>nativeTheme.shouldUseDarkColors,onFrame:data=>{if(win&&!win.isDestroyed()&&!win.webContents.isDestroyed())win.webContents.send('pad:frame',data);},onChange:state=>{if(win&&!win.isDestroyed()&&!win.webContents.isDestroyed()){win.webContents.send('pad:state',state);if(state.available&&state.enabled&&!state.owned&&win.isFocused())claimPad();}}});
   padOwnership.start();win.on('focus',claimPad);win.once('closed',()=>padOwnership.stop());if(win.isFocused())claimPad();
@@ -161,9 +163,9 @@ app.on('window-all-closed', () => { globalShortcut.unregisterAll();pen?.dispose(
 ipcMain.handle('dirty', (event,value,canDelete) => {const window=BrowserWindow.fromWebContents(event.sender);if(!window)return;window.isDirty=value;if(typeof canDelete==='boolean'){window.canDelete=canDelete;if(window===win){const item=Menu.getApplicationMenu()?.getMenuItemById('delete-note');if(item)item.enabled=canDelete;}}});
 
 async function openPath(file, recover = true) {
-
+  try{file=await fs.realpath(file);}catch(error){if(error.code!=='ENOENT')throw error;file=path.resolve(file);}
   const ext = path.extname(file).toLowerCase();
-  if(recover&&['.nm','.wm','.md','.txt','.py'].includes(ext)){const known=(await notesStore.list({paths:[file]})).find(r=>r.path&&path.resolve(r.path).toLowerCase()===path.resolve(file).toLowerCase());if(known)try{const kept=await notesStore.loadDraft(known.id);if(kept.dirty&&kept.path&&path.resolve(kept.path).toLowerCase()===path.resolve(file).toLowerCase())return kept;}catch{}}
+  if(recover&&['.nm','.wm','.md','.txt','.py'].includes(ext)){const known=(await notesStore.list({paths:[file]})).find(r=>r.path&&keyPath(r.path)===keyPath(file));if(known)try{const kept=await notesStore.loadDraft(known.id);if(kept.dirty&&kept.path&&keyPath(kept.path)===keyPath(file))return kept;}catch{}}
 
 
   if(ext==='.wmpr')return {workspace:await projectService.open(file)};
@@ -338,24 +340,25 @@ ipcMain.handle('copy-table', (_, data) => { if(typeof data?.text!=='string'||typ
 ipcMain.handle('copy-png', (_, base64) => { const image = nativeImage.createFromBuffer(Buffer.from(base64, 'base64')); if (image.isEmpty()) throw Error('Could not copy image.'); return ClipboardItem ? clipboard.write([new ClipboardItem({'image/png':new Blob([image.toPNG()],{type:'image/png'})})]) : clipboard.writeImage(image); });
 
 const documentWrites=new Map();
-async function settleDocumentWrites(source){const key=path.resolve(source).toLowerCase();await Promise.allSettled([...documentWrites.entries()].filter(([file])=>file===key||file.startsWith(key+path.sep)).map(([,pending])=>pending));}
+async function settleDocumentWrites(source){const key=keyPath(source);await Promise.allSettled([...documentWrites.entries()].filter(([file])=>file===key||file.startsWith(key+path.sep)).map(([,pending])=>pending));}
 async function saveDocument(doc,saveAs=false,automatic=false){
  let file=saveAs?null:doc.path;
  if(automatic&&!file)throw Error('Choose a file before saving.');
  if(!file){const suggested=(doc.title||titleOf(doc.text)).replace(/[\\/:*?"<>|]/g,'-')+'.nm';const result=await dialog.showSaveDialog(win,{defaultPath:doc.path||(doc.initialFolder?path.join(doc.initialFolder,suggested):suggested),filters:[{name:'Notepad',extensions:['nm','wm']},{name:'Markdown',extensions:['md']},{name:'Python',extensions:['py']},{name:'Text',extensions:['txt']}]});if(result.canceled)return null;file=result.filePath;}
- const key=path.resolve(file).toLowerCase();
+ file=physicalPath(file);
+ const key=keyPath(file);
  const write=async()=>{
   const ext=path.extname(file).toLowerCase();if(!['.nm','.wm','.md','.txt','.py'].includes(ext))throw Error('Choose a .nm, .md, .txt, or .py file.');
-  if((doc.otherOpenPaths||[]).some(other=>path.resolve(other).toLowerCase()===key))throw Error('That file is already open in another tab.');
+  if((doc.otherOpenPaths||[]).some(other=>keyPath(other)===key))throw Error('That file is already open in another tab.');
   if(!['.nm','.wm','.md'].includes(ext)&&Object.keys(doc.assets||{}).length)throw Error('Save as .nm to keep attachments.');
   let previous;try{previous=await fs.readFile(file);}catch(e){if(e.code!=='ENOENT')throw e;}
   if(!saveAs&&doc.revision&&(!previous||digest(previous)!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
   doc=await notesStore.register({...doc,path:file},{meta:doc.meta});
   if(previous){try{const old=['.nm','.wm'].includes(ext)?notepadFormat.decode(previous):ext==='.md'?await require('./markdown-files.cjs').read(file,previous.toString('utf8')):{text:previous.toString('utf8'),assets:{}};await notesStore.version({...old,id:doc.id,title:doc.title},'Before save');}catch(error){if(['.nm','.wm'].includes(ext))throw error;}}
-  if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file);
+  if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=require('./markdown-files.cjs').canonical(doc);
   const bytes=['.nm','.wm'].includes(ext)?notepadFormat.encode(doc):Buffer.from(doc.text);
-  await require('./notes-store.cjs').atomic(file,bytes);
+  await require('./guarded-write.cjs').replaceIfUnchanged(file,bytes,previous??null,{afterCommit:ext==='.md'?()=>require('./markdown-files.cjs').writeMetadata(doc,file):undefined});
   doc={...doc,path:file,revision:digest(bytes)};delete doc.otherOpenPaths;
   await notesStore.version(doc,automatic?'Autosaved':'Saved');await notesStore.draft({...doc,dirty:false});notesIPC.send();return doc;
  };

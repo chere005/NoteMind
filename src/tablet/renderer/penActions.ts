@@ -138,12 +138,29 @@ function step(phase: Phase, event: PressLike): void {
 }
 
 let following = false
+type ActionPadState = {enabled:boolean;available:boolean;owned:boolean;open:boolean}
+let actionPad:ActionPadState|null=null,padPending=false
+function nativeActionsEligible():boolean {
+  if(!actionWindows.size)return false
+  if(padPending)return false
+  if(actionPad?.enabled&&actionPad.available)return actionPad.owned&&actionPad.open
+  return [...actionWindows].some(view=>!view.closed&&view.document.hasFocus())
+}
 function followNative(): void {
   if (following) return
   following = true
+  const api=(window as any).notemind?.pad
+  if(api?.state&&api?.onState){
+    padPending=true;let revision=0
+    const receive=(state:ActionPadState|null):void=>{actionPad=state;padPending=false;if(!nativeActionsEligible()){tap=noTap;echoBits=0}}
+    api.onState((state:ActionPadState)=>{revision++;receive(state)})
+    const before=revision
+    void api.state().then((state:ActionPadState)=>{if(revision===before)receive(state)},()=>{if(revision===before)receive(null)})
+  }
   onNativeButtons((now, was) => {
     const side = nativeSideMask(now)
     if (side !== 0 || nativeSideMask(was) !== 0) sideAt = performance.now()
+    if(!nativeActionsEligible()){tap=noTap;return}
     if (!now.present || !now.range) { if (was.present) tap = noTap; return }
     step("move", { pointerType: "pen", button: -1, buttons: side | (now.tip ? 1 : 0), pressure: now.tip ? 0.5 : 0 })
   })
@@ -248,6 +265,8 @@ export function installPenActions(win: Window = window): () => void {
   const existing = installed.get(win); if (existing) return existing
   followNative()
   actionWindows.add(win)
+  const resetIfInactive=():void=>{if(!nativeActionsEligible()){tap=noTap;echoBits=0}}
+  win.addEventListener('blur',resetIfInactive)
   const unguard = installNativeGuard(win)
   const hear = (phase: Phase) => (event: PointerEvent) => {
     if (event.pointerType === "mouse") { echo(phase, event); return }
@@ -288,6 +307,8 @@ export function installPenActions(win: Window = window): () => void {
     const bit = event.button === 2 ? 2 : event.button === 1 ? 4 : 0
     // While the native feed owns the pen (the sheet), its samples carry the buttons themselves: an echo would count twice.
     if (bit === 0 || nativeLive() || airSeen[bit] || !penNear(1000) || penGate().captureOn()) return
+    // A real mouse can select elsewhere while the pen is nearby. Driver echoes begin at this window's pen point.
+    if (phase === "down" && (lastView !== win || Math.hypot(event.clientX-lastPoint.x,event.clientY-lastPoint.y)>24)) return
     const now = performance.now()
     // The pen reported this press itself (not an echo), or a release whose press was not taken as one.
     if ((phase === "down" && now - penSideAt[bit] < 300) || (phase === "up" && (echoBits & bit) === 0)) return
@@ -300,7 +321,7 @@ export function installPenActions(win: Window = window): () => void {
   }
   const listeners: [string, (event: PointerEvent) => void][] = [["pointerdown",hear("down")],["pointermove",hear("move")],["pointerup",hear("up")],["pointercancel",hear("cancel")]]
   for (const [type, listener] of listeners) win.addEventListener(type, listener as EventListener, true)
-  const stop=(): void => {for(const [type,listener] of listeners)win.removeEventListener(type,listener as EventListener,true);unguard();installed.delete(win);actionWindows.delete(win);if(lastView===win)lastView=null}
+  const stop=(): void => {for(const [type,listener] of listeners)win.removeEventListener(type,listener as EventListener,true);win.removeEventListener('blur',resetIfInactive);unguard();installed.delete(win);actionWindows.delete(win);if(lastView===win)lastView=null;resetIfInactive()}
   installed.set(win,stop);return stop
 }
 
