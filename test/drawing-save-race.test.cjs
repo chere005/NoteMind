@@ -13,7 +13,7 @@ const sheet = name => ({ name, page: { aspect: 2, strokes: [stroke(.2)], backdro
 function pendingSave(sheets) {
   let complete;
   const context = {
-    sheets, active: 0, currentSheets: sheets, surface:{current:null},sheetsSnapshot:()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper})),sheetSignature, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
+    sheets, active: 0, currentSheets: sheets,projectInkSnapshot:(_page,strokes)=>strokes,flushInkMutations:()=>null,includeInk:(_extent,strokes)=>({x:0,y:0,width:1,height:1}), surface:{current:null},sheetsSnapshot:()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper})),sheetSignature, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
     latestSheets: { current: sheets.map(s => ({ name: s.name, aspect: s.page.aspect, strokes: s.page.strokes, paper: s.paper })) },
     drawingSvg: () => 'preview',drawingPreview: () => 'preview', refresh() {}, setSaveError(message) { throw Error(message); },
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
@@ -86,4 +86,8 @@ test('close drawing keeps ink added during its pending save open and preserves a
  context.liveSheets={current:[first,second]};context.page={current:second.page};context.sheetsSnapshot=()=>context.liveSheets.current.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.window.notemind.closeSheetChoice=async()=> 'save';context.setSaveError=message=>{context.error=message};context.setActive=value=>{context.active=value};context.setBox=()=>{};
  const closing=context.closeDrawing(first.page);await new Promise(setImmediate);first.page.strokes=[...first.page.strokes,stroke(.9)];context.currentSheets=[second,first];context.liveSheets.current=context.currentSheets;complete('/tmp/first.nm');await closing;
  assert.equal(context.currentSheets.length,2);assert.equal(context.currentSheets[1].page.strokes.length,2);assert.match(context.error,/changed while saving/);assert.equal(context.page.current,second.page);
+});
+
+test('save projects only its captured pending transform and retains initial metadata, viewport and file revision',async()=>{
+ const first=sheet('First');first.page.viewport={x:0,y:0,width:1,height:1};first.file='/tmp/first.nm';first.fileRevision={sha256:'a'.repeat(64),bytes:11};const {context,complete}=pendingSave([first]);let project;context.projectInkSnapshot=(_page,strokes)=>new Promise(resolve=>project=()=>resolve(strokes.map(stroke=>({...stroke,points:stroke.points.map(point=>({...point,x:point.x+.2}))}))));const saving=context.save();assert.equal(context.savedData,undefined);first.name='Later';first.page.viewport={x:-1,y:-1,width:3,height:3};first.page.strokes=[...first.page.strokes,stroke(.9)];project();await new Promise(setImmediate);assert.equal(context.savedData.name,'First');assert.equal(context.savedData.strokes.length,1);assert.equal(context.savedData.strokes[0].points[0].x,.4);assert.equal(context.savedData.viewport.width,1);assert.equal(context.saveTarget.options.expected.bytes,11);complete('/tmp/first.nm');await saving;assert.notEqual(context.currentSheets[0].saved,sheetSignature(context.currentSheets[0]));
 });

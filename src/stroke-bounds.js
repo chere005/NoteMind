@@ -1,7 +1,12 @@
 // Immutable committed stroke objects share bounds across hit tests, viewport and tile work.
-const shared=globalThis.NoteMindStrokeBounds||(()=>{const boxes=new WeakMap();
+const shared=globalThis.NoteMindStrokeBounds||(()=>{const boxes=new WeakMap(),inkBoxes=new WeakMap();
  function primeStrokeBox(stroke,box){boxes.set(stroke,{count:stroke.points.length,...box});}
  function strokeBox(stroke){let box=boxes.get(stroke);if(!box||box.count!==stroke.points.length){box={count:stroke.points.length,x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};for(const point of stroke.points){box.x=Math.min(box.x,point.x);box.y=Math.min(box.y,point.y);box.right=Math.max(box.right,point.x);box.bottom=Math.max(box.bottom,point.y);}boxes.set(stroke,box);}return box;}
- return {strokeBox,primeStrokeBox};})();
+ function emptyInkBox(){return {count:0,x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};}
+ function extendInkBox(target,box){if(box.count){target.count+=box.count;target.x=Math.min(target.x,box.x);target.y=Math.min(target.y,box.y);target.right=Math.max(target.right,box.right);target.bottom=Math.max(target.bottom,box.bottom);}return target;}
+ function primeInkBox(strokes,box){inkBoxes.set(strokes,{...box});}
+ function inkBox(strokes){let box=inkBoxes.get(strokes);if(!box){box=emptyInkBox();for(const stroke of strokes)extendInkBox(box,strokeBox(stroke));primeInkBox(strokes,box);box=inkBoxes.get(strokes);}return box;}
+ function appendInkBox(previous,next,stroke){const box=inkBoxes.get(previous);if(box)primeInkBox(next,extendInkBox({...box},strokeBox(stroke)));}
+ return {strokeBox,primeStrokeBox,emptyInkBox,extendInkBox,primeInkBox,inkBox,appendInkBox};})();
 globalThis.NoteMindStrokeBounds=shared;
 module.exports=shared;

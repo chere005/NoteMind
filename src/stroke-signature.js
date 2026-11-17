@@ -8,6 +8,7 @@ function hashText(text, hash) {
  for (let i = 0; i < text.length; i++) { const code = text.charCodeAt(i);a = Math.imul(a ^ code, PRIME_A);b = Math.imul(b ^ code, PRIME_B); }
  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
 }
+function hashWriter(initial){let a=initial?parseInt(initial.slice(0,8),16):2166136261,b=initial?parseInt(initial.slice(8),16):3335557771;return {write(text){for(let i=0;i<text.length;i++){const code=text.charCodeAt(i);a=Math.imul(a^code,PRIME_A);b=Math.imul(b^code,PRIME_B);}return this;},digest(){return(a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0');}};}
 function removeSuffix(hash, suffix) {
  let a = parseInt(hash.slice(0, 8), 16), b = parseInt(hash.slice(8), 16);
  for (let i = suffix.length - 1; i >= 0; i--) { const code = suffix.charCodeAt(i);a = Math.imul(a, INVERSE_A) ^ code;b = Math.imul(b, INVERSE_B) ^ code; }
@@ -20,8 +21,8 @@ function primeStrokeFingerprints(ink, hashes) {
  ink.forEach((stroke, i) => strokes.set(stroke, hashes[i]));
 }
 function primeStrokeFingerprint(stroke,hash){if(typeof hash!=='string'||!/^[a-f0-9]{16}$/.test(hash))throw Error('Invalid drawing fingerprint.');strokes.set(stroke,hash);}
-function recordStrokeAppend(previous, next, stroke) { appends.set(next, { previous: new WeakRef(previous), stroke }); }
+function recordStrokeAppend(previous, next, stroke) { appends.set(next, { previous: new WeakRef(previous), stroke });globalThis.NoteMindStrokeBounds?.appendInkBox(previous,next,stroke); }
 function strokeAppend(next) { const link = appends.get(next), previous = link?.previous.deref();return previous && next.length === previous.length + 1 && next[next.length - 1] === link.stroke ? { previous, stroke: link.stroke } : null; }
-async function canonicalStrokeFingerprintAsync(stroke,yieldControl){let hash=hashText('{"colorHex":'+JSON.stringify(stroke.colorHex)+',"width":'+JSON.stringify(stroke.width)+',"points":['),work=0;for(let i=0;i<stroke.points.length;i++){const point=stroke.points[i];hash=hashText((i?',':'')+JSON.stringify({x:point.x,y:point.y}),hash);if(++work%8192===0)await yieldControl();}hash=hashText(']',hash);if(stroke.pressures){hash=hashText(',"pressures":[',hash);for(let i=0;i<stroke.pressures.length;i++){hash=hashText((i?',':'')+JSON.stringify(stroke.pressures[i]),hash);if(++work%8192===0)await yieldControl();}hash=hashText(']',hash);}return hashText('}',hash);}
-const api = { fingerprint, hashText, removeSuffix, strokeFingerprint, primeStrokeFingerprints, primeStrokeFingerprint, canonicalStrokeFingerprintAsync, recordStrokeAppend, strokeAppend, primeDecodedSheet:(sheet,hashes)=>decodedSheets.set(sheet,hashes), decodedSheet:sheet=>decodedSheets.get(sheet) };
+async function canonicalStrokeFingerprintAsync(stroke,yieldControl){const hash=hashWriter().write('{"colorHex":'+JSON.stringify(stroke.colorHex)+',"width":'+String(stroke.width)+',"points":[');let work=0;for(let i=0;i<stroke.points.length;i++){const point=stroke.points[i];hash.write((i?',':'')+'{"x":'+String(point.x)+',"y":'+String(point.y)+'}');if(++work%8192===0)await yieldControl();}hash.write(']');if(stroke.pressures){hash.write(',"pressures":[');for(let i=0;i<stroke.pressures.length;i++){hash.write((i?',':'')+String(stroke.pressures[i]));if(++work%8192===0)await yieldControl();}hash.write(']');}return hash.write('}').digest();}
+const api = { fingerprint, hashText, hashWriter, removeSuffix, strokeFingerprint, primeStrokeFingerprints, primeStrokeFingerprint, canonicalStrokeFingerprintAsync, recordStrokeAppend, strokeAppend, primeDecodedSheet:(sheet,hashes)=>decodedSheets.set(sheet,hashes), decodedSheet:sheet=>decodedSheets.get(sheet) };
 module.exports = globalThis.NoteMindStrokeSignatures ||= api;

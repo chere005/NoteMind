@@ -1,4 +1,7 @@
 import graphics from './graphics-pane.js'
+import {transformInkBinary} from './transform-ink.js'
+import {inspectBinaryDrawing,cropBinaryDrawing,paintBinaryDrawing} from './binary-drawing.js'
+import {pressureScale} from '@notemind/core'
 import {snapshotDrawing,rasterDrawing} from './tablet/renderer/drawingSnapshot'
 import {paintStrokesYielding} from './tablet/renderer/tabletPage'
 import {paintPaper,inkOn} from './tablet/renderer/tabletPaper'
@@ -39,6 +42,10 @@ async function runJob(job:any){
  const controller=new AbortController();background.set(job.id,controller);let canvas:OffscreenCanvas|null=null
  const pause=async()=>{if(controller.signal.aborted)throw Error('Drawing export cancelled.');await graphics.yieldTask();const visible=activeInk;if(visible)await visible.done;if(controller.signal.aborted)throw Error('Drawing export cancelled.')}
  try{
+  if(job?.transform){
+   const result=await transformInkBinary(job.bytes,job.transform.from,job.transform.to,{signal:controller.signal,yieldControl:pause})
+   self.postMessage({id:job.id,...result},[result.bytes.buffer,result.indexes.buffer,result.hashBytes.buffer]);return
+  }
   if(job?.normalize){
    if(!Number.isSafeInteger(job.id)||!job.bytes)throw Error('Invalid drawing load request.')
    const source=graphics.isBinary(job.bytes)?await graphics.decodeAsync(job.bytes,{signal:controller.signal,yieldControl:pause}):graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=await graphics.encodeBytesAsync({...source,backdrop:null},{signal:controller.signal,yieldControl:pause}),hashBytes=new Uint8Array(strokes.length*8),view=new DataView(hashBytes.buffer);let work=0
@@ -47,6 +54,12 @@ async function runJob(job:any){
    self.postMessage({id:job.id,bytes,metadata,hashBytes,backdropBytes,backdropHash},[bytes.buffer,hashBytes.buffer,...(backdropBytes?[backdropBytes.buffer]:[])]);return
   }
   if(!job||!Number.isSafeInteger(job.id)||!job.bytes||!job.region||![job.region.x,job.region.y,job.region.width,job.region.height].every(Number.isFinite)||job.region.width<=0||job.region.height<=0)throw Error('Invalid drawing export request.')
+  if(graphics.isBinary(job.bytes)&&new DataView(job.bytes.buffer,job.bytes.byteOffset,job.bytes.byteLength).getUint32(16,true)>=50000){
+   const source=await inspectBinaryDrawing(job.bytes,{signal:controller.signal,yieldControl:pause}),snapshot=snapshotDrawing({...source.metadata,strokes:[],viewport:job.region}),result:any={id:job.id}
+   if(job.png){if(source.metadata.backdrop&&!job.bitmap)throw Error('Could not load the drawing background.');canvas=await rasterDrawing(snapshot,job.withPaper!==false,{canvas:()=>new OffscreenCanvas(1,1),paintPaper,paintBackdrop,paintStrokes:(ctx:any)=>paintBinaryDrawing(ctx,source,(x:number,y:number)=>({x:x*1000,y:y*1000/source.metadata.aspect}),1,job.withPaper!==false?(colour:string)=>inkOn(source.metadata.paper,colour):null,pressureScale,{signal:controller.signal,yieldControl:pause}),inkOn,backdropReady:async()=>job.bitmap,maxPixels:job.maxPixels,maxDimension:job.maxDimension});if(controller.signal.aborted)throw Error('Drawing export cancelled.');result.png=await pngOf(canvas!)}
+   if(job.sidecar){const bytes=job.crop?await cropBinaryDrawing(source,job.region,{signal:controller.signal,yieldControl:pause}):source.bytes;let index=0,length=0;for(let at=0;at<bytes.length;at+=196608){await pause();const text=graphics.bytesBase64(bytes.subarray(at,at+196608));length+=text.length;await sidecarChunk(job,index++,text,controller.signal)}result.sidecarLength=length}
+   self.postMessage(result);return
+  }
   const source=await graphics.decodeAsync(job.bytes,{signal:controller.signal,yieldControl:pause}),snapshot=snapshotDrawing({...source,viewport:job.region}),result:any={id:job.id}
   if(job.png){
    if(source.backdrop&&!job.bitmap)throw Error('Could not load the drawing background.')
@@ -67,5 +80,6 @@ self.onmessage=event=>{
  if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
  if(job?.cancelExport){background.get(job.cancelExport)?.abort();return}
  if(job?.ink){acceptInk(job);return}
+ if(job?.transform){void runJob(job);return}
  queue=queue.catch(()=>{}).then(()=>runJob(job))
 }
