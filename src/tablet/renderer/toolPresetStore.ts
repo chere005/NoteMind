@@ -32,8 +32,8 @@ export function createToolPresetStore({storage,uuid=()=>globalThis.crypto.random
    deferredRemote={value,revision};return false;
   }
   const next=loadToolPresets(value,legacy,state.current.tool);if(next.problem){report(Error(next.problem));if(!next.canPersist)loaded=next;return false;}
-  if(loaded.problem)error=null;loaded=next;if(serializeToolPresets(next.state)===serializeToolPresets(state))return false;
-  state=next.state;revision++;try{storage.setItem(TOOL_PRESETS_KEY,serializeToolPresets(state));}catch(failure){report(failure);}emit();return true;
+  if(loaded.problem)error=null;loaded=next;revision++;if(serializeToolPresets(next.state)===serializeToolPresets(state))return false;
+  state=next.state;try{storage.setItem(TOOL_PRESETS_KEY,serializeToolPresets(state));}catch(failure){report(failure);}emit();return true;
  }
  function change(transform:(state:ToolPresetState)=>ToolPresetState){
   if(disposed)throw Error('Tool presets are closed.');const next=transform(state);if(next===state&&!error)return {state,persisted:true,error};

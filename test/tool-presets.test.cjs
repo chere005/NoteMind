@@ -63,6 +63,12 @@ test('authoritative remote refresh retains a newer other-window write received b
 test('authoritative refresh cannot overwrite local edits made while its read is pending',async()=>{
  const read=deferred();let reads=0;const store=createToolPresetStore({storage:storage(),readRemote:async()=>++reads===2?read.promise:null,writeRemote:async()=>{}});await store.ready;store.setCurrent(settings({width:7}));await tick();assert.equal(reads,2);store.setCurrent(settings({width:14}));read.resolve(model.serializeToolPresets(model.initialToolPresets(settings({width:7}))));await store.flush();assert.equal(store.current().width,14);assert.equal(reads,3);
 });
+test('equal authoritative events invalidate older initial reads without listener or write churn',async()=>{
+ const read=deferred(),s=storage(),store=createToolPresetStore({storage:s,readRemote:()=>read.promise});let changes=0;store.subscribe(()=>changes++);const current=model.serializeToolPresets(store.getSnapshot());assert.equal(store.receive(current),false);read.resolve(model.serializeToolPresets(model.initialToolPresets(settings({width:13}))));await store.ready;assert.equal(store.current().width,3);assert.equal(changes,0);assert.equal(s.writes.length,0);
+});
+test('equal authoritative events invalidate delayed post-write refresh results',async()=>{
+ const read=deferred();let reads=0;const s=storage(),store=createToolPresetStore({storage:s,readRemote:async()=>++reads===2?read.promise:null,writeRemote:async()=>{}});await store.ready;store.setCurrent(settings({width:7}));await tick();assert.equal(reads,2);let changes=0;store.subscribe(()=>changes++);const writes=s.writes.length;assert.equal(store.receive(model.serializeToolPresets(store.getSnapshot())),false);read.resolve(model.serializeToolPresets(model.initialToolPresets(settings({width:12}))));await store.flush();assert.equal(store.current().width,7);assert.equal(changes,0);assert.equal(s.writes.length,writes);
+});
 test('a deferred remote value predating a later local edit cannot replace it',async()=>{
  const pending=deferred(),store=createToolPresetStore({storage:storage(),writeRemote:()=>pending.promise});store.setCurrent(settings({width:12}));await tick();store.receive(model.serializeToolPresets(model.initialToolPresets(settings({width:8}))));store.setCurrent(settings({width:15}));pending.resolve();await store.flush();assert.equal(store.current().width,15);
 });
