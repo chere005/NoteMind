@@ -38,15 +38,17 @@ export class InkRaster{
  }
  private async paint(ctx:any,rect:any,cancelled:()=>boolean,selected?:Uint8Array,selectMode=false){
   const config=this.config!,{paintWidth:width,paintHeight:height,region,ratio}=config,unit=width/(region.width*1000);let work=0
-  ctx.lineCap='round';ctx.lineJoin='round'
+  // Keep absolute path coordinates identical for full and dirty-tile paints.
+  // Subtracting tile origins in JS changes native float32 path rounding.
+  ctx.lineCap='round';ctx.lineJoin='round';ctx.translate(-rect.x,-rect.y)
   const x=(n:number)=>(n-region.x)/region.width*width,y=(n:number)=>(n-region.y)/region.height*height
   const stroke=emptyRecord(),order=this.records.order
   for(const leaf of order.leafEntries(rect))for(let local=0;local<leaf.values.length;local++){const position=leaf.start+local;if(cancelled())return false;if(selected&&!!selected[position]!==selectMode){if(++work%2048===0)await graphics.yieldTask();continue}this.records.read(leaf.values[local]!,stroke);if(!stroke.count){if(++work%2048===0)await graphics.yieldTask();continue;}const {view,stride}=stroke;let at=stroke.at,px=x(view.getFloat64(at,true)),py=y(view.getFloat64(at+8,true)),pressure=stroke.pressure?view.getFloat64(at+16,true):.5
    ctx.strokeStyle=inkOn(config.paper,stroke.colour)
-   if(stroke.count===1){const line=Math.max(.5*ratio,stroke.width*unit);if(intersects(px,py,px,py,line/2+2,rect)){ctx.lineWidth=line;ctx.beginPath();ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(px-rect.x+.01*ratio,py-rect.y);ctx.stroke()}if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}continue}
+   if(stroke.count===1){const line=Math.max(.5*ratio,stroke.width*unit);if(intersects(px,py,px,py,line/2+2,rect)){ctx.lineWidth=line;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+.01*ratio,py);ctx.stroke()}if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}continue}
    const line=Math.max(.5*ratio,stroke.width*unit);let running=false,made=false;if(!stroke.pressure){ctx.lineWidth=line;ctx.beginPath()}
    for(let i=1;i<stroke.count;i++){at+=stride;const nx=x(view.getFloat64(at,true)),ny=y(view.getFloat64(at+8,true)),nextPressure=stroke.pressure?view.getFloat64(at+16,true):.5,thickness=stroke.pressure?Math.max(.25*ratio,stroke.width*unit*pressureScale((pressure+nextPressure)/2)):line
-    if(intersects(px,py,nx,ny,thickness/2+2,rect)){if(stroke.pressure){ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(nx-rect.x,ny-rect.y);ctx.stroke()}else{if(!running)ctx.moveTo(px-rect.x,py-rect.y);ctx.lineTo(nx-rect.x,ny-rect.y);running=true;made=true}}else running=false
+    if(intersects(px,py,nx,ny,thickness/2+2,rect)){if(stroke.pressure){ctx.lineWidth=thickness;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(nx,ny);ctx.stroke()}else{if(!running)ctx.moveTo(px,py);ctx.lineTo(nx,ny);running=true;made=true}}else running=false
     px=nx;py=ny;pressure=nextPressure
     if(++work%2048===0){await graphics.yieldTask();if(cancelled())return false}
    }
