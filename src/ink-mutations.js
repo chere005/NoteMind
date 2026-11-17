@@ -35,20 +35,31 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
   if(!Array.isArray(stroke?.points)||!stroke.points.length)throw Error('A drawing stroke needs at least one point.');lease ||=reserveInkStroke(owner,stroke.points.length);const record=reservationRecords.get(lease);if(!record||record.owner!==owner||!record.active||record.locked||record.points!==stroke.points.length)throw Error('Invalid drawing capacity reservation.');record.locked=true;
   return {release:()=>releaseReservation(record),check(){const size=geometrySize(owner),reserved=capacityReservations.get(owner);if(!record.active||record.points!==stroke.points.length||size.points+(reserved?.points||0)>INK_LIMIT||size.strokes+(reserved?.strokes||0)>INK_LIMIT)throw capacityError();}};
  }
- function appendInkStroke(owner,stroke,{nativeCanonical=false,commit=value=>owner.add(value),retain=()=>owner.retainGeometry?.()||(()=>{}),onCommit=()=>{},finalize,before,reservation}={}){
-  const admitted=adoptReservation(owner,stroke,reservation),prior=before===undefined?flushInkMutations(owner):before;let release,hash,geometry=null
+ function appendInkStroke(owner,stroke,{nativeCanonical=false,commit=value=>owner.add(value),retain=()=>owner.retainGeometry?.()||(()=>{}),onCommit=()=>{},finalize,before,reservation,prepare,signal,valid=()=>true}={}){
+  const admitted=adoptReservation(owner,stroke,reservation),prior=before===undefined?flushInkMutations(owner):before;let release,hash,geometry=null,candidate=stroke;const preparing=prepare!==undefined;
+  const check=()=>{if(signal?.aborted||!valid())throw aborted()};
   try{const held=retain();release=()=>{admitted.release();held()}}catch(error){admitted.release();throw error}
+  const finalizeGeometry=value=>{
+   check();let fingerprint=signatures.knownStrokeFingerprint(value);
+   if(!fingerprint){if(nativeCanonical){const keys=Object.keys(value).join(','),expected=value.pressures?'colorHex,width,points,pressures':'colorHex,width,points';if(keys!==expected||(value.points.length&&Object.keys(value.points[0]).join(',')!=='x,y'))throw Error('Native ink must use canonical stroke and point field ordering.')}if(nativeCanonical&&value.points.length>=50000){const run=finalize||globalThis.NoteMindDrawingExport?.fingerprintStroke||((next)=>signatures.canonicalStrokeFingerprintAsync(next,graphics.yieldTask));fingerprint=run(value,{signal})}else fingerprint=signatures.strokeFingerprint(value)}
+   const box=!bounds.knownStrokeBox(value)&&value.points.length>=50000?bounds.strokeBoxAsync(value,{signal,yieldControl:graphics.yieldTask}):null;
+   return{fingerprint,box};
+  };
   try{
-   hash=signatures.knownStrokeFingerprint(stroke)
-   if(!hash){
-    if(nativeCanonical){const keys=Object.keys(stroke).join(','),expected=stroke.pressures?'colorHex,width,points,pressures':'colorHex,width,points';if(keys!==expected||(stroke.points.length&&Object.keys(stroke.points[0]).join(',')!=='x,y'))throw Error('Native ink must use canonical stroke and point field ordering.')}
-    if(nativeCanonical&&stroke.points.length>=50000){const run=finalize||globalThis.NoteMindDrawingExport?.fingerprintStroke||((value)=>signatures.canonicalStrokeFingerprintAsync(value,graphics.yieldTask));hash=run(stroke)}else hash=signatures.strokeFingerprint(stroke)
+   check();
+   if(preparing){
+    if(typeof prepare!=='function')throw Error('Invalid drawing preparation.');
+    geometry=Promise.resolve().then(()=>{check();return prepare(stroke,{signal,yieldControl:graphics.yieldTask,valid})}).then(async next=>{
+     check();if(!next||!Array.isArray(next.points)||next.points.length!==stroke.points.length||next.pressures!==stroke.pressures||next.colorHex!==stroke.colorHex||!Object.is(next.width,stroke.width))throw Error('Drawing preparation changed reserved geometry ownership.');
+     candidate=next;const prepared=finalizeGeometry(next),finished=await Promise.allSettled([prepared.fingerprint,prepared.box]),failed=finished.find(item=>item.status==='rejected');if(failed)throw failed.reason;check();signatures.primeStrokeFingerprint(next,finished[0].value);
+    });
+   }else{
+    const prepared=finalizeGeometry(stroke);hash=prepared.fingerprint;geometry=prepared.box;
+    if(typeof hash==='string'&&!prior&&!geometry){admitted.check();commit(stroke);onCommit(stroke);release();return null}
    }
-   geometry=!bounds.knownStrokeBox(stroke)&&stroke.points.length>=50000?bounds.strokeBoxAsync(stroke,{yieldControl:graphics.yieldTask}):null
-   if(typeof hash==='string'&&!prior&&!geometry){admitted.check();commit(stroke);onCommit(stroke);release();return null}
   }catch(error){release();throw error}
-  const ready=Promise.all([Promise.resolve(hash).then(value=>{signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(()=>({append:stroke})),done=ready.then(()=>{admitted.check();commit(stroke);onCommit(stroke)}).finally(release)
-  ready.catch(()=>{});done.catch(()=>{});registerInkProjection(owner,ready,done);return done
+  const ready=Promise.allSettled([preparing?null:Promise.resolve(hash).then(value=>{check();signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(results=>{const failed=results.find(item=>item.status==='rejected');if(failed)throw failed.reason;check();return{append:candidate}}),done=ready.then(()=>{check();admitted.check();commit(candidate);onCommit(candidate)}).finally(release);
+  ready.catch(()=>{});done.catch(()=>{});registerInkProjection(owner,ready,done);return done;
  }
  function createInkActionController(owner,adapters={}){
   let handlers={onEdited:adapters.onEdited,repaint:adapters.repaint,onError:adapters.onError};const jobs=new Set(),get=adapters.getStrokes||(()=>owner.strokes),retain=adapters.retain||(()=>owner.retainGeometry?.()||(()=>{})),changed=()=>{handlers?.repaint?.();handlers?.onEdited?.()}
