@@ -36,10 +36,10 @@ function visibleWindow(count, { scrollTop = 0, height = 600, width = 600, rowHei
   const columns = Math.max(1, Math.min(12, Math.floor((width + gap) / (minWidth + gap)))), rows = Math.ceil(count / columns), first = Math.max(0, Math.floor(Math.max(0, scrollTop) / rowHeight) - Math.floor(overscan)), last = Math.min(rows, Math.ceil((Math.max(0, scrollTop) + height) / rowHeight) + Math.floor(overscan));
   return { columns, rows, firstRow: first, lastRow: last, start: Math.min(count, first * columns), end: Math.min(count, last * columns), totalHeight: rows * rowHeight, rowHeight };
 }
-async function loadOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1024, yieldControl = yieldTask } = {}) {
+async function pullOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1024, yieldControl = yieldTask, requestId } = {}) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 256 * 1024 * 1024) throw Error("Invalid overview source budget.");
   check(signal);
-  const chunks = !!(api.loadSheetChunk && api.finishSheetLoad), state = await api.loadSheetPage(pageId, chunks ? { chunks: true, background: true } : void 0), session = state.transferSession;
+  const chunks = !!(api.loadSheetChunk && api.finishSheetLoad), state = await api.loadSheetPage(pageId, chunks ? { chunks: true, background: true, ...(requestId ? {requestId} : {}) } : requestId ? {requestId} : void 0), session = state.transferSession;
   try {
     check(signal);
     if (!Array.isArray(state.encodedSheets) || state.encodedSheets.length !== 1) throw Error("Invalid overview page response.");
@@ -52,7 +52,7 @@ async function loadOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1
       if (value == null) continue;
       if (session) {
         if (!value.chunked || typeof value.key !== "string" || !Number.isSafeInteger(value.bytes) || value.bytes < 0 || (total += value.bytes) > maxBytes || !Number.isSafeInteger(state.chunkBytes) || state.chunkBytes < 1 || state.chunkBytes > 1024 * 1024) throw Error("Invalid overview page size.");
-        const bytes = new Uint8Array(value.bytes);
+        check(signal);const bytes = new Uint8Array(value.bytes);
         for (let at = 0; at < bytes.length; ) {
           check(signal);
           const part = await api.loadSheetChunk(session, value.key, at);
@@ -60,7 +60,7 @@ async function loadOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1
           if (!ArrayBuffer.isView(part) || part.byteLength !== Math.min(state.chunkBytes, bytes.length - at)) throw Error("Invalid overview page chunk.");
           bytes.set(new Uint8Array(part.buffer, part.byteOffset, part.byteLength), at);
           at += part.byteLength;
-          await yieldControl();
+          await yieldControl();check(signal);
         }
         packet[key] = bytes;
       } else {
@@ -73,9 +73,16 @@ async function loadOverviewPage(api, pageId, { signal, maxBytes = 256 * 1024 * 1
     check(signal);
     return packet;
   } finally {
-    if (session) await api.finishSheetLoad(session).catch(() => {
-    });
+    if (session) try { await api.finishSheetLoad(session); } catch {}
   }
+}
+let nextOverviewRead=0;
+async function loadOverviewPage(api,pageId,options={}){
+ const signal=options.signal;check(signal);const canCancel=typeof api.cancelSheetPageLoad==='function',id=options.requestId??(canCancel?(globalThis.crypto?.randomUUID?.()||'overview-'+Date.now().toString(36)+'-'+(++nextOverviewRead)):undefined);
+ if(id!==undefined&&(typeof id!=='string'||!/^[a-z0-9_.:-]{1,128}$/i.test(id)))throw Error('Invalid overview read request.');
+ let rejectCancelled;const cancelled=new Promise((_,reject)=>rejectCancelled=reject),onAbort=()=>{if(canCancel&&id)try{void Promise.resolve(api.cancelSheetPageLoad(id)).catch(()=>{});}catch{}rejectCancelled(abort());};signal?.addEventListener('abort',onAbort,{once:true});
+ const task=pullOverviewPage(api,pageId,{...options,requestId:id});
+ try{return await Promise.race([task,cancelled]);}catch(error){check(signal);throw error;}finally{signal?.removeEventListener('abort',onAbort);}
 }
 function smallExistingPreview(page) {
   const preview = page.preview, expected = page.revision ?? page.signature ?? page.geometryRevision;
