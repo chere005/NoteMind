@@ -50,5 +50,7 @@ class PDFReferenceService {
 }
 module.exports={PDFReferenceService,WorkerClient};
 
-function register(options){let service;const methods=new Set(['open','stats','info','page','text','ink','save','serialize','previous','close','retain','cancel','export']);ipcMain.handle('pdf-reference-call',(event,method,args=[])=>{if(!methods.has(method)||!Array.isArray(args)||args.length>4)throw Error('Invalid PDF reference request.');service ||= new PDFReferenceService(options);return service[method](event.sender,...args);});return{get:()=>service ||= new PDFReferenceService(options),dispose:()=>service?.dispose()};}
-module.exports.register=register;
+const REFERENCE_METHODS=new Set(['open','stats','info','page','text','ink','save','serialize','previous','close','retain','cancel','export']);
+async function invokeReference(service,sender,method,args=[]){try{if(!REFERENCE_METHODS.has(method)||!Array.isArray(args)||args.length>4)throw Error('Invalid PDF reference request.');return{version:1,ok:true,value:await service[method](sender,...args)};}catch(error){return{version:1,ok:false,error:{name:typeof error?.name==='string'?error.name:'Error',message:typeof error?.message==='string'?error.message:String(error),...(typeof error?.code==='string'?{code:error.code}:{})}};}}
+function register(options){let service;const get=()=>service ||= new PDFReferenceService(options);ipcMain.handle('pdf-reference-call',(event,method,args=[])=>invokeReference(get(),event.sender,method,args));return{get,dispose:()=>service?.dispose()};}
+module.exports.register=register;module.exports.invokeReference=invokeReference;
