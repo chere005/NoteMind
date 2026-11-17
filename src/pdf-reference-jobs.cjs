@@ -9,10 +9,10 @@ class PDFReferenceJobs {
   return new Promise((resolve,reject)=>{const job={id:++this.next,operation,args:copied,leaseId:operation==='releaseExport'?copied.id:null,bytes,resolve,reject,signal,progress:onProgress,abort:null};job.abort=()=>{const at=this.queue.indexOf(job);if(at>=0){this.queue.splice(at,1);this.finishQueued(job,Object.assign(Error('PDF operation cancelled.'),{name:'AbortError'}));}else if(this.active===job){this.worker?.postMessage({cancel:job.id});}};signal?.addEventListener('abort',job.abort,{once:true});this.queue.push(job);this.bytes+=bytes;this.pump();});
  }
  createWorker(){
-  if(this.worker)return this.worker;const owner=randomUUID(),worker=this.workerFactory(path.join(__dirname,'pdf-reference-jobs-worker.cjs'),{workerData:{root:this.root,leaseOwner:owner}});this.workerOwners.set(worker,{owner,cleanup:null});this.worker=worker;
+  if(this.worker)return this.worker;const owner=randomUUID(),worker=this.workerFactory(path.join(__dirname,'pdf-reference-jobs-worker.cjs'),{workerData:{root:this.root,leaseOwner:owner}}),ownership={owner,cleanup:null,exited:false,exit:null,resolveExit:null};ownership.exit=new Promise(resolve=>ownership.resolveExit=resolve);this.workerOwners.set(worker,ownership);this.worker=worker;
   worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.progress){try{job.progress?.(packet.progress);}catch{}return;}const error=packet.error?Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,recovery:packet.error.recovery}):null;if(!error){if(job.operation==='captureExport'&&packet.value?.id)this.exportLeases.set(packet.value.id,worker);if(job.operation==='reconcile'&&Array.isArray(packet.value))for(const patch of packet.value)for(const id of patch.leases||[])this.exportLeases.set(id,worker);}if(job.operation==='releaseExport'&&(!error||packet.releasedExport===job.leaseId)&&this.exportLeases.get(job.leaseId)===worker)this.exportLeases.delete(job.leaseId);this.complete(job,error,packet.value);});
   worker.on('error',error=>{if(this.worker!==worker)return;const job=this.active;this.stop();if(job)this.complete(job,error);});
-  worker.on('exit',code=>{void this.cleanupWorkerLeases(worker).catch(()=>{});if(this.worker===worker){const job=this.active;this.worker=null;if(job)this.complete(job,Error('PDF file worker stopped ('+code+').'));}if(this.stopping?.worker===worker){this.stopping=null;this.failed=null;this.pump();}});return worker;
+  worker.on('exit',code=>{ownership.exited=true;ownership.resolveExit();if(this.worker===worker){const job=this.active;this.worker=null;this.retireWorker(worker);if(job)this.complete(job,Error('PDF file worker stopped ('+code+').'));}});return worker;
  }
  pump(){
   if(this.closed||this.failed||this.active||this.stopping)return;clearTimeout(this.idleTimer);if(!this.queue.length){if(this.worker&&![...this.exportLeases.values()].some(worker=>worker===this.worker)){this.worker.unref?.();this.idleTimer=setTimeout(()=>this.stop(),this.idleMs);this.idleTimer.unref?.();}return;}const job=this.active=this.queue.shift();
@@ -21,12 +21,17 @@ class PDFReferenceJobs {
  finishQueued(job,error){this.bytes-=job.bytes;job.signal?.removeEventListener('abort',job.abort);job.args=null;job.reject(error);}
  complete(job,error,value){if(!job||this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.signal?.removeEventListener('abort',job.abort);job.args=null;error?job.reject(error):job.resolve(value);this.pump();}
  stop(){
-  clearTimeout(this.idleTimer);const worker=this.worker;if(!worker)return;this.worker=null;const state=this.stopping={worker,promise:null};
-  state.promise=Promise.resolve().then(()=>worker.terminate()).then(()=>this.cleanupWorkerLeases(worker)).then(()=>{if(this.stopping===state){this.stopping=null;this.failed=null;this.pump();}},error=>{if(this.stopping!==state)return;this.failed=Error('The previous PDF worker is still closing: '+error.message);for(const job of this.queue.splice(0))this.finishQueued(job,this.failed);});
+  clearTimeout(this.idleTimer);const worker=this.worker;if(!worker)return;this.worker=null;const state=this.retireWorker(worker),ownership=this.workerOwners.get(worker);
+  // A terminate promise is only a request acknowledgment; actual exit grants cleanup authority.
+  void Promise.resolve().then(()=>worker.terminate()).catch(error=>{if(ownership.exited||this.stopping!==state)return;this.failed=Error('The previous PDF worker is still closing: '+error.message);for(const job of this.queue.splice(0))this.finishQueued(job,this.failed);});
+ }
+ retireWorker(worker){
+  if(this.stopping?.worker===worker)return this.stopping;const ownership=this.workerOwners.get(worker),state=this.stopping={worker,promise:null};
+  state.promise=ownership.exit.then(()=>this.cleanupWorkerLeases(worker)).then(()=>{if(this.stopping===state){this.stopping=null;this.failed=null;this.pump();}});return state;
  }
  async cleanupWorkerLeases(worker){
   const state=this.workerOwners.get(worker);if(!state)return;if(state.cleanup)return state.cleanup;
-  state.cleanup=(async()=>{const leases=[...this.exportLeases].filter(([,owner])=>owner===worker).map(([id])=>id);for(const id of leases)this.exportLeases.delete(id);const cleanup=new PDFExportLeases(path.join(this.root,'Export Leases'));
+  state.cleanup=(async()=>{await state.exit;const leases=[...this.exportLeases].filter(([,owner])=>owner===worker).map(([id])=>id);for(const id of leases)this.exportLeases.delete(id);const cleanup=new PDFExportLeases(path.join(this.root,'Export Leases'));
    try{for(const id of leases)await cleanup.cleanOne(id,{settledOwner:state.owner,settledPID:process.pid,maxFiles:Infinity}).catch(()=>{});await cleanup.cleanup({settledOwner:state.owner,settledPID:process.pid}).catch(()=>{});}finally{await cleanup.closeScan();}
   })();this.cleanupPending.add(state.cleanup);void state.cleanup.finally(()=>this.cleanupPending.delete(state.cleanup)).catch(()=>{});return state.cleanup;
  }
