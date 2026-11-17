@@ -47,3 +47,17 @@ test('interrupted manifest publication leaves earlier versions readable',async t
  t.mock.method(fs,'link',async(from,to)=>{if(to===snapshots.manifestFile(root,'interrupted'))throw Object.assign(Error('interrupted'),{code:'EIO'});return link(from,to);});
  await assert.rejects(snapshots.publishSnapshot(root,'interrupted',snapshots.prepareSnapshot({...doc,text:'new'})),/interrupted/);assert.equal((await snapshots.readSnapshot(root,'first')).text,doc.text);await assert.rejects(fs.access(snapshots.manifestFile(root,'interrupted')),{code:'ENOENT'});
 });
+test('CAS ACK follows file sync, immutable publication and the full parent-directory sync chain',async t=>{
+ const root=await fixture(t),prepared=snapshots.prepareSnapshot(document({'assets/a.bin':Buffer.from('durable').toString('base64')})),ref=prepared.manifest.assets['assets/a.bin'],object=snapshots.objectFile(root,ref.hash),manifest=snapshots.manifestFile(root,'durable'),events=[],open=fs.open,link=fs.link;
+ t.mock.method(fs,'open',async(file,...args)=>{const handle=await open(file,...args),sync=handle.sync.bind(handle);handle.sync=async()=>{events.push(['sync',file]);return sync();};return handle;});t.mock.method(fs,'link',async(from,to)=>{events.push(['link',to]);return link(from,to);});
+ await snapshots.publishSnapshot(root,'durable',prepared);events.push(['ack','']);const index=(kind,name)=>events.findIndex(([what,file])=>what===kind&&(typeof name==='string'?file===name:name(file)));
+ assert.ok(index('sync',name=>name.startsWith(object+'.'))<index('link',object));assert.ok(index('link',object)<index('sync',path.dirname(object)));assert.ok(index('sync',path.dirname(object))<index('sync',name=>name.startsWith(manifest+'.')));assert.ok(index('sync',name=>name.startsWith(manifest+'.'))<index('link',manifest));assert.ok(index('link',manifest)<index('sync',path.dirname(manifest)));assert.ok(index('sync',path.dirname(manifest))<index('ack',''));assert.ok(events.some(([kind,file])=>kind==='sync'&&file===path.dirname(root)));
+});
+test('CAS file and directory fsync faults never acknowledge an unsafe version',async t=>{
+ for(const phase of ['object-file','object-directory','manifest-file','manifest-directory']){
+  const root=await fixture(t),doc=document({'assets/a.bin':Buffer.from('durable '+phase).toString('base64')}),prepared=snapshots.prepareSnapshot(doc),object=snapshots.objectFile(root,prepared.manifest.assets['assets/a.bin'].hash),manifest=snapshots.manifestFile(root,'failure'),open=fs.open;let failed=false;
+  const selected=file=>phase==='object-file'?file.startsWith(object+'.'):phase==='object-directory'?file===path.dirname(object):phase==='manifest-file'?file.startsWith(manifest+'.'):file===path.dirname(manifest);
+  const mock=t.mock.method(fs,'open',async(file,...args)=>{const handle=await open(file,...args),sync=handle.sync.bind(handle);handle.sync=async()=>{if(!failed&&selected(file)){failed=true;throw Object.assign(Error('fsync '+phase),{code:'EIO'});}return sync();};return handle;});
+  await assert.rejects(snapshots.publishSnapshot(root,'failure',prepared),error=>error.code==='EIO');assert.equal(failed,true);mock.mock.restore();if(phase==='manifest-directory')assert.deepEqual(await snapshots.readSnapshot(root,'failure'),doc);else await assert.rejects(fs.access(manifest),{code:'ENOENT'});await snapshots.publishSnapshot(root,'safe-retry',prepared);assert.deepEqual(await snapshots.readSnapshot(root,'safe-retry'),doc);
+ }
+});

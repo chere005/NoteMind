@@ -98,6 +98,7 @@ class ArchiveCodec{
  async readRawAssetBytes(descriptor){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);const result=await this.run('rawReadWhole',{descriptor});const bytes=Buffer.from(result.bytes.buffer,result.bytes.byteOffset,result.bytes.byteLength);this.rawReadBuffers.set(bytes,{read:result.read,owner:context.owner,lease:context.lease,epoch:context.epoch,info:result.info});return bytes;}
  async releaseRawAssetBytes(bytes){const read=this.rawReadBuffers.get(bytes);if(!read)return false;this.rawReadBuffers.delete(bytes);if(read.epoch!==this.epoch||!this.worker)return false;return this.run('rawReleaseRead',read);}
  async withRawAssetBytes(descriptor,run){const bytes=await this.readRawAssetBytes(descriptor);try{return await run(bytes,this.rawReadBuffers.get(bytes)?.info);}finally{await this.releaseRawAssetBytes(bytes);}}
+ hasRawAssetScope(){const context=this.rawScope.getStore();if(!context)return false;this.checkRawContext(context);return true;}
  async importRawAssetFile(file,options){const context=this.rawScope.getStore();this.checkRawContext(context);const value=await this.run('importRawAssetFile',file,options),descriptor=this.brandRaw(value,context.owner);context.tokens.add(descriptor.rawAssetToken);return descriptor;}
  liveRaw(){return this.rawUploads.size||[...this.rawLeases.values()].some(value=>!value.released&&!value.lost&&value.epoch===this.epoch);}
  retireIfReady(){if(this.retireRequested&&!this.liveRaw()&&!this.active){this.retireRequested=false;this.stopWorker();}else this.pump();}
