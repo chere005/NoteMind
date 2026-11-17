@@ -157,8 +157,9 @@ class ArchiveCodec{
      job.inspectionCancel=Object.assign(Error('Archive open cancelled.'),{name:'AbortError'});if(!descriptors.length){this.finish(job,job.inspectionCancel);return;}const context=job.rawContext;job.inspectionCleanup=randomUUID();worker.postMessage({id:job.id,inspectionCleanup:job.inspectionCleanup,op:'rawScopedRelease',args:[{descriptors}],codecEpoch:this.epoch,rawContext:{owner:context.owner,lease:context.lease,epoch:context.epoch,tokens:[...context.tokens]}});return;
     }
     if(packet.missingAssets){if(!job.assetPacket||(job.attempts||0)>=2)throw Error('Archive asset references expired repeatedly.');this.assets.retry(job.assetPacket,packet.missingAssets);job.attempts=(job.attempts||0)+1;this.postJob(worker,job);return;}
+    if(packet.error?.code==='ARCHIVE_RAW_OWNER_LOST'){const error=Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code});this.rejectStoppedQueue();this.workerFailed(worker,error);return;}
     if(packet.workerBytes>this.maxWorkerBytes&&!rawOps.has(job.op)){this.rollovers++;this.stopWorker();}
-    if(packet.error){const error=Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,missing:packet.error.missing});if(job.rawContext?.entered&&error.code==='ARCHIVE_RAW_ASSET_MISSING')error.code='ARCHIVE_RAW_LEASE_LOST';if(error.code==='ARCHIVE_RAW_OWNER_LOST'){this.rejectStoppedQueue();this.workerFailed(worker,error);return;}this.finish(job,error);return;}
+    if(packet.error){const error=Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,missing:packet.error.missing});if(job.rawContext?.entered&&error.code==='ARCHIVE_RAW_ASSET_MISSING')error.code='ARCHIVE_RAW_LEASE_LOST';this.finish(job,error);return;}
     let value=packet.value;this.assets.accepted(packet.assetResult?.accepted,job.assetPacket,this.epoch);
     if((job.op==='inspectOwned'||job.op==='inspectFile')&&value)value={...value,doc:this.assets.hydrate(value.doc,packet.assetResult?.output,job.assetPacket?.source,this.epoch)};
     else value=this.assets.hydrate(value,packet.assetResult?.output,job.assetPacket?.source,this.epoch);
