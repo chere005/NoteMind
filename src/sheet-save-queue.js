@@ -1,5 +1,6 @@
 // Renderer-side immutable identities keep unchanged geometry and image bytes out of autosave IPC.
-const {uploadSheetDelta}=require('./sheet-delta-upload.js');
+const {uploadSheetDelta,ID_BATCH}=require('./sheet-delta-upload.js');
+const {SheetPrivateIdBuilder,releasePrivateSheetIds}=require('./sheet-private-ids.js');
 const {SheetIdSet}=require('./sheet-id-set.js'),{ownedStoredId,writeOwnedFingerprintWords}=require('./owned-ink-metadata.js');
 const {yieldTask,encodeBytesAsync}=require('./graphics-pane.js'),{strokeFingerprint}=require('./stroke-signature.js');
 function semanticMetadata(sheet){if(!sheet||typeof sheet!=='object')return null;const {strokes,backdrop,pageId,geometryRevision,loaded,...metadata}=sheet;return JSON.stringify(Object.fromEntries(Object.keys(metadata).sort().map(key=>[key,metadata[key]])));}
@@ -53,13 +54,13 @@ class SheetSaveQueue{
   if(!this.full&&this.sameIdentity(this.persisted,this.identity(data)))return {seedEpoch,payload:{requestId,session:this.session,baseVersion:this.version,expectedSession:this.ownedSession,expectedPersisted:this.ownedPersisted,unchanged:true},usedStrokes:this.knownStrokes,usedBackdrops:this.knownBackdrops};
   const open=new Set(data.map(row=>row.pageId).filter(Boolean)),sameGeometry=!this.full&&data.every(row=>{const head=this.pageHeads.get(row.pageId);return row.loaded===false||head?.durable&&head.strokes===row.strokes&&head.backdrop===(row.backdrop||null);})&&[...this.pageHeads].every(([id,head])=>!head.strokes||open.has(id));
   const addBackdrops=[],usedStrokes=sameGeometry?this.knownStrokes:new SheetIdSet(data.reduce((n,row)=>n+(row.strokes?.length||0),0)),usedBackdrops=sameGeometry?this.knownBackdrops:new Set(),sheets=[];
-  let work=0,entries=[],entryBytes=0,addedPoints=0,chunked=false;
+  let work=0,entries=[],entryBytes=0,addedPoints=0,chunked=false,published=false;const privateIds=[];try{
   for(const sheet of data){
    const {strokes,backdrop,pageId,geometryRevision,loaded,...metadata}=sheet,head=pageId&&this.pageHeads.get(pageId);
    if(loaded===false||sameGeometry){if(!pageId||!head)throw Error('Unloaded drawing pages must retain their stored identity.');sheets.push({pageId,metadata,preserveGeometry:true,geometryRevision:head.geometryRevision});continue;}
    if(!Array.isArray(strokes))throw Error('Invalid drawing strokes.');
-   const strokeIds=new Float64Array(strokes.length);let append=!this.full&&!!head?.strokes&&strokes.length>=head.strokes.length;
-   for(let at=0;at<strokes.length;at++){
+   const capture=compact&&strokes.length>=ID_BATCH?new SheetPrivateIdBuilder(strokes.length):null;let strokeIds=capture?null:new Float64Array(strokes.length);let append=!this.full&&!!head?.strokes&&strokes.length>=head.strokes.length;
+   try{for(let at=0;at<strokes.length;at++){
     const stroke=strokes[at];let value=this.idOf(stroke);if(!value){value=this.nextStroke++;this.strokeIds.set(stroke,value);}
     if(!usedStrokes.has(value)&&(!this.knownStrokes.has(value)||this.full)){
      const length=16+stroke.points.length*(stroke.pressures?24:16);
@@ -68,21 +69,22 @@ class SheetSaveQueue{
      if(compact&&(entries.length>=10000||addedPoints>=10000))chunked=true;
      if(chunked&&entryBytes>=512*1024){const encode=entries;entries=[];entryBytes=0;yield {encode};}
     }
-    usedStrokes.add(value);strokeIds[at]=value;
+    usedStrokes.add(value);if(capture)capture.push(value);else strokeIds[at]=value;
     if(append&&(at<head.strokes.length?value!==this.idOf(head.strokes[at]):value<this.serverNextStroke))append=false;
     if(++work%8192===0)yield;
    }
+   if(capture){strokeIds=capture.finish(append?head.strokes.length:0);privateIds.push(strokeIds);}}finally{capture?.dispose();}
    let backdropId=0;if(backdrop){backdropId=this.backdropIds.get(backdrop);if(!backdropId){backdropId=this.nextBackdrop++;this.backdropIds.set(backdrop,backdropId);}if(!usedBackdrops.has(backdropId)&&(!this.knownBackdrops.has(backdropId)||this.full))addBackdrops.push({id:backdropId,data:backdrop});usedBackdrops.add(backdropId);}
-   sheets.push({...(pageId?{pageId}:{}),metadata,...(append?{appendStrokeIds:strokeIds.subarray(head.strokes.length),geometryRevision:head.geometryRevision}:{strokeIds}),backdropId});
+   sheets.push({...(pageId?{pageId}:{}),metadata,...(append?{appendStrokeIds:capture?strokeIds:strokeIds.subarray(head.strokes.length),geometryRevision:head.geometryRevision}:{strokeIds}),backdropId});
   }
   if(chunked&&entries.length){const encode=entries;entries=[];yield {encode};}
-  return {seedEpoch,payload:{requestId,session:this.session,baseVersion:this.version,expectedSession:this.ownedSession,expectedPersisted:this.ownedPersisted,full:this.full,sheets,addStrokes:entries,addBackdrops},usedStrokes,usedBackdrops};
+  published=true;return {seedEpoch,payload:{requestId,session:this.session,baseVersion:this.version,expectedSession:this.ownedSession,expectedPersisted:this.ownedPersisted,full:this.full,sheets,addStrokes:entries,addBackdrops},usedStrokes,usedBackdrops};}finally{if(!published)for(const ids of privateIds)releasePrivateSheetIds(ids);}
  }
  build(data,requestId){const steps=this.buildSteps(data,requestId);let next;do{next=steps.next();}while(!next.done);return next.value;}
  async buildAsync(data,requestId){
   const steps=this.buildSteps(data,requestId,{compact:true}),chunks=[];let built;
-  for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');const next=steps.next();if(next.done){built=next.value;break;}if(next.value?.encode){const entries=next.value.encode,identityBytes=new Uint8Array(entries.length*16),view=new DataView(identityBytes.buffer);for(let at=0;at<entries.length;at++){const entry=entries[at];view.setFloat64(at*16,entry.id,true);if(!writeOwnedFingerprintWords(entry.stroke,view,at*16+8)){const hash=strokeFingerprint(entry.stroke);view.setUint32(at*16+8,parseInt(hash.slice(0,8),16),true);view.setUint32(at*16+12,parseInt(hash.slice(8),16),true);}}chunks.push({bytes:await encodeBytesAsync({name:'Drawing data',aspect:1,strokes:entries.map(entry=>entry.stroke)}),identityBytes});}await yieldTask();}
-  if(chunks.length){built.payload.addChunks=chunks;}return built;
+  try{for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');const next=steps.next();if(next.done){built=next.value;break;}if(next.value?.encode){const entries=next.value.encode,identityBytes=new Uint8Array(entries.length*16),view=new DataView(identityBytes.buffer);for(let at=0;at<entries.length;at++){const entry=entries[at];view.setFloat64(at*16,entry.id,true);if(!writeOwnedFingerprintWords(entry.stroke,view,at*16+8)){const hash=strokeFingerprint(entry.stroke);view.setUint32(at*16+8,parseInt(hash.slice(0,8),16),true);view.setUint32(at*16+12,parseInt(hash.slice(8),16),true);}}chunks.push({bytes:await encodeBytesAsync({name:'Drawing data',aspect:1,strokes:entries.map(entry=>entry.stroke)}),identityBytes});}await yieldTask();}
+  if(chunks.length){built.payload.addChunks=chunks;}return built;}finally{if(!built){steps.return();for(const packet of chunks)for(const field of ['bytes','identityBytes']){const bytes=packet[field];if(bytes?.byteLength&&bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function')bytes.buffer.transfer(0);}}}
  }
  reset(answer={}){if(typeof answer.session==='string'){if(this.ownedSession&&this.ownedSession!==answer.session&&(this.ownedPersisted||!answer.unowned))throw Error('Saved drawing storage was replaced outside this window. Current drawings remain open.');this.ownedSession=answer.session;this.ownedPersisted ||=answer.persisted===true;}this.session=typeof answer.session==='string'?answer.session:null;this.version=Number.isSafeInteger(answer.version)?answer.version:0;this.knownStrokes.clear();this.knownBackdrops.clear();this.full=true;}
  async write(data,requestId){
