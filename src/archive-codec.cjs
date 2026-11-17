@@ -58,7 +58,7 @@ function inputBytes(op,args,limit){
  if(op==='encodeDrawingOwned'){const value=args[0];if(!value||typeof value!=='object')throw TypeError('Invalid owned drawing assets.');bytes=(value.graphics?.byteLength||0)+(value.image?.byteLength||0)+256;}
  else if(binaryOps.has(op)){const value=args[0];bytes=typeof value==='string'?value.length*2:value?.byteLength;if(!Number.isSafeInteger(bytes)||bytes<0)throw TypeError('Expected archive bytes.');}
  else if(rawOps.has(op)){const value=args[0];bytes=op==='rawAppend'?nestedBytes({...value,data:undefined},limit)+(value.data?.byteLength||0):nestedBytes(value,limit);}
- else if(op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='publishMarkdownVersionFromFile'||op==='readRecoveryState'||op==='importRawAssetFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
+ else if(op==='inspectFile'||op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='publishMarkdownVersionFromFile'||op==='readRecoveryState'||op==='importRawAssetFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
  else bytes=documentBytes(args[0],limit);
  for(let i=1;i<args.length&&bytes<=limit;i++)bytes+=nestedBytes(args[i],limit-bytes);
  return bytes;
@@ -124,6 +124,10 @@ class ArchiveCodec{
  decode(bytes,options){return this.run('decode',bytes,options);}
  decodeOwned(bytes,options){return this.run('decodeOwned',bytes,options);}
  inspectOwned(bytes,options){return this.run('inspectOwned',bytes,options);}
+ async inspectFile(file,{files='metadata',signal}={}){
+  if(signal?.aborted)throw Object.assign(Error('Archive open cancelled.'),{name:'AbortError'});const cancel=new SharedArrayBuffer(4),flag=new Int32Array(cancel),abort=()=>Atomics.store(flag,0,1);signal?.addEventListener('abort',abort,{once:true});
+  try{return await this.run('inspectFile',file,{files,cancel});}finally{signal?.removeEventListener('abort',abort)}
+ }
  inspectDrawingOwned(bytes){return this.run('inspectDrawingOwned',bytes);}
  duplicateArchiveOwned(bytes,options){return this.run('duplicateArchiveOwned',bytes,options);}
  prepareSnapshot(doc,options){return this.run('prepareSnapshot',doc,options);}
@@ -140,15 +144,22 @@ class ArchiveCodec{
   const worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));this.worker=worker;this.epoch++;
   worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
    try{
+    // Keep the active slot until cancellation has released newly issued output.
+    // A later same-lease job must never reuse a token that this job then rolls back.
+    if(job.inspectionCancel){this.finish(job,job.inspectionCancel);return;}
+    if(job.op==='inspectFile'&&!packet.error&&packet.value&&Atomics.load(new Int32Array(job.args[1].cancel),0)){
+     const value=packet.value,issued=new Set(value.issuedRawTokens||[]),descriptors=[...new Map(Object.values(value.doc.assets||{}).filter(item=>isRawAsset(item)&&issued.has(item.rawAssetToken)).map(item=>[item.rawAssetToken,item])).values()];for(const bytes of Object.values(value.doc.files||{}))if(bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&!isMarkedAsUntransferable?.(bytes.buffer)&&typeof bytes.buffer.transfer==='function')try{bytes.buffer.transfer(0)}catch{};
+     job.inspectionCancel=Object.assign(Error('Archive open cancelled.'),{name:'AbortError'});if(!descriptors.length){this.finish(job,job.inspectionCancel);return;}const context=job.rawContext;worker.postMessage({id:job.id,op:'rawScopedRelease',args:[{descriptors}],codecEpoch:this.epoch,rawContext:{owner:context.owner,lease:context.lease,epoch:context.epoch,tokens:[...context.tokens]}});return;
+    }
     if(packet.missingAssets){if(!job.assetPacket||(job.attempts||0)>=2)throw Error('Archive asset references expired repeatedly.');this.assets.retry(job.assetPacket,packet.missingAssets);job.attempts=(job.attempts||0)+1;this.postJob(worker,job);return;}
     if(packet.workerBytes>this.maxWorkerBytes&&!rawOps.has(job.op)){this.rollovers++;this.stopWorker();}
     if(packet.error){const error=Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,missing:packet.error.missing});if(job.rawContext?.entered&&error.code==='ARCHIVE_RAW_ASSET_MISSING')error.code='ARCHIVE_RAW_LEASE_LOST';this.finish(job,error);return;}
     let value=packet.value;this.assets.accepted(packet.assetResult?.accepted,job.assetPacket,this.epoch);
-    if(job.op==='inspectOwned'&&value)value={...value,doc:this.assets.hydrate(value.doc,packet.assetResult?.output,job.assetPacket?.source,this.epoch)};
+    if((job.op==='inspectOwned'||job.op==='inspectFile')&&value)value={...value,doc:this.assets.hydrate(value.doc,packet.assetResult?.output,job.assetPacket?.source,this.epoch)};
     else value=this.assets.hydrate(value,packet.assetResult?.output,job.assetPacket?.source,this.epoch);
     if(job.op==='encode'||job.op==='duplicateArchiveOwned'||job.op==='exportWord'||job.op==='stringifyJson')value=Buffer.from(value.buffer,value.byteOffset,value.byteLength);
     if(job.op==='encodeWithDigest'||job.op==='encodeDrawingOwned'){const bytes=value.bytes;value={...value,bytes:Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength)};}
-    const decoded=job.op==='inspectOwned'?value.doc:value;if((job.op==='decode'||ownedOps.has(job.op))&&decoded.files)for(const name of Object.keys(decoded.files)){const bytes=decoded.files[name];decoded.files[name]=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
+    const decoded=job.op==='inspectOwned'||job.op==='inspectFile'?value.doc:value;if((job.op==='decode'||job.op==='inspectFile'||ownedOps.has(job.op))&&decoded.files)for(const name of Object.keys(decoded.files)){const bytes=decoded.files[name];decoded.files[name]=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
     value=this.brandRawOutput(value,job.rawContext);this.assets.trim();this.workerRawStats=packet.rawStats;this.workerAssetStats=packet.assetStats;this.finish(job,null,value);
    }catch(error){this.assets.trim();this.finish(job,error);}
   });

@@ -178,16 +178,13 @@ async function openPath(file, recover = true) {
   if(['.docx','.pdf','.png','.jpg','.jpeg','.webp','.gif','.bmp','.svg','.avif'].includes(ext))return {preview:{path:file,name:path.basename(file)}};
   if (!['.nm', '.wm', '.md', '.txt', '.py'].includes(ext)) throw Error('Unsupported file type.');
 
-  const bytes = await require('./read-limited.cjs').readLimited(file,200*1024*1024,'Open Notepads up to 200 MB.');
-
+  if(['.nm','.wm'].includes(ext)){
+    const codec=require('./archive-codec.cjs'),inspected=await codec.inspectFile(file,{files:false}),parsed=inspected.doc,issued=new Set(inspected.issuedRawTokens||[]),release=async()=>{if(codec.hasRawAssetScope?.()){const descriptors=[...new Map(Object.values(parsed.assets).filter(value=>issued.has(value?.rawAssetToken)).map(value=>[value.rawAssetToken,value])).values()];if(descriptors.length)await codec.releaseScopedRawAssets(descriptors);}};
+    try{if(inspected.hasWorkspace){await release();return{workspace:await projectService.open(file)}}return await notesStore.register({path:file,text:parsed.text,assets:parsed.assets,id:parsed.id,title:parsed.title,meta:parsed.meta,created:parsed.created,revision:inspected.revision});}catch(error){await release().catch(()=>{});throw error;}
+  }
+  const bytes=await require('./read-limited.cjs').readLimited(file,200*1024*1024,'Open Notepads up to 200 MB.');
   if(ext==='.md')return notesStore.register({...await require('./markdown-files.cjs').read(file,bytes.toString('utf8')),revision:digest(bytes)});
-  if (!['.nm','.wm'].includes(ext)) return notesStore.register({ path: file, text: bytes.toString('utf8'), assets: {},revision:digest(bytes) });
-
-  const inspected=await require('./archive-codec.cjs').inspectOwned(bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?bytes:Uint8Array.from(bytes),{files:'metadata'}),parsed=inspected.doc,files=parsed.files; if(files['workspace.json'])return {workspace:await projectService.open(file)}; if (!files['document.md']) throw Error('This file does not contain document.md.');
-
-  const assets = parsed.assets;
-
-  return notesStore.register({ path: file, text: parsed.text, assets, id:parsed.id, title:parsed.title,meta:parsed.meta,created:parsed.created,revision:inspected.revision });
+  return notesStore.register({path:file,text:bytes.toString('utf8'),assets:{},revision:digest(bytes)});
 
 }
 
