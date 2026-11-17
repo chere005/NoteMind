@@ -11,7 +11,7 @@ export function InkSelectionActions({box,sheet,count,busy,colour,width,onColour,
  useEffect(()=>{if(widthInput.current?.ownerDocument.activeElement!==widthInput.current){setDraft(width===null?'':String(width));changed.current=false}},[width])
  useEffect(()=>{if(!colourEditing.current)setColourDraft(colour||'#000000')},[colour])
  useLayoutEffect(()=>{const element=colourInput.current;if(!element)return;const commit=()=>{if(!colourEditing.current)return;colourEditing.current=false;colourCommit.current(element.value)};element.addEventListener('change',commit);return()=>element.removeEventListener('change',commit)},[])
- const commitWidth=()=>{if(!changed.current)return;changed.current=false;const value=Number(draft);if(draft&&Number.isFinite(value)&&value>0)widthCommit.current(value);else setDraft(width===null?'':String(width))}
+ const commitWidth=()=>{if(!changed.current)return;changed.current=false;const text=widthInput.current?.value??draft,value=Number(text);if(text&&Number.isFinite(value)&&value>0)widthCommit.current(value);else setDraft(width===null?'':String(width))}
  useLayoutEffect(()=>{const element=row.current;if(!element)return;const measure=()=>setSize({width:element.offsetWidth,height:element.offsetHeight});measure();const observer=new ResizeObserver(measure);observer.observe(element);return()=>observer.disconnect()},[])
  const place=placeRow(box,sheet,size)
  return <div ref={row} className="ink-selection-actions" data-ink-selection="actions" role="toolbar" aria-label="Selected ink" aria-busy={busy} style={{left:sheet.x+place.left,top:sheet.y+place.top,visibility:size.width?'visible':'hidden'}} onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>event.stopPropagation()} onContextMenu={event=>event.preventDefault()}>
