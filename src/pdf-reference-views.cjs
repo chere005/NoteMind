@@ -8,6 +8,7 @@ class PDFReferenceView{
  setter(key){if(!this.setters.has(key))this.setters.set(key,next=>this.set(key,next));return this.setters.get(key);}
  attach(actions){if(this.closed)throw Error('PDF reference is closed.');this.actions=actions;return ++this.generation;}
  detach(generation){if(generation!==this.generation)return;this.refs.request.current++;clearTimeout(this.refs.saveTimer.current);this.refs.saveTimer.current=null;this.set('fieldDocument',null);void this.flush().catch(error=>this.set('status',error.message));}
+ command(action){if(this.closed||this.refs.closing.current||!this.refs.active.current)return false;try{const result=this.actions?.command?.(action);if(result?.then)result.catch(error=>this.set('status',error.message));return result??false;}catch(error){this.set('status',error.message);return false;}}
  flush(){return this.actions?.flush?.()||Promise.resolve();}
  suspend(){return this.actions?.suspend?.()||Promise.resolve();}
  close(){if(this.closed)return Promise.resolve();if(this.closeRun)return this.closeRun;const run=Promise.resolve().then(()=>this.actions?.close?.()).then(()=>{this.closed=true;this.listeners.clear();this.actions=null;});this.closeRun=run;return run.finally(()=>{if(this.closeRun===run)this.closeRun=null;});}

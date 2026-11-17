@@ -20,7 +20,7 @@ const memory=setInterval(()=>{
  if(bytes>1024**3)finish(Error('Owned Electron working set exceeded 1 GiB.'));
 },40);
 function finish(error){
- if(finished)return;finished=true;clearTimeout(watchdog);clearInterval(memory);
+ if(finished)return;if(!error&&errors.length)error=Error('App runtime: '+errors.join('; '));finished=true;clearTimeout(watchdog);clearInterval(memory);
  const value={ok:!error,phase,error:error?.stack,peakWorkingSetBytes:peak,results,errors};
  fs.mkdirSync(output,{recursive:true});fs.writeFileSync(path.join(output,'result.json'),JSON.stringify(value,null,2));
  console.log(JSON.stringify(value));
@@ -91,7 +91,7 @@ async function setup(){
    build.onLoad({filter:/\/tablet-entry\.tsx$/},async args=>{
     let contents=await fs.promises.readFile(args.path,'utf8');
     const marker=' const [loaded,setLoaded]';assert.ok(contents.includes(marker));
-    contents=contents.replace(marker,' window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current,pdf:pdfViews.current});\n'+marker);
+    contents=contents.replace(marker,' window.fixturePenCommand=runPenAction;window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current,pdf:pdfViews.current});\n'+marker);
     const mount="createRoot(document.getElementById('tablet-root')).render(<App/>);";assert.ok(contents.includes(mount));
     contents=contents.replace(mount,"const fixtureRoot=createRoot(document.getElementById('tablet-root'));window.fixtureUnmount=()=>fixtureRoot.unmount();fixtureRoot.render(<App/>);");
     return{contents,loader:'tsx',resolveDir:path.dirname(args.path)};
@@ -102,8 +102,8 @@ async function setup(){
  win=new BrowserWindow({width:1100,height:900,show:false,focusable:false,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
  win.webContents.session.setPermissionRequestHandler((_,__,done)=>done(false));
  win.webContents.setWindowOpenHandler(()=>({action:'allow',overrideBrowserWindowOptions:{show:false,focusable:false,width:1080,height:1788,webPreferences:{contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}}}));
- win.webContents.on('did-create-window',child=>{children.add(child);child.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message)});child.on('closed',()=>children.delete(child));});
- win.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message)});
+ win.webContents.on('did-create-window',child=>{children.add(child);child.webContents.on('console-message',event=>{if(event.level==='warning'||event.level==='error'||Number(event.level)>=2)errors.push(event.message)});child.on('closed',()=>children.delete(child));});
+ win.webContents.on('console-message',event=>{if(event.level==='warning'||event.level==='error'||Number(event.level)>=2)errors.push(event.message)});
  await win.loadFile(path.join(directory,'index.html'));
 }
 async function run(){
@@ -139,8 +139,20 @@ async function run(){
   await evaluate('fixtureSetPad(false)');await until(`!document.querySelector('.pad-placeholder')&&!!document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]')&&!document.querySelector('.pdf-reference-loading')`);
   assert.equal(await evaluate('fixturePDFModel.strokes.length'),1);assert.equal(await evaluate('fixturePDFModel.canUndo'),true);
  }
+ phase='active-pdf-pen-commands';
+ await evaluate("fixturePenCommand('nextSheet')");await until('fixturePDFView.getSnapshot().page===2&&!fixturePDFView.getSnapshot().loading');
+ assert.equal(await evaluate('fixtureOwners.camera.models.current[0].page.strokes.length'),1);
+ await evaluate("fixturePenCommand('prevSheet')");await until('fixturePDFView.getSnapshot().page===1&&!fixturePDFView.getSnapshot().loading');
+ await evaluate("window.fixturePDFBackdrop=fixturePDFModel.backdrop;fixturePenCommand('clearSheet')");await until('fixturePDFModel.strokes.length===0');
+ assert.equal(await evaluate('fixturePDFModel.backdrop===fixturePDFBackdrop'),true,'clear removes PDF markup while preserving its page backdrop');
+ assert.equal(await evaluate('fixtureOwners.camera.models.current[0].page.strokes.length'),1,'an active PDF command cannot clear hidden camera ink');
+ await evaluate("fixturePenCommand('undo')");await until('fixturePDFModel.strokes.length===1');
+ await evaluate("fixturePenCommand('clearSelection');fixturePenCommand('deleteSelection');fixturePDFView.flush()");
+ assert.equal(await evaluate('fixturePDFModel.strokes.length'),1);assert.equal(await evaluate('fixtureOwners.camera.models.current[0].page.strokes.length'),1);
+ results.push({phase,nextPrevious:true,clearMarkupOnly:true,undoRestored:true,hiddenCameraPreserved:true});
+ const savedBeforeClose=await evaluate('fixturePDF.saves.length');phase='pdf-ink-portal-save';
  await evaluate(`fixtureHoldPDFSave();(()=>{const el=document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]'),r=el.getBoundingClientRect();for(const[type,x,y,buttons]of[['pointerdown',.3,.3,1],['pointermove',.7,.6,1],['pointerup',.7,.6,0]])el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:32,button:0,buttons,pressure:buttons?.5:0,clientX:r.left+x*r.width,clientY:r.top+y*r.height}));})()`);
- await until('fixturePDFModel.strokes.length===2');await evaluate(`document.querySelector('[data-doc-close="/fixture/reference.pdf"]').click()`);await until('fixturePDF.saves.length===2');
+ await until('fixturePDFModel.strokes.length===2');await evaluate(`document.querySelector('[data-doc-close="/fixture/reference.pdf"]').click()`);await until('fixturePDF.saves.length==='+String(savedBeforeClose+1));
  assert.equal(await evaluate('fixtureReleased.includes("token-PDF")'),false);assert.equal(await evaluate('fixturePDF.closes.length'),0);
  await evaluate('fixturePDF.releaseSave()');await until('fixtureReleased.includes("token-PDF")');assert.equal(await evaluate('fixturePDF.closes.length'),1);assert.equal(await evaluate('fixtureOwners.pdf.values.size'),0);
  results.push({phase,opens:1,closes:1,strokes:2,portalMoves:4,keptUndo:true,releaseAfterSave:true});
