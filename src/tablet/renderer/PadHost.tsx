@@ -32,6 +32,7 @@ export function PadHost({children}:{children:ReactNode}){
    pad=window.open('about:blank',FRAME)
    if(!pad)return
    const d=pad.document;d.title='NoteMind Drawing';d.head.replaceChildren()
+   for(const policy of document.querySelectorAll('meta[http-equiv="Content-Security-Policy" i]'))d.head.append(policy.cloneNode(true))
    const base=d.createElement('base');base.href=document.baseURI;d.head.append(base)
    for(const style of document.querySelectorAll('link[rel="stylesheet"],style'))d.head.append(style.cloneNode(true))
    const css=d.createElement('style');css.textContent='html,body,#notemind-pad-root{width:100%;height:100%;margin:0;overflow:hidden}#notemind-pad-root>.tablet-pane{height:100%;width:100%}';d.head.append(css)
