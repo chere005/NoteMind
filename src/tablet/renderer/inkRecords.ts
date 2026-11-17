@@ -1,6 +1,7 @@
 import graphics from '../../graphics-pane.js'
 import {inspectBinaryDrawing} from '../../binary-drawing.js'
 import {PersistentInkIdentity} from '../../ink-identity.cjs'
+import {createAffineInkIdentity} from '../../affine-ink-identity.cjs'
 import {PersistentInkOrder} from '../../ink-order.cjs'
 
 export const MAX_INK_POINTS=2000000
@@ -53,7 +54,7 @@ export class InkRecordTable{
  private account(){const buffers=new Set<ArrayBufferLike>();this.bytes=this.storedRecords=0;for(let i=0;i<this.batches.length;i++){const batch=this.batches[i];if(batch&&this.uses[i]){this.storedRecords+=batch.count;if(!buffers.has(batch.bytes.buffer)){buffers.add(batch.bytes.buffer);this.bytes+=batch.bytes.buffer.byteLength}}else this.batches[i]=null}}
  static async prepare(previous:InkRecordTable|null,request:any,maxBytes:number,pause:()=>Promise<void>,indexFactory:IndexFactory=indexDefault){
   if(previous?.order&&request.order!==undefined&&request.patches===undefined)request=await localOrderPatch(previous,request,pause);const next=new InkRecordTable();next.batches=previous?previous.batches.slice():[];next.indexFactory=indexFactory;let added:any=null,addedBatch:InkBatch|null=null,addedAt=-1,addedValues:Float64Array|null=null
-  if(request.additions){if(!ArrayBuffer.isView(request.additions)||request.additions.buffer.byteLength>maxBytes)throw Error('Ink cache is too large.');addedBatch=await batchOf(request.additions,request.addIds,pause);addedAt=next.batches.indexOf(null);if(addedAt<0)addedAt=next.batches.length;next.batches[addedAt]=addedBatch;addedValues=new Float64Array(addedBatch.count);for(let i=0;i<addedValues.length;i++){if((previous?.lookup?.locator(idAt(addedBatch,i))??-1)>=0)throw Error('Duplicate ink geometry.');addedValues[i]=locator(addedAt,i);if((i+1)%8192===0)await pause()}added=await PersistentInkIdentity.build(rows(addedValues,next),{yieldControl:pause})}
+  if(request.additions){if(!ArrayBuffer.isView(request.additions)||request.additions.buffer.byteLength>maxBytes)throw Error('Ink cache is too large.');addedBatch=await batchOf(request.additions,request.addIds,pause);addedAt=next.batches.indexOf(null);if(addedAt<0)addedAt=next.batches.length;next.batches[addedAt]=addedBatch;addedValues=new Float64Array(addedBatch.count);for(let i=0;i<addedValues.length;i++){if((previous?.lookup?.locator(idAt(addedBatch,i))??-1)>=0)throw Error('Duplicate ink geometry.');addedValues[i]=locator(addedAt,i);if((i+1)%8192===0)await pause()}added=addedBatch.ids?null:createAffineInkIdentity({start:addedBatch.idStart,step:addedBatch.idStep,length:addedBatch.count,locatorStart:locator(addedAt,0)});added ||= await PersistentInkIdentity.build(rows(addedValues,next),{yieldControl:pause})}
   next.uses=new Uint32Array(next.batches.length);const options=()=>({...indexFactory(next),yieldControl:pause})
   if(request.patches!==undefined){
    if(!previous?.order||!Array.isArray(request.patches)||request.patches.length>128||request.order!==undefined)throw Error('Invalid ink order patches.');next.fullChange=false;next.uses.set(previous.uses);next.points=previous.points;let order=previous.order;const currentOptions=options();if(order.viewKey!==currentOptions.viewKey||order.maxIndexRefs!==currentOptions.maxIndexRefs)order=await order.reindex(currentOptions);const changes=new Map<number,{id:number;locator:number;count:number}>();let work=0
