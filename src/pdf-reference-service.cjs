@@ -27,12 +27,12 @@ class PDFReferenceService {
  serialize(_sender,bytes){return this.jobs.call('serialize',{bytes});}
  stats(sender,id){return this.get(sender,id).client.call('stats');}
  info(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('info',{page});}
- text(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return state.client.call('text',{page});}
+ text(sender,id,page,options={}){const state=this.get(sender,id);this.pageNumber(state,page);if(options.requestId!==undefined&&(typeof options.requestId!=='string'||options.requestId.length>128))throw Error('Invalid PDF text request.');return state.client.call('text',{page,requestId:options.requestId});}
  ink(sender,id,page){const state=this.get(sender,id);this.pageNumber(state,page);return this.jobs.call('page',{identity:state.identity,sourceHash:state.sourceHash,page});}
  async save(sender,id,{page,bytes,expectedRevision=null,noteRevision=null,baseline=null}){
   const state=this.get(sender,id);this.pageNumber(state,page);const args={identity:state.identity,sourceHash:state.sourceHash,pageCount:state.pageCount,page,bytes,expectedRevision,noteRevision,baseline,sourcePath:state.file},run=(async()=>{let saved=await this.jobs.call('save',args);if(saved.needsSource){const sourceBytes=await state.client.call('source');saved=await this.jobs.call('save',{...args,bytes:saved.bytes,sourceBytes});}state.index ||= {pages:{}};state.index.pages[page]={revision:saved.revision};return saved;})();state.saves.add(run);try{return await run;}finally{state.saves.delete(run);}
  }
- async previous(sender,id,sourceHash){const current=this.get(sender,id),entry=current.previous.find(value=>value.sourceHash===sourceHash);if(!entry)throw Error('This marked PDF version is unavailable.');return this.open(sender,{file:current.file,attachment:current.attachment,previousHash:sourceHash});}
+ async previous(sender,id,sourceHash){const current=this.get(sender,id),entry=current.previous.find(value=>value.sourceHash===sourceHash);if(!entry)throw Error('This marked PDF version is unavailable.');const next=await this.open(sender,{file:current.file,attachment:current.attachment,previousHash:sourceHash});if(next.id!==id)try{await this.close(sender,id);}catch(error){await this.close(sender,next.id).catch(()=>{});throw error;}return next;}
  async close(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)return;await Promise.all([...state.saves,...(state.exports||[])]);state.client.dispose();owned.delete(id);}
  retain(sender,id,retained){if(typeof retained!=='boolean')throw Error('Invalid PDF reference ownership.');this.get(sender,id).retained=retained;}
  cancel(sender,id,requestId){this.get(sender,id).client.cancel(requestId);}

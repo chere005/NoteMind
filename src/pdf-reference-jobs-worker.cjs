@@ -4,7 +4,7 @@ parentPort.on('message',async packet=>{
  if(packet.cancel){controllers.get(packet.cancel)?.abort();return;}const {id,operation,args}=packet,controller=new AbortController();controllers.set(id,controller);
  try{
   let value,transfers=[];controller.signal.throwIfAborted();
-  if(operation==='inspect'){const file=await fs.realpath(args.file),stat=await fs.stat(file);if(stat.size>150*1024*1024)throw Error('Open PDFs up to 150 MB.');const bytes=await fs.readFile(file);value={file,sourceHash:sha(bytes),size:bytes.length,bytes:bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?new Uint8Array(bytes.buffer):Uint8Array.from(bytes)};transfers=[value.bytes.buffer];}
+  if(operation==='inspect'){const file=await fs.realpath(args.file),stat=await fs.stat(file);if(stat.size>150*1024*1024)throw Error('Open PDFs up to 150 MB.');const bytes=await readLimited(file,150*1024*1024,'Open PDFs up to 150 MB.');value={file,sourceHash:sha(bytes),size:bytes.length,bytes:bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?new Uint8Array(bytes.buffer):Uint8Array.from(bytes)};transfers=[value.bytes.buffer];}
   else if(operation==='state')value={index:await store.read(args.identity,args.sourceHash),previous:await store.previous(args.identity,args.sourceHash)};
   else if(operation==='page'){const page=await store.page(args.identity,args.sourceHash,args.page);value=page?{revision:page.revision,data:page.bytes.toString('base64')}:null;}
   else if(operation==='scanBegin'){if(scanSessions.size)throw Error('A scan is already being assembled.');scanSessions.set(args.id,await require('./scan-pdf.cjs').createAssembler());value=true;}
@@ -15,7 +15,7 @@ parentPort.on('message',async packet=>{
   else if(operation==='hash'){if(typeof args.data!=='string'||args.data.length>200*1024*1024)throw Error('Invalid PDF source bytes.');value=sha(Buffer.from(args.data,'base64'));}
   else if(operation==='match'){if(typeof args.data!=='string'||args.data.length>200*1024*1024||!/^[a-f0-9]{64}$/.test(args.sourceHash))throw Error('Invalid PDF source check.');value=sha(Buffer.from(args.data,'base64'))===args.sourceHash;}
   else if(operation==='attachment'){if(typeof args.data!=='string'||args.data.length>200*1024*1024)throw Error('The attachment is too large.');const bytes=Buffer.from(args.data,'base64'),file=path.join(args.directory,sha(bytes).slice(0,20)+path.extname(args.name));await require('./pdf-ink-store.cjs').atomic(file,bytes);value={path:file,name:path.basename(args.name)};}
-  else if(operation==='serialize'){inkCodec.decode(args.bytes);value={revision:sha(args.bytes),data:Buffer.from(args.bytes.buffer,args.bytes.byteOffset,args.bytes.byteLength).toString('base64')};}
+  else if(operation==='serialize'){inkCodec.validate(args.bytes);value={revision:sha(args.bytes),data:Buffer.from(args.bytes.buffer,args.bytes.byteOffset,args.bytes.byteLength).toString('base64')};}
   else if(operation==='save'){
    try{const result=await store.save(args);value={revision:result.revision,original:result.original,durabilityWarning:result.durabilityWarning};}
    catch(error){if(error.code!=='PDF_OPENED_BYTES_REQUIRED')throw error;value={needsSource:true,bytes:args.bytes};transfers=[args.bytes.buffer];}
