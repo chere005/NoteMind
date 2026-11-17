@@ -81,7 +81,7 @@ const MIN_BOX_PX = 8
 const DOUBLE_MS = 450
 const HANDLES: BoxHandle[] = ["nw", "ne", "sw", "se"]
 const inkCounts=new WeakMap<object,number>()
-const denseInk=(strokes:InkStroke[])=>{let count=inkCounts.get(strokes);if(count===undefined){count=strokes.reduce((n,stroke)=>n+stroke.points.length,0);inkCounts.set(strokes,count)}return count>=50000||strokes.length>=2500}
+const denseInk=(strokes:InkStroke[])=>{if(strokes.length>=2500)return true;let count=inkCounts.get(strokes);if(count===undefined){count=strokes.reduce((n,stroke)=>n+stroke.points.length,0);inkCounts.set(strokes,count)}return count>=50000}
 const displayRatio=(size:Size,ratio:number)=>size.width>0&&size.height>0?Math.min(ratio,8192/size.width,8192/size.height,Math.sqrt(16*1024*1024)/Math.sqrt(size.width)/Math.sqrt(size.height)):ratio
 
 type DeferredInput={pointerId:number;page:TabletPage;action:'erase'|'select';points:{unit:Point;raw:Point;px:Point}[];origin:Rect|null;view:Rect;pixelSize:Size;unit:number;ended:boolean;cancelled:boolean;done:Promise<void>;resolve:()=>void;reject:(error:any)=>void;rejectProject:(error:any)=>void;project:(map:any)=>void;release:()=>void;barrier:Promise<void>;started:boolean;marked:boolean;dragged:boolean;replacements:Map<InkStroke,InkStroke|null>;controller:AbortController;erased:InkStroke[];lastSample?:Point}
