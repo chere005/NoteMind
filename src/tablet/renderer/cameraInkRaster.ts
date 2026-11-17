@@ -26,7 +26,7 @@ export function cameraRasterPlan(view:InkView,ratio=1){
 }
 export type CameraRasterPlan=NonNullable<ReturnType<typeof cameraRasterPlan>>
 export async function packCameraInk(sheet:any,options:any={},pack:any=graphics.encodeBytesAsync,extra:any={}){
- if(Array.isArray(sheet)){const aspect=typeof options==='number'?options:options.aspect??1,widthScale=typeof pack==='number'?pack:options.widthScale??1,settings=typeof options==='number'?extra:options;return packCameraInk({name:'Camera ink',aspect,strokes:sheet,paper:{...plain,cameraWidthScale:widthScale}},settings,graphics.encodeBytesAsync)}
+ if(Array.isArray(sheet)){const aspect=typeof options==='number'?options:options.aspect??1,widthScale=typeof pack==='number'?pack:options.widthScale??1,settings=typeof options==='number'||typeof pack==='number'?extra:options;return packCameraInk({name:'Camera ink',aspect,strokes:sheet,paper:{...plain,cameraWidthScale:widthScale}},settings,graphics.encodeBytesAsync)}
  const scale=sheet.paper?.cameraWidthScale??1,{cameraWidthScale:ignored,...paper}=sheet.paper||plain
  if(!finite(scale)||scale<=0)throw Error('Invalid camera ink width scale.')
  const check=()=>{if(options.signal?.aborted)throw abort()},yieldControl=options.yieldControl||graphics.yieldTask;check()
