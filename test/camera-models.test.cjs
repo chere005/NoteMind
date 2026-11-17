@@ -7,3 +7,9 @@ test('async capture completion observes all intervening edits without waiting fo
 test('closed capture owners cannot insert into an unrelated page and subscribers see only committed snapshots',()=>{
  const owner={},other={},models=new CameraModels([{page:owner},{page:other}]),seen=[],unsubscribe=models.subscribe(()=>seen.push(models.getSnapshot()));models.update(old=>old.filter(item=>item.page!==owner));const committed=models.current;models.update(old=>old.some(item=>item.page===owner)?[...old,{page:{}}]:old);assert.equal(models.current,committed);assert.equal(seen.length,1);unsubscribe();models.update(old=>[...old,{page:{}}]);assert.equal(seen.length,1);assert.throws(()=>models.update([]));assert.equal(models.current.length,2);
 });
+test('drawing model setters publish once and retain exact valid array identity before UI renders',()=>{
+ const {PageModels}=require('../src/camera-models.js'),models=new PageModels([{page:{},name:'Original'},{page:{},name:'Other'}]);let changes=0;models.subscribe(()=>changes++);
+ const next=models.current.map((item,index)=>index?item:{...item,name:'Renamed'});models.current=next;models.update(next);
+ assert.equal(models.current,next);assert.equal(models.getSnapshot(),next);assert.equal(changes,1);assert.equal(models.current[0].name,'Renamed');
+ assert.throws(()=>models.update(old=>[{...old[0]}, {...old[1],pageId:old[0].pageId}]),/Duplicate/);assert.equal(models.current,next);
+});

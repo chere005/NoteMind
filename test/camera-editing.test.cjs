@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {afterCameraCapture,outsideCameraSelection}=require('../src/camera-editing.js');
 const {createInkActionController,projectInkSnapshot,appendInkStroke}=require('../src/ink-mutations.js');
 const stroke=(x=.5)=>({colorHex:'#123456',width:2,points:[{x,y:.5}]});
-const owner=strokes=>({strokes,leases:0,retainGeometry(){this.leases++;return()=>this.leases--},async replaceAsync(next,options){if(!options.valid())return false;this.before=this.strokes;this.strokes=next;return true},add(value){this.strokes=[...this.strokes,value]}});
+const owner=strokes=>({strokes,get currentGeometryPoints(){return this.strokes.reduce((sum,stroke)=>sum+stroke.points.length,0)},leases:0,retainGeometry(){this.leases++;return()=>this.leases--},async replaceAsync(next,options){if(!options.valid())return false;this.before=this.strokes;this.strokes=next;return true},add(value){this.strokes=[...this.strokes,value]}});
 
 test('camera consumption preserves later repeated identities and intervening edits',async()=>{
  const a=stroke(),b=stroke(.7);assert.deepEqual(await afterCameraCapture([a,a],[a,a,a,b]),[a,b]);assert.equal(await afterCameraCapture([a],[b,a]),null);assert.deepEqual(await afterCameraCapture([a],[a]),[]);

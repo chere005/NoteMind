@@ -1,0 +1,23 @@
+const test=require('node:test'),assert=require('node:assert/strict'),{load}=require('./helpers/tablet-surface.cjs');
+const view={size:{width:10,height:20},shown:{x:0,y:0,width:10,height:20},zoom:null},canvas=()=>({width:10,height:20});
+const deferred=()=>{let resolve;const promise=new Promise(next=>resolve=next);return {promise,resolve}};
+function moduleFor(bitmap){return load('src/tablet/renderer/cameraProcessing.ts',{Blob,Buffer,TextEncoder,TextDecoder,AbortController,setTimeout,clearTimeout,setImmediate,createImageBitmap:bitmap})}
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+async function until(test){for(let i=0;i<50;i++){if(test())return;await tick()}throw Error('Capture stage did not start');}
+
+test('camera worker receives independent binary ink and owns the transferred bitmap only once',async()=>{
+ let closed=0,terminated=0,packet;const bitmap={close(){closed++}},blob=new Blob(['fixture'],{type:'image/png'}),{CameraProcessing}=moduleFor(async()=>bitmap);
+ const worker={postMessage(value,transfer){packet=value;assert.equal(transfer[0],bitmap);assert.equal(transfer[1],value.bytes.buffer);bitmap.close();queueMicrotask(()=>worker.onmessage({data:{blob}}));},terminate(){terminated++}};
+ const owner=new CameraProcessing(()=>worker),stroke={colorHex:'#123456',width:2,points:[{x:.1,y:.2}]},points=stroke.points,source=canvas();
+ assert.equal(await owner.run(source,{strokes:[stroke],view}),blob);assert.equal(closed,1);assert.equal(terminated,1);assert.equal(stroke.points,points);assert.equal(stroke.width,2);assert.equal(source.width,10);assert.ok(packet.bytes.byteLength>24);
+});
+test('disposing while a bitmap opens closes its late result and prevents worker publication',async()=>{
+ const opening=deferred();let started=false,closed=0,factories=0;const {CameraProcessing}=moduleFor(()=>{started=true;return opening.promise}),owner=new CameraProcessing(()=>{factories++;throw Error('A cancelled capture must not create a worker')});
+ const pending=owner.run(canvas(),{view});await until(()=>started);owner.dispose();await assert.rejects(pending,{name:'AbortError'});opening.resolve({close(){closed++}});await tick();assert.equal(closed,1);assert.equal(factories,0);await assert.rejects(owner.run(canvas(),{view}),{name:'AbortError'});
+});
+test('capture failures release ownership and a later job can retry; overlapping jobs are rejected',async()=>{
+ let attempts=0,closed=0,terminated=0;const {CameraProcessing}=moduleFor(async()=>({close(){closed++}})),gate=deferred();
+ const owner=new CameraProcessing(()=>{if(!attempts++)throw Error('Worker creation failed');const worker={postMessage(packet){packet.bitmap.close();void gate.promise.then(()=>worker.onmessage({data:{blob:new Blob(['ok'],{type:'image/png'})}}))},terminate(){terminated++}};return worker});
+ await assert.rejects(owner.run(canvas(),{view}),/Worker creation failed/);assert.equal(closed,1);
+ const pending=owner.run(canvas(),{view});await until(()=>attempts===2);await assert.rejects(owner.run(canvas(),{view}),/already finishing/);gate.resolve();await pending;assert.equal(terminated,1);assert.equal(closed,2);
+});

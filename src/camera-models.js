@@ -6,13 +6,16 @@ class CameraModels {
     const normalize = items => {
       if (!Array.isArray(items) || !items.length) throw Error('At least one camera page must remain open.');
       const used = new Set();
-      return items.map(item => {
+      let changed=false;
+      const normalized=items.map(item => {
         if (!item?.page || typeof item.page !== 'object') throw Error('Invalid camera page model.');
         const pageId = item.pageId || identities.get(item.page) || id();
         if (used.has(pageId)) throw Error('Duplicate camera page identity.');
         used.add(pageId); identities.set(item.page, pageId);
-        return item.pageId === pageId ? item : {...item,pageId};
+        if(item.pageId===pageId)return item;
+        changed=true;return {...item,pageId};
       });
+      return changed?normalized:items;
     };
     this.pages = normalize(pages);
     this.listeners = new Set();
@@ -25,5 +28,6 @@ class CameraModels {
     };
   }
   get current() { return this.pages; }
+  set current(value) { this.update(value); }
 }
-module.exports = {CameraModels};
+module.exports = {CameraModels,PageModels:CameraModels};

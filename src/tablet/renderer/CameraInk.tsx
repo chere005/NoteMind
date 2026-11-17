@@ -40,7 +40,7 @@ import { holdBegins, inContact, penLifted, pressAction } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
 import { paintStrokes,paintStrokesYielding, strokeUnderAsync, type InkStroke, type TabletPage } from "./tabletPage"
-import {createInkActionController,hasPendingInkMutations,subscribeInkMutations} from '../../ink-mutations.js'
+import {createInkActionController,hasPendingInkMutations,subscribeInkMutations,reserveInkStroke,capacityError} from '../../ink-mutations.js'
 import {yieldTask} from '../../graphics-pane.js'
 import {primeStrokeBox} from '../../stroke-bounds.js'
 import {CameraInkRenderer,cameraRasterPlan,type CameraRasterPlan} from './cameraInkRaster'
@@ -102,7 +102,7 @@ interface Props {
 const ERASE_RADIUS = 8
 
 type Gesture =
-  | { kind: "draw"; pointerId: number; stroke: InkStroke; drawn: number; page: TabletPage; bounds:{x:number;y:number;right:number;bottom:number} }
+  | { kind: "draw"; pointerId: number; stroke: InkStroke; drawn: number; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;full?:boolean;bounds:{x:number;y:number;right:number;bottom:number} }
   | { kind: "erase"; pointerId: number; page: TabletPage; samples:Point[]; ended:boolean; wake:(()=>void)|null; preview:InkStroke[]|null; view:InkView; done?:Promise<any> }
 
 export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
@@ -117,6 +117,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   const painted=useRef<{page:TabletPage;plan:CameraRasterPlan;matrix:Matrix}|null>(null)
   const hovered = useRef(false)
   const touching = useRef(false)
+  const fullPages=useRef(new WeakSet<TabletPage>())
   const actionControllers=useRef(new WeakMap<TabletPage,ReturnType<typeof createInkActionController>>())
   const controllerSet=useRef(new Set<ReturnType<typeof createInkActionController>>())
   const tools = useSheetTools()
@@ -158,7 +159,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
       }
       const strokes=preview||p.strokes,source=p.strokes,version=++paintVersion.current
       const valid=()=>version===paintVersion.current&&latest.current.page===p&&latest.current.on&&p.strokes===source&&(!gesture.current||(gesture.current.kind==='erase'&&gesture.current.preview===strokes))&&(!hasPendingInkMutations(p)||gesture.current?.kind==='erase'&&gesture.current.preview===strokes)
-      if(strokes.length>4096||p.retainedGeometryPoints>20000){
+      if(strokes.length>4096||p.currentGeometryPoints>20000){
         renderer.current ||=new CameraInkRenderer()
         renderer.current.request({page:p,strokes,ownerStrokes:source,view:v,ratio,valid},(result,output,current)=>{
           if(!valid()||!current()||!canvas.current)return false
@@ -193,6 +194,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   }, [paint])
 
   const reportError=(error:any)=>{if(error?.name!=='AbortError')latest.current.onError?.(error)}
+  const reportCapacity=(owner:TabletPage)=>{if(!fullPages.current.has(owner)){fullPages.current.add(owner);reportError(capacityError())}}
   const controllerFor=(owner:TabletPage)=>{
     let controller=actionControllers.current.get(owner)
     const callbacks={repaint:()=>{if(owner===latest.current.page)schedule(true)},onEdited:()=>latest.current.onEdited(),onError:reportError}
@@ -209,7 +211,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     latest.current.onDrawing(false)
     if (g.kind === "draw") {
       primeStrokeBox(g.stroke,g.bounds)
-      try{const done=controllerFor(g.page).append(g.stroke,{nativeCanonical:true});void done?.catch(reportError)}catch(error){reportError(error)}
+      try{const done=controllerFor(g.page).append(g.stroke,{nativeCanonical:true,reservation:g.reservation});void done?.catch(reportError)}catch(error){g.reservation.release();reportError(error)}
     }else{g.ended=true;g.wake?.();g.wake=null;}
   }, [paint])
 
@@ -336,10 +338,13 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
       void g.done.catch(reportError)
       return
     }
+    let reservation:ReturnType<typeof reserveInkStroke>
+    try{reservation=reserveInkStroke(p);fullPages.current.delete(p)}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY')reportCapacity(p);else reportError(error);try{canvas.current?.releasePointerCapture(event.pointerId)}catch{}return}
     const pressure = event.pressure > 0 ? event.pressure : 0.5
     const normalized=screenToInk(point,latest.current.view)
     gesture.current = {
       kind: "draw", pointerId: event.pointerId, drawn: 0, page: p,
+      reservation,
       bounds:{x:normalized.x,y:normalized.y,right:normalized.x,bottom:normalized.y},
       stroke: {
         colorHex: latest.current.colour,
@@ -369,6 +374,8 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const all = samples.length > 0 ? samples : [event.nativeEvent]
     if (g.kind === "erase") { for (const sample of all) eraseAt(g, at(sample)); return }
     for (const sample of all) {
+      if(g.full)break
+      if(!g.reservation.accept()){g.full=true;reportCapacity(g.page);break}
       const point=screenToInk(at(sample), latest.current.view)
       g.stroke.points.push(point)
       g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)
@@ -384,7 +391,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     event.stopPropagation()
     if(g.kind==='draw'&&event.type!=='pointercancel'){
       const point=screenToInk(at(event),latest.current.view),last=g.stroke.points.at(-1)
-      if(!last||last.x!==point.x||last.y!==point.y){g.stroke.points.push(point);if(g.stroke.pressures)g.stroke.pressures.push(g.stroke.pressures.at(-1)??.5);g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)}
+      if(!last||last.x!==point.x||last.y!==point.y){if(!g.full&&g.reservation.accept()){g.stroke.points.push(point);if(g.stroke.pressures)g.stroke.pressures.push(g.stroke.pressures.at(-1)??.5);g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)}else reportCapacity(g.page)}
     }
     try { if (canvas.current?.hasPointerCapture(event.pointerId)) canvas.current.releasePointerCapture(event.pointerId) } catch { /* gone */ }
     finish()

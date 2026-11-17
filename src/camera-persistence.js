@@ -13,7 +13,9 @@ class CameraPersistence {
   constructor({api,models,makePage,getActive=()=>null,pictures,onWarning=()=>{}}) {
     Object.assign(this,{api,models,makePage,getActive,pictures,onWarning});
     this.closed=false;this.loaded=false;this.pruning=null;
-    this.queue=new SheetSaveQueue({saveSheetsDelta:delta=>api.saveCameraPagesDelta(delta)});
+    const writeAPI={saveSheetsDelta:delta=>api.saveCameraPagesDelta(delta)};
+    for(const action of ['begin','write','finish','cancel'])if(typeof api[action+'CameraPagesDeltaUpload']==='function')writeAPI[action+'SheetsDeltaUpload']=(...args)=>api[action+'CameraPagesDeltaUpload'](...args);
+    this.queue=new SheetSaveQueue(writeAPI);
     this.cache=new SheetModelCache();
     const pageAPI={loadSheetPage:(id,options)=>api.loadCameraPage(id,options),loadSheetChunk:(...args)=>api.loadSheetChunk(...args),finishSheetLoad:(...args)=>api.finishSheetLoad(...args)};
     this.lazy=new SheetLazyLoader({api:pageAPI,queue:this.queue,getSheets:()=>this.models.current,install:(...args)=>this.install(...args)});

@@ -270,9 +270,11 @@ ipcMain.handle('load-sheet-state', async (event,options) => {await sheetWrite;co
 ipcMain.handle('load-sheet-chunk',(event,session,key,offset)=>sheetLoads.read(event.sender.id,session,key,offset));
 ipcMain.handle('finish-sheet-load',(event,session)=>sheetLoads.release(event.sender.id,session));
 ipcMain.handle('save-sheets', async (_,data) => {const pending=sheetPersistence().save(data);sheetWrite=pending.catch(()=>{});await pending;});
-require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{service:()=>sheetPersistence(),onWrite:pending=>{sheetWrite=pending.catch(()=>{});}});
+const sheetUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{service:()=>sheetPersistence(),onWrite:pending=>{sheetWrite=pending.catch(()=>{});}});
 ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
+const cameraUploads=require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{prefix:'camera-delta',service:()=>cameraPersistence(),onWrite:pending=>{cameraWrite=pending.catch(()=>{});}});
+app.on('will-quit',()=>{void sheetUploads.dispose();void cameraUploads.dispose();});
 ipcMain.handle('list-camera-pages',async event=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');await cameraWrite;const state=await cameraPersistence().listPages();if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return state;});
 ipcMain.handle('load-camera-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid camera page identity.');await cameraWrite;const state=await cameraPersistence().loadPage(pageId);if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'camera-page:'+pageId,maxBytes:256*1024*1024}):state;});
 ipcMain.handle('save-camera-pages-delta',async(_,delta)=>{const pending=cameraPersistence().saveDelta(delta);cameraWrite=pending.catch(()=>{});return pending;});
