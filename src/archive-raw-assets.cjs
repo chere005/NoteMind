@@ -1,0 +1,58 @@
+// Immutable worker-owned bytes. Only opaque owner/epoch descriptors cross to Main.
+const {createHash,randomUUID}=require('node:crypto');
+const token=value=>typeof value==='string'&&/^[a-f0-9-]{36}$/i.test(value);
+const isRawAsset=value=>!!value&&typeof value==='object'&&Object.keys(value).length===4&&token(value.rawAssetToken)&&Number.isSafeInteger(value.bytes)&&value.bytes>=0&&Number.isSafeInteger(value.chars)&&value.chars>=0&&Number.isSafeInteger(value.epoch)&&value.epoch>0;
+const rawMissing=missing=>Object.assign(Error('Raw archive assets expired before the operation started.'),{code:'ARCHIVE_RAW_ASSET_MISSING',missing});
+const busy=()=>Error('Archive raw asset capacity is busy. The current document remains open.');
+class RawAssetStore{
+ constructor({epoch,maxBytes=384*1024*1024,maxCacheBytes=256*1024*1024,maxEntries=20000,maxUploads=8,maxLeases=128,legacy,uuid=randomUUID}={}){Object.assign(this,{epoch,maxBytes,maxCacheBytes,maxEntries,maxUploads,maxLeases,legacy,uuid});this.entries=new Map();this.payloads=new Map();this.uploads=new Map();this.leases=new Map();this.reads=new Map();this.bytes=0;this.reserved=0;this.working=0;this.reuses=0;}
+ stats(){return {bytes:this.bytes,reserved:this.reserved,working:this.working,legacyBytes:this.legacy?.bytes||0,entries:this.entries.size,uploads:this.uploads.size,leases:this.leases.size,reads:this.reads.size,reuses:this.reuses,epoch:this.epoch};}
+ used(){return this.bytes+this.reserved+this.working+(this.legacy?.bytes||0);}
+ count(){return this.entries.size+this.uploads.size+(this.legacy?.entries.size||0);}
+ drop(key){const entry=this.entries.get(key);if(!entry||entry.leases.size)return false;this.entries.delete(key);entry.payload.tokens.delete(key);if(!entry.payload.tokens.size){this.payloads.delete(entry.payload.hash);this.bytes-=entry.payload.bytes.length;}return true;}
+ claim(bytes,extraEntries=0){
+  if(!Number.isSafeInteger(bytes)||bytes<0||bytes>this.maxBytes)throw busy();
+  for(const key of this.legacy?.entries.keys()||[]){if(this.used()+bytes<=this.maxBytes&&this.count()+extraEntries<=this.maxEntries)break;this.legacy.remove(key);}
+  for(const key of this.entries.keys()){if(this.used()+bytes<=this.maxBytes&&this.count()+extraEntries<=this.maxEntries)break;this.drop(key);}
+  if(this.used()+bytes>this.maxBytes||this.count()+extraEntries>this.maxEntries)throw busy();
+ }
+ owner(owner){if(!token(owner))throw Error('Invalid raw archive asset owner.');}
+ begin({owner,bytes,chars}){
+  this.owner(owner);if(!Number.isSafeInteger(bytes)||bytes<0||bytes>150*1024*1024||!Number.isSafeInteger(chars)||chars<0||chars>384*1024*1024)throw Error('Invalid raw archive asset length.');if(this.uploads.size>=this.maxUploads)throw busy();this.claim(bytes,1);const upload=this.uuid(),state={owner,bytes,chars,offset:0,data:Buffer.allocUnsafeSlow(bytes),hash:createHash('sha256')};this.uploads.set(upload,state);this.reserved+=bytes;return {upload,epoch:this.epoch};
+ }
+ append({upload,owner,epoch,offset,data}){
+  this.owner(owner);const state=this.uploads.get(upload);if(epoch!==this.epoch||!state)throw rawMissing([upload]);if(state.owner!==owner)throw Error('Raw archive upload belongs to another owner.');if(!(data instanceof Uint8Array)||data.byteOffset!==0||data.byteLength!==data.buffer.byteLength||data.byteLength>512*1024||!Number.isSafeInteger(offset)||offset!==state.offset||!data.byteLength||state.offset+data.byteLength>state.bytes)throw Error('Invalid raw archive upload chunk.');state.data.set(data,state.offset);state.hash.update(data);state.offset+=data.byteLength;return state.offset;
+ }
+ finish({upload,owner,epoch}){
+  this.owner(owner);const state=this.uploads.get(upload);if(epoch!==this.epoch||!state)throw rawMissing([upload]);if(state.owner!==owner)throw Error('Raw archive upload belongs to another owner.');if(state.offset!==state.bytes)throw Error('Raw archive upload is incomplete.');const hash=state.hash.digest('hex');this.uploads.delete(upload);this.reserved-=state.bytes;return this.add(state.data,{owner,chars:state.chars,hash,copy:false});
+ }
+ cancel({upload,owner,epoch}){this.owner(owner);const state=this.uploads.get(upload);if(!state)return false;if(state.owner!==owner)throw Error('Raw archive upload belongs to another owner.');if(epoch!==this.epoch)return false;this.uploads.delete(upload);this.reserved-=state.bytes;return true;}
+ add(bytes,{owner,chars=4*Math.ceil(bytes.length/3),hash,copy=true,lease}={}){
+  this.owner(owner);if(!hash)hash=createHash('sha256').update(bytes).digest('hex');let payload=this.payloads.get(hash);if(payload&&payload.bytes.length!==bytes.length)throw Error('Raw archive digest has conflicting lengths.');this.claim(payload?0:bytes.length,1);payload=this.payloads.get(hash);if(!payload)this.claim(bytes.length,1);if(!payload){const data=copy?Buffer.from(Uint8Array.from(bytes).buffer):bytes;payload={hash,bytes:data,tokens:new Set(),graphicsValid:false};this.payloads.set(hash,payload);this.bytes+=data.length;}else this.reuses++;
+  const key=this.uuid(),descriptor={rawAssetToken:key,bytes:bytes.length,chars,epoch:this.epoch},entry={owner,descriptor,payload,leases:new Set(),released:false};this.entries.set(key,entry);payload.tokens.add(key);if(lease)this.pinEntry(entry,lease);return descriptor;
+ }
+ entry(descriptor,owner){
+  this.owner(owner);if(!isRawAsset(descriptor))throw Error('Invalid raw archive asset descriptor.');const entry=this.entries.get(descriptor.rawAssetToken);if(descriptor.epoch!==this.epoch||!entry)throw rawMissing([descriptor.rawAssetToken]);if(entry.owner!==owner)throw Error('Raw archive asset belongs to another owner.');if(entry.descriptor.bytes!==descriptor.bytes||entry.descriptor.chars!==descriptor.chars)throw Error('Raw archive asset descriptor cannot be changed.');return entry;
+ }
+ pinEntry(entry,lease){entry.leases.add(lease.id);lease.tokens.add(entry.descriptor.rawAssetToken);this.entries.delete(entry.descriptor.rawAssetToken);this.entries.set(entry.descriptor.rawAssetToken,entry);}
+ preflight({descriptors,owner}){
+  this.owner(owner);if(!Array.isArray(descriptors)||descriptors.length>9998)throw Error('Invalid raw archive asset preflight.');const missing=[];for(const descriptor of descriptors){if(!isRawAsset(descriptor))throw Error('Invalid raw archive asset descriptor.');const entry=this.entries.get(descriptor.rawAssetToken);if(descriptor.epoch!==this.epoch||!entry||entry.released){if(!missing.includes(descriptor.rawAssetToken))missing.push(descriptor.rawAssetToken);continue;}if(entry.owner!==owner)throw Error('Raw archive asset belongs to another owner.');this.entry(descriptor,owner);}if(missing.length)return {missing,epoch:this.epoch};if(this.leases.size>=this.maxLeases)throw busy();const lease={id:this.uuid(),owner,tokens:new Set(),reads:new Set()};this.leases.set(lease.id,lease);for(const descriptor of descriptors)this.pinEntry(this.entry(descriptor,owner),lease);return {lease:lease.id,missing:[],epoch:this.epoch};
+ }
+ context(context){const lease=this.leases.get(context?.lease);if(!context||context.epoch!==this.epoch||!lease)throw rawMissing(context?.tokens||[]);if(lease.owner!==context.owner)throw Error('Raw archive lease belongs to another owner.');return lease;}
+ resolve(descriptor,context){const lease=this.context(context),entry=this.entry(descriptor,lease.owner);if(!lease.tokens.has(descriptor.rawAssetToken))throw Error('Raw archive asset is outside the operation lease.');this.pinEntry(entry,lease);return entry.payload.bytes;}
+ info(descriptor,context){this.resolve(descriptor,context);const entry=this.entries.get(descriptor.rawAssetToken);return {bytes:entry.payload.bytes.length,sha256:entry.payload.hash};}
+ validate(name,descriptor,context){const bytes=this.resolve(descriptor,context),entry=this.entries.get(descriptor.rawAssetToken);if(/^assets\/.*\.json$/i.test(name)&&entry.payload.graphicsValid)return true;require('./archive-limits.cjs').validateEntry(name,bytes);if(/^assets\/.*\.json$/i.test(name)&&require('./graphics-pane.js').isBinary(bytes))entry.payload.graphicsValid=true;return true;}
+ decoded(bytes,info,context){
+  const lease=this.context(context);for(const key of lease.tokens){const entry=this.entries.get(key);if(entry&&entry.payload.hash===info.sha256&&entry.payload.bytes.length===bytes.length&&entry.descriptor.chars===4*Math.ceil(bytes.length/3)){this.reuses++;return entry.descriptor;}}
+  return this.add(bytes,{owner:lease.owner,hash:info.sha256,lease,copy:bytes.byteOffset!==0||bytes.byteLength!==bytes.buffer.byteLength});
+ }
+ releaseLease(context){const lease=this.leases.get(context?.lease);if(!lease)return false;if(context.epoch!==this.epoch||context.owner!==lease.owner)throw Error('Invalid raw archive lease release.');for(const id of [...lease.reads])this.releaseRead({read:id,owner:lease.owner,lease:lease.id,epoch:this.epoch});for(const key of lease.tokens){const entry=this.entries.get(key);if(entry){entry.leases.delete(lease.id);if(entry.released)this.drop(key);}}this.leases.delete(lease.id);this.trim();return true;}
+ retain({owner,tokens}){this.owner(owner);if(!Array.isArray(tokens)||tokens.length>this.maxEntries||tokens.some(value=>!token(value)))throw Error('Invalid retained raw archive assets.');const keep=new Set(tokens);for(const [key,entry]of this.entries)if(entry.owner===owner&&!keep.has(key)){entry.released=true;this.drop(key);}this.trim();return true;}
+ release({owner,tokens}){this.owner(owner);if(tokens!==undefined&&(!Array.isArray(tokens)||tokens.some(value=>!token(value))))throw Error('Invalid released raw archive assets.');const selected=tokens&&new Set(tokens);for(const [key,entry]of this.entries)if(entry.owner===owner&&(!selected||selected.has(key))){entry.released=true;this.drop(key);}if(!selected)for(const [upload,state]of this.uploads)if(state.owner===owner)this.cancel({upload,owner,epoch:this.epoch});this.trim();return true;}
+ read({descriptor,offset=0,length=512*1024},context){const bytes=this.resolve(descriptor,context);if(!Number.isSafeInteger(offset)||offset<0||offset>bytes.length||!Number.isSafeInteger(length)||length<0||length>512*1024)throw Error('Invalid raw archive asset read.');return Uint8Array.from(bytes.subarray(offset,Math.min(bytes.length,offset+length)));}
+ readWhole(descriptor,context){const lease=this.context(context),bytes=this.resolve(descriptor,context);if(lease.reads.size)throw Error('Only one full raw asset may be read at a time in this operation.');this.claim(bytes.length);const read=this.uuid();this.reads.set(read,{owner:lease.owner,lease:lease.id,bytes:bytes.length});lease.reads.add(read);this.working+=bytes.length;try{return {read,bytes:Uint8Array.from(bytes)};}catch(error){this.releaseRead({read,...context});throw error;}}
+ releaseRead({read,owner,lease,epoch}){const value=this.reads.get(read);if(!value)return false;if(epoch!==this.epoch||value.owner!==owner||value.lease!==lease)throw Error('Invalid raw archive read release.');this.reads.delete(read);this.leases.get(lease)?.reads.delete(read);this.working-=value.bytes;this.trim();return true;}
+ trim(){if(this.leases.size||this.uploads.size||this.reads.size)return;for(const key of this.legacy?.entries.keys()||[]){if(this.bytes+(this.legacy?.bytes||0)<=this.maxCacheBytes&&this.count()<=this.maxEntries)break;this.legacy.remove(key);}for(const key of this.entries.keys()){if(this.bytes+(this.legacy?.bytes||0)<=this.maxCacheBytes&&this.count()<=this.maxEntries)break;this.drop(key);}}
+ clear(){this.entries.clear();this.payloads.clear();this.uploads.clear();this.leases.clear();this.reads.clear();this.bytes=this.reserved=this.working=0;}
+}
+module.exports={RawAssetStore,isRawAsset,rawMissing};

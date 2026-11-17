@@ -1,6 +1,6 @@
 // Internal version storage. Public .nm files and recovery .wm archives remain self-contained.
 const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto');
-const {TextEncoder}=require('node:util');
+const {TextEncoder}=require('node:util'),{AsyncLocalStorage}=require('node:async_hooks'),assetContext=new AsyncLocalStorage();
 const {readLimited}=require('./read-limited.cjs');
 const {ENTRY_BYTES:ENTRY_LIMIT,TOTAL_BYTES:TOTAL_LIMIT,maximumEntryBytes,validateEntry}=require('./archive-limits.cjs');
 const ASSET_LIMIT=9998,CACHE_ENTRIES=2048,MANIFEST_LIMIT=384*1024*1024,encoder=new TextEncoder();
@@ -28,18 +28,26 @@ function prepareSnapshot(doc,{knownHashes=[],previousHash=null,copyObjectBytes=t
  if(Buffer.byteLength(JSON.stringify(metadataOf(document)))>ENTRY_LIMIT)throw Error('Version metadata is too large.');
  const entries=Object.entries(doc.assets||{});if(entries.length>ASSET_LIMIT)throw Error('Version snapshot has too many assets.');
  for(const [name,value]of entries){
-  if(!validAsset(name)||typeof value!=='string')throw Error('Invalid version asset.');
-  const bytes=Buffer.from(value,'base64');validateEntry(name,bytes);if((total+=bytes.length)>TOTAL_LIMIT)throw Error('Version snapshot is too large.');
-  const hash=sha(bytes);assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:copyObjectBytes?Uint8Array.from(bytes):bytes});
+  if(!validAsset(name))throw Error('Invalid version asset.');const hooks=assetContext.getStore();
+  const resolved=hooks?.assetBytes?.(name,value);if(resolved===undefined&&typeof value!=='string')throw Error('Invalid version asset.');const bytes=resolved===undefined?Buffer.from(value,'base64'):Buffer.from(resolved.buffer,resolved.byteOffset,resolved.byteLength);if(!hooks?.validateAsset?.(name,bytes))validateEntry(name,bytes);if((total+=bytes.length)>TOTAL_LIMIT)throw Error('Version snapshot is too large.');
+  const cached=assetContext.getStore()?.assetInfo?.(name,bytes),hash=cached?.sha256||sha(bytes);if(cached&&cached.bytes!==bytes.length)throw Error('Invalid version asset digest.');assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:copyObjectBytes?Uint8Array.from(bytes):bytes});
  }
  const manifest={format:'notemind-snapshot',version:1,document,assets,textBytes};manifest.checksum=manifestChecksum(manifest);
  // Fingerprint every persisted field, including explicit title/identity/created date.
  const contentHash='snapshot2:'+manifest.checksum;
- const legacyHash=validHash(previousHash)?sha(JSON.stringify({text:doc.text,assets:doc.assets,meta:doc.meta})):null;
+ const legacyHash=validHash(previousHash)?legacyContentHash(doc):null;
  const unchanged=previousHash===contentHash||(legacyHash!==null&&previousHash===legacyHash);
  const manifestBytes=unchanged?null:encoder.encode(JSON.stringify(manifest));if(manifestBytes?.byteLength>MANIFEST_LIMIT)throw Error('Version metadata is too large.');
  return {manifest,manifestBytes,contentHash,legacyHash,unchanged,objects:unchanged?[]:[...objects.values()]};
 }
+function legacyContentHash(doc){
+ const hooks=assetContext.getStore(),entries=Object.entries(doc.assets||{});if(!entries.some(([,value])=>typeof value!=='string'))return sha(JSON.stringify({text:doc.text,assets:doc.assets,meta:doc.meta}));
+ const hash=createHash('sha256').update('{"text":'+JSON.stringify(doc.text)+',"assets":{');let at=0;for(const [name,value]of entries){hash.update((at++?',':'')+JSON.stringify(name)+':');if(typeof value==='string')hash.update(JSON.stringify(value));else{const bytes=hooks?.assetBytes?.(name,value);if(!bytes||value.chars!==4*Math.ceil(bytes.length/3))return null;hash.update('"');for(let offset=0;offset<bytes.length;offset+=48*1024)hash.update(Buffer.from(bytes.buffer,bytes.byteOffset+offset,Math.min(48*1024,bytes.length-offset)).toString('base64'));hash.update('"');}}hash.update('}');if(doc.meta!==undefined)hash.update(',"meta":'+JSON.stringify(doc.meta));return hash.update('}').digest('hex');
+}
+function prepareReferences(doc,assets,{previousHash=null}={}){
+ if(!doc||typeof doc.text!=='string')throw Error('Invalid version document.');const document={text:doc.text,id:doc.id,title:doc.title||'',meta:doc.meta||{},created:doc.created},textBytes=Buffer.byteLength(doc.text),manifest={format:'notemind-snapshot',version:1,document,assets,textBytes};manifest.checksum=manifestChecksum(manifest);validateManifest(manifest,{verifyIntegrity:true});const contentHash='snapshot2:'+manifest.checksum,unchanged=previousHash===contentHash,manifestBytes=unchanged?null:encoder.encode(JSON.stringify(manifest));if(manifestBytes?.byteLength>MANIFEST_LIMIT)throw Error('Version metadata is too large.');return {manifest,manifestBytes,contentHash,legacyHash:null,unchanged,objects:[]};
+}
+function withAssetContext(hooks,run){return assetContext.run(hooks,run);}
 function remember(cache,hash,stat){cache.delete(hash);cache.set(hash,{dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs});while(cache.size>CACHE_ENTRIES)cache.delete(cache.keys().next().value);}
 const sameStat=(a,b)=>a&&b&&['dev','ino','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);
 async function mapLimit(values,limit,run){let next=0,failure;await Promise.all(Array.from({length:Math.min(limit,values.length)},async()=>{while(!failure&&next<values.length){const value=values[next++];try{await run(value);}catch(error){failure ||= error;}}}));if(failure)throw failure;}
@@ -94,4 +102,4 @@ async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expected
  }
  const doc=manifest.document;return {text:doc.text,assets,id:doc.id,title:doc.title,meta:doc.meta||{},created:doc.created};
 }
-module.exports={prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
+module.exports={withAssetContext,prepareReferences,publishObject,validAsset,prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
