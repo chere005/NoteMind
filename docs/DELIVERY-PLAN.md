@@ -1,30 +1,46 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 10:48 AM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 10:55 AM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
-## Timeline
+## Incremental timeline and priorities
 
-The revised working estimate is **12–24 hours from this update for the next stable test candidate**, and **48–84 hours for the full feature and audit programme**. The earlier estimate was 8–12 hours and 36–60 hours. Actual editor testing has since exposed a deeper two-million-stroke memory problem, and expanded scan testing found another color case. Those must be fixed before release.
+Revised after Sean's request to make progress visible sooner and review the features together with performance work. **Feature integration starts now.** Foundation memory/export fixes stay actively owned in parallel; the broad review is moved onto the first useful feature bundle instead of waiting for a separate foundation-only audit.
 
-These are planning ranges. A milestone advances when its evidence passes; a newly discovered fixable issue is assigned and fixed before the affected milestone closes.
+The working estimate remains **12–24 hours for the first stable test bundle** and **48–84 hours for the full scope**. Earlier checkpoints should arrive well before that. These ranges include the currently known fixes and required review rounds; they do not promise a release while a known supported workflow is still failing.
 
-| Window from this update | Expected milestone | Work and exit condition |
+| Checkpoint | Working window from this revision | Visible result and pause point |
 |---|---|---|
-| Now–6 hours | Foundation fixes and attribution | Resolve editor hydration/accounting/normalizer memory, producer allocation duplication, remaining scan color case, and Word caller/conversion issues. Focused regressions accompany each fix. |
-| 6–12 hours | Complete pipeline stress passes | Repeat full editor and real-image workloads, Word conversion/structured-text workloads, PDF import, cancellation, recovery and contention. Fix failures and repeat the affected complete pipeline. |
-| 12–24 hours | Stable foundation candidate, intended 0.37.0 | Fresh bugs/UI/performance panel, finding closure, source freeze, full preflight, hidden packaged checks, recovery/soak and signature verification. Notify Sean that the candidate is ready before installation. |
-| In parallel, then approximately 24–48 hours | Approved features integrated | Prepare independent feature branches while foundation work proceeds. Merge one feature into the validated source at a time, with its integration checks. Complete every approved feature below. |
-| Approximately 36–60 hours | Post-feature three-way review | Independent bugs, UI/UX and performance reviewers examine the complete feature set. Implement and retest every actionable finding. |
-| Approximately 48–72 hours | Three fresh whole-app audits | Three new reviewers each examine the entire app, including interactions across features. Fix findings and repeat affected scenarios. |
-| Approximately 60–84 hours | Final release candidate and Claude handoff | Freeze the final source, run full tests and packaged stress/recovery/soak, verify signatures and artefacts, finish main/push/cleanup, then provide the requested handoff in chat. |
+| **A — tools and presets** | **Next 1–2 hours** | Integrate saved pen/eraser/select presets and focused quick switching into the current app source. Repeat actual main/tablet UI and drawing-host checks. Save a tested source checkpoint with an exact feature/status record. |
+| **B1 — useful ink selection** | **Approximately 2–5 hours** | Click selection, delete and duplicate working through the actual Surface/App controls, with one Undo, owner safety and preserved pen-button maps. This is a meaningful independently saved increment. |
+| **B2 — complete ink editing** | **Approximately 4–8 hours** | Add lasso, move, recolor and width editing, including modifiers, cancellation, new pen appends and large selections. Focused bug/UI/performance checks run against this integrated feature. |
+| **C — PDF reference and markup** | **Approximately 8–16 hours** | Prioritize the essential right-pane PDF workflow: navigation/fit/zoom/search, Wacom ink, durable page edits/recovery and annotated export. Reconcile raw/chunked transport with the current foundation and validate the real workflow. |
+| **First stable bundle** | **Approximately 12–24 hours** | Review the core + presets + selection + PDF workflow as one useful bundle. Close findings and known stability blockers, then freeze, preflight, package and verify a candidate. Notify before installation. |
+| **D — overview and large imports** | **Approximately 12–24 hours, overlapping independent work** | Finish only-visible thumbnails, stable-ID page reorder, camera/SVG coverage and cancellable page-by-page PDF/scan imports. Save separate tested checkpoints as each lands. |
+| **E — precision tools** | **Approximately 16–30 hours** | Add anchored zoom/pan/fit and line/angle constraints, coordinated with the new selection handlers. Test actual drawing, rotation and exports. |
+| **All-feature review** | **Approximately 30–48 hours** | Independent bugs/UI/performance panel over all integrated features; implement and retest findings. |
+| **Final audits and release** | **Approximately 48–84 hours** | Three fresh whole-app audits, finding closure, final frozen stress/recovery/soak, full packaged validation/signatures and Claude handoff. |
 
-The windows overlap where work is independent. They are not seven separate durations to add together. If profiling establishes that a larger representation change is needed, update this file and the timing rather than compressing testing to preserve an old estimate.
+The windows overlap where source ownership is independent. They are not durations to add together. The short checkpoints are saved, reviewable increments; they are called install-ready only after the applicable release gate passes.
+
+### What changes in the execution order
+
+1. Integrate the already prepared presets feature immediately; do not leave it waiting behind the largest stress case.
+2. Give selection editing and the essential PDF reference workflow the next feature priority.
+3. Continue the editor-memory, normalization, Word/export and PDF import fixes in parallel with those features.
+4. Run focused correctness, UI and representative performance checks at each integration, so fixes respond to the actual features.
+5. Run the first broad three-way panel on the useful integrated bundle. Keep the later all-feature panel and three fresh whole-app audits.
+
+### What a good pause point contains
+
+At each lettered checkpoint, preserve the exact source commit, completed behaviour, relevant test/performance evidence, any separate preview artefact, and the next dependency/owner in the handoff. The checkpoint must be recoverable without reconstructing transient work. If another lane is midway through a fix, it keeps a separate committed branch and an exact handoff.
+
+Report the checkpoint in chat when reached, alongside the hourly whole-roadmap update. Continue into the next authorized increment unless Sean asks to pause. Do not restart or replace the running application merely to demonstrate progress.
 
 ## Installed version and release handling
 
 - Installed NoteMind is **0.35.0**, verified from its application bundle during this update. Audit work has not replaced it.
 - The 0.36.0 package is the previous separately tested comparison candidate. Its historical checks do not certify the current development source.
-- The next foundation candidate is intended to be 0.37.0. Releases bump the minor version.
+- The first useful stable bundle is intended to be 0.37.0. Releases bump the minor version.
 - Keep development, fixtures and feature work isolated from Sean's running application and documents. Notify before the next installation; do not restart the working app as part of a test.
 - Run one heavy build/native stress job at a time, at reduced priority, with hidden nonfocusable windows, temporary profiles, and physical media/pen access disabled.
 - Keep the existing workload limits and resource guards. Do not lower supported inputs or force garbage collection to make a test appear to pass.
@@ -39,13 +55,13 @@ The windows overlap where work is independent. They are not seven separate durat
 | Dot bounds cache | Root | Isolated change computes empty/dot bounds in O(1), without keeping a rectangle object for every dot. Fifty thousand retained dots create zero stroke-cache entries. Thirty related checks pass; independent source review found no actionable issue. | Measure the change in the actual decoder/editor, integrate it with the history fix, and retain signed-zero/aggregate-bound correctness. |
 | Normalization worker lifetime | Drawing owner, with architecture attribution | A large load can leave its shared normalization/hash worker alive for ten seconds after output transfer. The attribution identified substantial worker/transient memory outside the renderer's reported JS heap. | Retire an owned load-normalization worker before hydration while preserving unrelated exporter jobs, exact results and cancellation. |
 | Renderer packet/membership allocation | Drawing owner | Typed raster delta/Undo/ACK and pressure pixels pass. Initial actual producer packing still has avoidable order/addition/ID arrays and large numeric Sets. | Bounded membership storage and initial packet sharing, duplicate/multiplicity correctness, deduplicated transfers, then full producer memory and responsiveness proof. |
-| Scan colors | Architecture owner | Original six managed-color cases now match exactly in source and copied packaged helpers, with actual local qcms Wasm execution proved. Expanded dark cHRM-without-gAMA cases exposed a further PDF mismatch; its source fix is focused-test green. | Run the expanded native oracle after the fix, repeat relevant large-import bounds, then close color acceptance. |
+| Scan colors | Architecture owner | Original six managed-color cases now match exactly in source and copied packaged helpers, with actual local qcms Wasm execution proved. The expanded 20-case oracle, including dark cHRM-without-gAMA, now passes exactly in both layouts after the further fix. | Preserve the proven color path through feature integration and repeat its frozen packaged coverage. |
 | Word export caller and conversion | Drawing owner | Stream writer and crash-safe temp handling are integrated. Caller checkpoint uses bounded spools, verified file conversion, worker-only image-name parsing and workspace admission after source unpinning. Focused caller/writer checks pass. | Actual mixed-media conversion above 2400 pixels, maximum legal converted PNGs, cancellation/reset/conflict tests, and near-16-MiB structured Markdown stress. |
-| Page overview integration | Root, resuming the storage owner's clean checkpoint | Virtualized component, stable owner models, pointer reorder, mirror keys and camera transforms pass 24 focused checks. Branch is refreshed against committed foundation source. | Actual App/camera opening adapters, input suspension, visible-only SVG normalization through the landed file converter, and hidden native opening/reorder/camera/SVG proof. |
+| Page overview integration | Root / next available feature owner after the higher-priority PDF checkpoint | Virtualized component, stable owner models, pointer reorder, mirror keys and camera transforms pass 24 focused checks. Branch is refreshed against committed foundation source. | Actual App/camera opening adapters, input suspension, visible-only SVG normalization through the landed file converter, and hidden native opening/reorder/camera/SVG proof. |
 
 The targeted author and independent memory reviews above do **not** count as any of the formal completion panels below.
 
-## Foundation scope before the next stable candidate
+## Core safety and reliability carried through the increments
 
 ### Drawing, Wacom and page correctness
 
@@ -126,9 +142,9 @@ The withdrawn preset-layout icon request and unapproved opacity/highlighter feat
 
 ## Required formal review waves
 
-### 1. Foundation panel before 0.37.0
+### 1. First useful integrated-bundle panel
 
-Use three fresh independent reviewers: bugs/data integrity, UI/UX and accessibility, and performance/architecture. Review the coherent integrated source and actual app behaviour. Implement all actionable findings, repeat affected tests, then run the stable-candidate release gate.
+Use three fresh independent reviewers: bugs/data integrity, UI/UX and accessibility, and performance/architecture. Review core drawing plus the new presets, selection and PDF reference workflows together, including their real performance. Implement all actionable findings, repeat affected tests, then run the stable-bundle release gate. This replaces the earlier foundation-only panel before any feature integration.
 
 ### 2. Panel after all approved features
 
@@ -150,6 +166,6 @@ Provide the requested Claude handoff **in this chat**, naming the exact commit/b
 
 ## Progress reporting
 
-Give a brief whole-roadmap update at least once per hour during active work and whenever Sean requests status. Report the completed milestone, current release blockers, parallel owners/dependencies, next concrete gate and revised timing. Update this file as evidence changes the plan. Do not replace implementation with an unresolved todo list.
+Report every lettered checkpoint when reached, and give a brief whole-roadmap update at least once per hour during active work and whenever Sean requests status. Report the completed milestone, current release blockers, parallel owners/dependencies, next concrete gate and revised timing. Update this file as evidence changes the plan. Do not replace implementation with an unresolved todo list.
 
 Detailed existing evidence: [performance investigation](/Users/example/GIT/NoteMind/docs/PERFORMANCE-AUDIT.md), [0.36 baseline bug audit](/Users/example/GIT/NoteMind/docs/BUG-AUDIT.md), and [active engineering handoff](/Users/example/GIT/NoteMind/docs/CONTINUATION.md).

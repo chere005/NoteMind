@@ -8,7 +8,7 @@ module.exports = function installFeatures(window, projectService) {
  const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain);app.on('will-quit',()=>drawingSaves.dispose());
  ipcMain.on('window-close',()=>win()?.close());
  const {home,root,registry,recents}=projectService;
- const preferenceKeys=['orientation','pen','view','padChromeOrientation'];
+ const preferenceKeys=['orientation','pen','view','padChromeOrientation','toolPresets'];
  let folderWatches=[],folderKey='',folderTimer;
  ipcMain.handle('watch-folders',(_,folders)=>{if(!Array.isArray(folders)||folders.some(f=>typeof f!=='string'))throw Error('Invalid folders');const key=folders.join('\n');if(key===folderKey)return;folderKey=key;folderWatches.forEach(w=>w.close());folderWatches=[];for(const folder of folders){try{const watcher=require('node:fs').watch(folder,{recursive:true},()=>{clearTimeout(folderTimer);folderTimer=setTimeout(()=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('folders-changed');},150);});watcher.on('error',()=>{});folderWatches.push(watcher);}catch{}}});
  app.on('will-quit',()=>{folderWatches.forEach(w=>w.close());clearTimeout(folderTimer);});
@@ -18,6 +18,7 @@ module.exports = function installFeatures(window, projectService) {
  const preferenceWrites=new Map();
  ipcMain.handle('preference-set',async(_,key,value)=>{
   if(!preferenceKeys.includes(key))throw Error('Invalid preference');
+  if(key==='toolPresets'&&(typeof value!=='string'||Buffer.byteLength(value)>32768))throw Error('Invalid tool presets.');
   const next=(preferenceWrites.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{await fs.mkdir(path.dirname(preferenceFile(key)),{recursive:true});const temp=preferenceFile(key)+'.'+require('node:crypto').randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify(value));await fs.rename(temp,preferenceFile(key));}finally{await fs.unlink(temp).catch(()=>{});}});
   preferenceWrites.set(key,next);try{await next;}finally{if(preferenceWrites.get(key)===next)preferenceWrites.delete(key);}
  });

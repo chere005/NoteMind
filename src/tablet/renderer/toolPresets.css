@@ -1,0 +1,3 @@
+.tool-preset-control{display:inline-flex;align-items:center}
+.tool-preset-dialog input{box-sizing:border-box;width:min(320px,70vw)}
+.tool-preset-dialog [role=alert]{max-width:320px}
