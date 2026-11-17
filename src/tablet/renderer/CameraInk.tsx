@@ -132,12 +132,16 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     if (everything.current) {
       everything.current = false
       ctx.clearRect(0, 0, v.size.width, v.size.height)
+      const picture=inkPictureRect(v);ctx.save();ctx.beginPath();ctx.rect(picture.x,picture.y,picture.width,picture.height);ctx.clip()
       if (p && latest.current.on) paintStrokes(ctx, p.strokes, toPixel, unit)
       if (g?.kind === "draw") { paintStrokes(ctx, [g.stroke], toPixel, unit); g.drawn = g.stroke.points.length }
+      ctx.restore()
       return
     }
     if (g?.kind === "draw" && g.stroke.points.length > g.drawn) {
+      const picture=inkPictureRect(v);ctx.save();ctx.beginPath();ctx.rect(picture.x,picture.y,picture.width,picture.height);ctx.clip()
       paintStrokes(ctx, [g.stroke], toPixel, unit, undefined, g.drawn)
+      ctx.restore()
       g.drawn = g.stroke.points.length
     }
   }, [toPixel])
@@ -159,7 +163,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   }, [paint])
 
   // Everything again when the view changes (zoom, the pane's size, a turn, another tab) or the ink does (undo, a turn, another window).
-  const viewKey = `${view.shown.x},${view.shown.y},${view.shown.width},${view.shown.height}|${view.zoom ? `${view.zoom.x},${view.zoom.y},${view.zoom.width},${view.zoom.height}` : ""}|${view.size.width},${view.size.height}|${on}`
+  const viewKey = `${view.shown.x},${view.shown.y},${view.shown.width},${view.shown.height}|${view.zoom ? `${view.zoom.x},${view.zoom.y},${view.zoom.width},${view.zoom.height}` : ""}|${view.size.width},${view.size.height}|${view.turns||0}|${view.clip?`${view.clip.x},${view.clip.y},${view.clip.width},${view.clip.height}`:''}|${on}`
   useLayoutEffect(() => {
     if (gesture.current && (gesture.current.page !== page || !on)) finish()
     schedule(true)
@@ -218,7 +222,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const v = latest.current.view
     // (the picture as it is on screen, zoom included: the radius is in screen points)
     const scale = v.zoom ? zoomScale(v.zoom, v.size) : 1
-    const shownSize = { width: v.shown.width * scale, height: v.shown.height * scale }
+    const shownSize = { width: (v.turns&&v.turns%2?v.shown.height:v.shown.width) * scale, height: (v.turns&&v.turns%2?v.shown.width:v.shown.height) * scale }
     const index = strokeUnder(g.page.strokes, screenToInk(screen, v), shownSize, ERASE_RADIUS, inkUnit(v))
     if (index < 0) return
     if (!g.marked) { g.page.mark(); g.marked = true }

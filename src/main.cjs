@@ -28,8 +28,9 @@ const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({s
 
 let sheetWrite = Promise.resolve();
 let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
+let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
 const sheetLoads=require('./sheet-load-transport.cjs').shared;
-app.on('will-quit',()=>{sheetLoads.dispose();void sheetPersistenceService?.dispose();});
+app.on('will-quit',()=>{sheetLoads.dispose();void sheetPersistenceService?.dispose();void cameraPersistenceService?.dispose();});
 
 let cameraWrite = Promise.resolve();
 
@@ -272,9 +273,12 @@ ipcMain.handle('save-sheets', async (_,data) => {const pending=sheetPersistence(
 require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{service:()=>sheetPersistence(),onWrite:pending=>{sheetWrite=pending.catch(()=>{});}});
 ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
-ipcMain.handle('load-camera-pages', async () => { await cameraWrite; try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
-
-ipcMain.handle('save-camera-pages', async (_, data) => { if (!Array.isArray(data)) throw Error('Invalid camera page data'); const content = JSON.stringify(data); if (Buffer.byteLength(content) > 200 * 1024 * 1024) throw Error('Camera pages are too large'); const file = path.join(app.getPath('userData'), 'camera-pages.json'); const write = async () => { const temp = `${file}.${require('node:crypto').randomUUID()}.tmp`; try { await fs.writeFile(temp, content, { flag: 'wx' }); await fs.rename(temp, file); } finally { await fs.unlink(temp).catch(() => {}); } }; const pending = cameraWrite.then(write, write); cameraWrite = pending.catch(() => {}); await pending; });
+ipcMain.handle('list-camera-pages',async event=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');await cameraWrite;const state=await cameraPersistence().listPages();if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return state;});
+ipcMain.handle('load-camera-page',async(event,pageId,options)=>{if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');if(typeof pageId!=='string'||!/^[a-f0-9-]{36}$/i.test(pageId))throw Error('Invalid camera page identity.');await cameraWrite;const state=await cameraPersistence().loadPage(pageId);if(event.sender.isDestroyed())throw Error('Camera recovery window closed.');return options?.chunks?sheetLoads.beginFor(event.sender,state,{scope:'camera-page:'+pageId,maxBytes:256*1024*1024}):state;});
+ipcMain.handle('save-camera-pages-delta',async(_,delta)=>{const pending=cameraPersistence().saveDelta(delta);cameraWrite=pending.catch(()=>{});return pending;});
+// Legacy callers still use the worker and guarded index; user data is never JSON-parsed or rewritten on main.
+ipcMain.handle('load-camera-pages',async()=>{await cameraWrite;const sheets=await cameraPersistence().load();return sheets?.map(require('./camera-schema.cjs').cameraPage)||null;});
+ipcMain.handle('save-camera-pages',async(_,data)=>{if(!Array.isArray(data)||!data.length)throw Error('Invalid camera page data.');const {cameraMetadata}=require('./camera-schema.cjs'),sheets=data.map(page=>({...cameraMetadata(page),strokes:page.strokes,backdrop:page.picture})),pending=cameraPersistence().save(sheets);cameraWrite=pending.catch(()=>{});return pending;});
 
 ipcMain.on('sheets:flush-done', (event, error) => { if (!closing || event.sender !== win.webContents) return; clearTimeout(closeTimer); if (error) { sheetSaveFailed(String(error)); return; } closing = false; win.confirmedClose = true; win.close(); });
 
