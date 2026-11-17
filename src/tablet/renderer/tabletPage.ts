@@ -19,8 +19,9 @@ import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 import { recordStrokeAppend } from '../../stroke-signature.js'
-import { strokeBox } from '../../stroke-bounds.js'
+import { strokeBox,strokeBoxAsync,knownStrokeBox } from '../../stroke-bounds.js'
 import { DrawingHistory } from '../../drawing-history.js'
+import { yieldTask } from '../../graphics-pane.js'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -68,6 +69,19 @@ export function strokeUnder(strokes: InkStroke[], point: Point, size: Size, radi
     }
   }
   return -1
+}
+
+/** Large single strokes and dense pages yield without allocating a pixel object for every segment. */
+export async function strokeUnderAsync(strokes:InkStroke[],point:Point,size:Size,radius:number,unit=1,options:{signal?:AbortSignal;yieldControl?:()=>Promise<any>}={}):Promise<number>{
+ const yieldControl=options.yieldControl||(()=>new Promise<void>(resolve=>setTimeout(resolve,0))),px=point.x*size.width,py=point.y*size.height;let work=0
+ const pause=async()=>{if(options.signal?.aborted)throw Error('Drawing hit test cancelled.');await yieldControl();if(options.signal?.aborted)throw Error('Drawing hit test cancelled.')}
+ for(let index=strokes.length-1;index>=0;index--){
+  if(options.signal?.aborted)throw Error('Drawing hit test cancelled.');const stroke=strokes[index]!,reach=radius+stroke.width*unit/2,box=knownStrokeBox(stroke)||await strokeBoxAsync(stroke,{signal:options.signal,yieldControl})
+  if(px>=box.x*size.width-reach&&px<=box.right*size.width+reach&&py>=box.y*size.height-reach&&py<=box.bottom*size.height+reach){
+   if(stroke.points.length===1&&Math.hypot(px-stroke.points[0]!.x*size.width,py-stroke.points[0]!.y*size.height)<=reach)return index
+   for(let i=1;i<stroke.points.length;i++){const a=stroke.points[i-1]!,b=stroke.points[i]!,ax=a.x*size.width,ay=a.y*size.height,bx=b.x*size.width,by=b.y*size.height,dx=bx-ax,dy=by-ay,length=dx*dx+dy*dy,t=length===0?0:Math.min(1,Math.max(0,((px-ax)*dx+(py-ay)*dy)/length));if(Math.hypot(px-(ax+dx*t),py-(ay+dy*t))<=reach)return index;if(++work%8192===0)await pause()}
+  }if(++work%8192===0)await pause()
+ }return -1
 }
 
 const inside = (point: Point, region: Rect): boolean =>
@@ -361,6 +375,23 @@ export class TabletPage {
     this.history.prepareRemoval(next, index)
     this.strokes = next
     this.emit({ op: "removeAt", index })
+  }
+  /** A dense erase keeps the gesture's existing mark and rejects a changed source. */
+  async removeAtAsync(index: number, options: GeometryChangeOptions = {}): Promise<boolean> {
+    const original = this.strokes
+    const current = () => !options.signal?.aborted && this.strokes === original && (options.valid?.() ?? true)
+    if (!Number.isInteger(index) || index < 0 || index >= original.length || !current()) return false
+    const next: InkStroke[] = new Array(original.length - 1)
+    let at = 0
+    for (let i = 0; i < original.length; i++) {
+      if (i !== index) next[at++] = original[i]!
+      if ((i + 1) % 4096 === 0) {
+        await (options.yieldControl || yieldTask)()
+        if (!current()) return false
+      }
+    }
+    this.history.prepareRemoval(next, index)
+    return this.history.change(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})
   }
 
   undo(): boolean {
