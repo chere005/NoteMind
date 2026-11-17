@@ -89,7 +89,7 @@ class SheetSaveQueue{
   let activeRequestId=requestId;
   for(let attempt=0;attempt<6;attempt++){
    const built=await this.buildAsync(data,activeRequestId);let answer;
-   try{answer=await uploadSheetDelta(this.api,built.payload,{check:()=>{if(this.disposed)throw Error('Drawing persistence is closing.');}});}catch(error){if(attempt<5&&/worker stopped|worker.*exited|timed out/i.test(error.message)){this.reset();continue;}throw error;}
+   try{answer=await uploadSheetDelta(this.api,built.payload,{consume:true,check:()=>{if(this.disposed)throw Error('Drawing persistence is closing.');}});}catch(error){if(attempt<5&&/worker stopped|worker.*exited|timed out/i.test(error.message)){this.reset();continue;}throw error;}
    if(this.disposed)throw Error('Drawing persistence is closing.');if(answer?.resync){this.reset(answer);continue;}
    if(answer?.idempotent){if(answer.currentVersion!==answer.version){this.reset({session:answer.session,version:answer.currentVersion});activeRequestId=this.id();continue;}if(!built.payload.session){this.reset({session:answer.session,version:answer.version});continue;}}
    const replayed=answer?.idempotent&&answer.version===this.version;
