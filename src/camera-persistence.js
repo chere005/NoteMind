@@ -80,9 +80,11 @@ class CameraPersistence {
     return this.pruning;
   }
   dispose() {
-    if(this.closed)return;
+    if(this.closed)return this.disposal||Promise.resolve();
     this.closed=true;this.lazy.dispose();this.queue.dispose();
-    for(const item of this.models.current)void item.page.disposeAsync();
+    // Read-only export/OCR leases defer actual geometry release themselves.
+    this.disposal=Promise.all(this.models.current.map(item=>item.page.disposeAsync())).then(()=>{});
+    return this.disposal;
   }
 }
 module.exports={CameraPersistence,cameraSnapshot};
