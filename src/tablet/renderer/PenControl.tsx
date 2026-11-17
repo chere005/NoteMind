@@ -23,7 +23,7 @@ export function PenControl({ colour, width, onColour, onWidth, presets, presetsE
       {label:'Custom colour…',onClick:()=>picker.current?.click()},
     ]}/>
     <input ref={picker} type="color" value={colour} className="native-colour" aria-label="Choose custom pen colour" tabIndex={-1} onChange={e => onColour(e.target.value)} />
-    <select className="pen-width-select" aria-label="Pen width" value={width} onChange={e => onWidth(Number(e.target.value))}>
+    <select className="pen-width-select" title="Pen width" aria-label="Pen width" value={width} onChange={e => onWidth(Number(e.target.value))}>
       {[...new Set([...PEN_WIDTHS, width])].sort((a, b) => a - b).map(w => <option key={w} value={w}>{w} px</option>)}
     </select>
     {presets&&<ToolPresetControl controller={presets.controller} state={presets.state} enabled={presetsEnabled} onError={onError}/>}
