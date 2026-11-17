@@ -46,6 +46,7 @@ parentPort.on('message',async packet=>{
     if(op==='encodeDrawingOwned'){const bytes=format.encodeDrawingOwned(args[0]),encoded=owned(bytes);transfers.push(encoded.buffer);return {bytes:encoded,revision:digest(bytes)};}
     if(op==='duplicateArchiveOwned'){const bytes=owned(format.duplicateArchiveOwned(view(args[0]),args[1]));transfers.push(bytes.buffer);return bytes;}
     if(op==='encode'||op==='encodeWithDigest'){const bytes=format.encode(...args,hooks),encoded=owned(bytes);transfers.push(encoded.buffer);return op==='encode'?encoded:{bytes:encoded,revision:digest(bytes)};}
+    if(op==='wordImageNames'){const doc=args[0];if(!doc||typeof doc.text!=='string'||Buffer.byteLength(doc.text)>16*1024*1024||Object.keys(doc.assets||{}).length>9998)throw Error('Invalid Word export metadata.');return [...require('./print-asset-files.cjs').referencedImages(doc)];}
     if(op==='exportWordFile'){
      const flag=args[3]?.cancel instanceof SharedArrayBuffer&&args[3].cancel.byteLength===4?new Int32Array(args[3].cancel):null;if(!flag)throw Error('Word export cancellation ownership is missing.');const check=()=>{if(Atomics.load(flag,0))throw Object.assign(Error('Word export cancelled.'),{name:'AbortError'});if(rawContext)raw.context(rawContext);};check();return require('./word-file.cjs').exportWordFile(args[0],args[1],args[2],args[3],{hooks,check});
     }
