@@ -4,11 +4,11 @@ const {app}=require('electron'),fs=require('node:fs/promises'),path=require('nod
 const {ArchiveCodec}=require('../src/archive-codec.cjs'),{DocumentAssetSessions}=require('../src/document-asset-sessions.cjs'),{create:createSync}=require('../src/document-sync.js'),{create:createUpload}=require('../src/document-asset-upload.js'),ink=require('../src/pdf-ink-codec.cjs');
 const output=path.resolve('test-results/performance/word-pdf-foreground.json'),report={scope:'actual scoped document service, Word publication and persisted PDF markup read; no UI claim',guardBytes:1024**3,phases:[],passed:false};
 let root,codec,assets,guard,beat,deadline,finishing=false,peak=0,last=performance.now(),mainGap=0,metricsDuration=0;
+root=require('node:fs').mkdtempSync(path.join(os.tmpdir(),'notemind-word-pdf-'));app.setPath('userData',path.join(root,'Profile'));
 app.dock?.hide();app.on('window-all-closed',()=>{});
 function record(phase,detail={}){report.phases.push({phase,time:performance.now(),...detail});}
 async function finish(error){if(finishing)return;finishing=true;clearInterval(guard);clearInterval(beat);clearTimeout(deadline);if(error)report.error={message:error.message,stack:error.stack};try{assets?.dispose();await codec?.dispose();}catch(cleanup){report.cleanupError=cleanup.message;}report.peakCombinedBytes=peak;report.mainTimerGapMs=mainGap;report.metricsCallMaxMs=metricsDuration;await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify(report,null,2));if(root)await fs.rm(root,{recursive:true,force:true});console.log(JSON.stringify({passed:report.passed,error:report.error?.message,peakCombinedBytes:peak,output}));app.exit(error?1:0);}
 app.whenReady().then(async()=>{
- root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-word-pdf-'));app.setPath('userData',path.join(root,'Profile'));
  codec=new ArchiveCodec();assets=new DocumentAssetSessions({raw:codec});const owner=Object.assign(new EventEmitter(),{isDestroyed:()=>false});
  report.heapLimitBytes=require('node:v8').getHeapStatistics().heap_size_limit;
  guard=setInterval(()=>{const begin=performance.now(),bytes=app.getAppMetrics().reduce((sum,row)=>sum+row.memory.workingSetSize*1024,0);metricsDuration=Math.max(metricsDuration,performance.now()-begin);peak=Math.max(peak,bytes);if(bytes>report.guardBytes)void finish(Error('Combined owned process memory exceeded 1 GiB.'));},40);
@@ -20,7 +20,7 @@ app.whenReady().then(async()=>{
   if(packet.operation==='pdfInk'){record('pdf-operation-admitted');return codec.run('pdfInk',doc,{mode:'page',root:markupRoot,identity,sourceHash:hash,page:1});}throw Error('Invalid fixture operation.');
  })});
  const pattern='**Bold** line.\n\n- a\n- b\n\n',text=pattern.repeat(Math.ceil(4*1024**2/pattern.length)).slice(0,4*1024**2);let backgroundDone=false;const background=sync.call('exportDocument',{text,assets:{},title:'Scheduling fixture'}).then(receipt=>{backgroundDone=true;record('word-committed');return receipt;});background.catch(()=>{});await started;const begin=performance.now(),foreground=await sync.call('pdfInk',{text:'',assets:{}}),foregroundMs=performance.now()-begin,beforeBackground=!backgroundDone;record('pdf-foreground-complete',{foregroundMs,beforeBackground});
- if(foreground.meta.revision!==saved.revision||JSON.stringify(ink.decodeBase64Async?await ink.decodeBase64Async(foreground.assets['assets/pdf-page.json'],{sourceHash:hash,page:1}):null).length<1)throw Error('Foreground PDF result changed.');
+ if(foreground.meta.revision!==saved.revision)throw Error('Foreground PDF revision changed.');
  const decoded=await ink.decodeBase64Async(foreground.assets['assets/pdf-page.json'],{sourceHash:hash,page:1});require('node:assert/strict').deepEqual(decoded.strokes,strokes);const receipt=await background;require('node:assert/strict').deepEqual(receipt.revision,await require('../src/guarded-write.cjs').fingerprintFile(path.join(root,'export.docx')));report.foregroundMs=foregroundMs;report.foregroundBeforeWordCommit=beforeBackground;
  if(!beforeBackground||foregroundMs>1000)throw Error('Foreground PDF markup waited behind background Word packaging.');report.passed=true;await finish();
 }).catch(finish);
