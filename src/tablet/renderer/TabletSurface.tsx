@@ -36,7 +36,7 @@ import graphics from "../../graphics-pane.js"
 import { InkRenderer } from './inkRenderer'
 import {primeStrokeBox} from '../../stroke-bounds.js'
 import {transformDrawingInk} from '../../drawing-export.js'
-import {beginInkMutation,pendingInkMutation,flushInkMutations,registerInkProjection,appendInkStroke,hasPendingInkMutations,createInkActionController} from '../../ink-mutations.js'
+import {beginInkMutation,pendingInkMutation,flushInkMutations,registerInkProjection,appendInkStroke,hasPendingInkMutations,createInkActionController,reserveInkStroke,capacityError} from '../../ink-mutations.js'
 import "./tablet.css"
 
 export interface SurfaceHandle {
@@ -90,7 +90,7 @@ type Gesture = { pointerId: number } & (
   // A stroke and an erase belong to the sheet they began on (a key can open another tab while the pen is down).
   // `out`: on a sheet bound to a drawing region, the pen left the region: the stroke was made up to its edge, and a new one
   // begins where it comes back in (nothing is drawn outside the region, nothing is pinned to its border).
-  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; out?: boolean;bounds:{x:number;y:number;right:number;bottom:number} }
+  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;full?:boolean;out?: boolean;bounds:{x:number;y:number;right:number;bottom:number} }
   | { kind: "erase"; marked: boolean; page: TabletPage }
   | {
     kind: "box"; mode: "new" | "move" | "resize"
@@ -127,6 +127,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const deferredInputs = useRef<DeferredInput[]>([])
   const replaying = useRef(false)
   const pendingStrokes = useRef(new Map<TabletPage,Set<InkStroke>>())
+  const fullPages = useRef(new WeakSet<TabletPage>())
   const canvasView = useRef<{page:TabletPage;region:Rect}|null>(null)
   /** The box is being dragged, moved or resized: its row of buttons waits until it is let go. */
   const [boxing, setBoxing] = useState(false)
@@ -172,6 +173,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const restorePreview=(g:Extract<Gesture,{kind:'box'}>)=>{const preview=g.preview,element=canvas.current;if(!preview||!element||g.page!==latest.current.page||preview.paper!==rasterKey())return;const ctx=element.getContext('2d');if(!ctx)return;ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,element.width,element.height);ctx.drawImage(preview.fixed,0,0);ctx.drawImage(preview.ink,0,0);const ratio=rasterConfig().ratio;ctx.setTransform(ratio,0,0,ratio,0,0);paintedInk.current={page:g.page,strokes:g.strokes,key:preview.paper}}
   const dirtyPreview=(g:Extract<Gesture,{kind:'box'}>)=>{if(!g.preview||!g.origin||!g.next)return;const bounds=g.preview.inkBounds||{x:0,y:0,width:g.preview.width,height:g.preview.height},from=toPixel(g.origin),to=toPixel(g.next),ratio=rasterConfig().ratio,sx=g.next.width/g.origin.width,sy=g.next.height/g.origin.height,tx=(to.x-from.x*sx)*ratio,ty=(to.y-from.y*sy)*ratio;extraDirty.current.push({x:tx+bounds.x*sx-3,y:ty+bounds.y*sy-3,width:bounds.width*sx+6,height:bounds.height*sy+6});if(extraDirty.current.length>32){const left=Math.min(...extraDirty.current.map(r=>r.x)),top=Math.min(...extraDirty.current.map(r=>r.y)),right=Math.max(...extraDirty.current.map(r=>r.x+r.width)),bottom=Math.max(...extraDirty.current.map(r=>r.y+r.height));extraDirty.current=[{x:left,y:top,width:right-left,height:bottom-top}]}}
 
+  const reportCapacity=(owner:TabletPage)=>{if(fullPages.current.has(owner))return;fullPages.current.add(owner);reportError(capacityError())}
   const reportError=(error:any)=>{if(error?.name==='AbortError')return;const message=error?.message||'Could not finish the drawing change.';if(typeof window.dispatchEvent==='function'&&typeof CustomEvent==='function')window.dispatchEvent(new CustomEvent('notemind-drawing-error',{detail:message}));else console.error(message)}
   const transformSelection=(g:Extract<Gesture,{kind:'box'}>)=>{
     if(!g.next||!g.origin)return
@@ -307,7 +309,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     primeStrokeBox(g.stroke,g.bounds)
     const owned={...g},owner=g.page;let pending=false
     const completed=()=>{const held=pendingStrokes.current.get(owner);held?.delete(owned.stroke);if(held&&!held.size)pendingStrokes.current.delete(owner);if(pending){if(owner===latest.current.page)schedule(true);latest.current.onEdited()}}
-    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,commit:()=>commitStrokeNow(owned),onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){reportError(error)}
+    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,commit:()=>commitStrokeNow(owned),onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){reportError(error)}
   }
 
   const controllerFor=(owner:TabletPage)=>{
@@ -578,9 +580,10 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       else if (current && hit && hit !== "inside") gesture.current = { ...base, mode: "resize", origin: current, handle: hit }
       else gesture.current = { ...base, mode: "new", origin: null, handle: null }
     } else {
+      let reservation:ReturnType<typeof reserveInkStroke>;try{reservation=reserveInkStroke(latest.current.page);fullPages.current.delete(latest.current.page)}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY')reportCapacity(latest.current.page);else reportError(error);return}
       const pressure = event.pressure > 0 ? event.pressure : 0.5
       gesture.current = {
-        kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
+        reservation,kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
         stroke: {
           colorHex: latest.current.colour,
           width: latest.current.width * SHEET_REF / Math.max(1, pageSize().width),
@@ -620,16 +623,20 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const all = samples.length > 0 ? samples : [event]
     if (g.kind === "draw") {
       for (const sample of all) {
+        if(g.full)continue
         const here = at(sample)
         if (!here.inside && g.out) continue
+        let accepted=false
         if (here.inside && g.out) {
           // Back in the region: a new stroke begins here.
+          try{g.reservation=reserveInkStroke(g.page);accepted=true}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY'){g.full=true;reportCapacity(g.page)}else reportError(error);continue}
           const { points: _points, pressures, ...rest } = g.stroke
           g.stroke = { ...rest, points: [], ...(pressures ? { pressures: [] } : {}) }
           g.drawn = 0
           g.bounds={x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity}
           g.out = false
         }
+        if(!accepted&&!g.reservation.accept()){g.full=true;reportCapacity(g.page);continue}
         g.stroke.points.push(here.unit)
         g.bounds.x=Math.min(g.bounds.x,here.unit.x);g.bounds.y=Math.min(g.bounds.y,here.unit.y);g.bounds.right=Math.max(g.bounds.right,here.unit.x);g.bounds.bottom=Math.max(g.bounds.bottom,here.unit.y)
         g.stroke.pressures?.push(sample.pressure > 0 ? sample.pressure : 0.5)
@@ -667,12 +674,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (g && g.pointerId !== event.pointerId) return
     if(g?.kind==='box'&&g.dragged&&g.origin&&(g.mode==='move'||g.mode==='resize')){paintVersion.current++;if(event.type!=='pointercancel'){const here=at(event);g.next=g.mode==='move'?moveBox(g.origin,here.unit.x-g.start.x,here.unit.y-g.start.y,viewport.current):resizeBox(g.origin,g.handle!,here.unit,pageSize(),MIN_BOX_PX,viewport.current);latest.current.onBox(g.next);if(g.preview)paint()}}
     // A lift can carry a newer position than the last move (also on the native sample feed).
-    if (g?.kind === "draw" && !g.out && event.type !== "pointercancel") {
+    if (g?.kind === "draw" && !g.out && !g.full && event.type !== "pointercancel") {
       const point = at(event).unit, last = g.stroke.points[g.stroke.points.length - 1]
       if (!last || point.x !== last.x || point.y !== last.y) {
-        g.stroke.points.push(point)
-        g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)
-        g.stroke.pressures?.push(event.pressure > 0 ? event.pressure : g.stroke.pressures[g.stroke.pressures.length - 1] ?? .5)
+        if(g.reservation.accept()){
+          g.stroke.points.push(point)
+          g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)
+          g.stroke.pressures?.push(event.pressure > 0 ? event.pressure : g.stroke.pressures[g.stroke.pressures.length - 1] ?? .5)
+        }else{g.full=true;reportCapacity(g.page)}
       }
     }
     // The last samples are painted now, not left to a frame that will find no stroke.
