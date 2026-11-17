@@ -9,6 +9,6 @@ function add(name,from=process.cwd()){
  if(!licenses.length)text+='Package license: '+pkg.license+'\n';
  for(const dep of Object.keys(pkg.dependencies||{}))add(dep,root);
 }
-for(const name of ['react','react-dom','scheduler','koffi','docx','mammoth','markdown-it','image-size','highlight.js','turndown','turndown-plugin-gfm','onnxruntime-web','pdfjs-dist','utif','stream-json'])add(name);
+for(const name of ['react','react-dom','scheduler','koffi','docx','mammoth','markdown-it','image-size','highlight.js','turndown','turndown-plugin-gfm','onnxruntime-web','pdfjs-dist','utif','stream-json','pdf-lib'])add(name);
 text+='\nPaddleOCR PP-OCRv5 text models, converted by RapidOCR, release 3.9.2\nhttps://github.com/PaddlePaddle/PaddleOCR\nhttps://github.com/RapidAI/RapidOCR\n'+fs.readFileSync('src/helpers/text-ocr/LICENSE','utf8');
 fs.writeFileSync('THIRD-PARTY-NOTICES.txt',text.replace(/\r\n?/g,'\n'));
