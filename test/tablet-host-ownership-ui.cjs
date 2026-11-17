@@ -32,7 +32,8 @@ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const evaluate=expression=>win.webContents.executeJavaScript(expression);
 async function until(expression){
  for(let turn=0;turn<400&&!finished;turn++){if(await evaluate(expression))return;await wait(10);}
- throw Error('Condition timed out: '+expression);
+ const diagnostic=await evaluate(`(()=>{const value=window.fixturePDFView;return{pdf:window.fixturePDF&&{opens:fixturePDF.opens,closes:fixturePDF.closes,saves:fixturePDF.saves},view:value&&{status:value.getSnapshot().status,stroke:value.refs.current.current?.model.strokes[0],page:value.getSnapshot().page,current:value.refs.current.current?.number,models:value.refs.models.current.size,edits:[...(value.refs.state.current?.edits.values||[])].map(([page,edit])=>({page,saved:edit.saved,hasPromise:!!edit.promise,generation:edit.generation,strokes:edit.strokes?.length}))},errors:window.fixtureErrors}})()`);
+ throw Error('Condition timed out: '+expression+'; '+JSON.stringify(diagnostic));
 }
 const bootstrap=`
 window.fixtureErrors=[];addEventListener('error',e=>fixtureErrors.push(e.error?.stack||e.message));
@@ -129,7 +130,7 @@ async function run(){
  await evaluate(`dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/reference.pdf',name:'Reference',previewToken:'token-PDF'}}))`);
  await until(`!!document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]')&&!document.querySelector('.pdf-reference-loading')`);
  await evaluate(`window.fixturePDFView=fixtureOwners.pdf.values.get('/fixture/reference.pdf');window.fixturePDFModel=fixturePDFView.refs.current.current.model;fixtureHoldPDFSave();(()=>{const el=document.querySelector('[data-doc-kind="pdf"] [data-tablet="surface"]'),r=el.getBoundingClientRect();for(const[type,x,y,buttons]of[['pointerdown',.2,.2,1],['pointermove',.6,.5,1],['pointerup',.6,.5,0]])el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'pen',pointerId:31,button:0,buttons,pressure:buttons?.5:0,clientX:r.left+x*r.width,clientY:r.top+y*r.height}));})()`);
- await until('fixturePDFModel.strokes.length===1');
+ await until('fixturePDFModel.strokes.length===1');assert.equal(await evaluate('Number.isFinite(fixturePDFModel.strokes[0].width)&&fixturePDFModel.strokes[0].width>0'),true,'PDF ink receives the current valid pen width');
  for(let turn=0;turn<2;turn++){
   await evaluate('fixtureSetPad(true)');await until('!!document.querySelector(".pad-placeholder")&&fixtureMounts>fixtureDetaches');
   assert.equal(await evaluate(`fixtureOwners.pdf.values.get('/fixture/reference.pdf')===fixturePDFView&&fixturePDFView.refs.models.current.get(1).model===fixturePDFModel`),true);
