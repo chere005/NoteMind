@@ -34,3 +34,6 @@ test('legacy public scan route uses the same writer while preserving string atta
 test('actual small worker exits before returning its file and does not retain decoded PNG channels',async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-scan-real-worker-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));const file=path.join(directory,'image.png'),output=path.join(directory,'scan.pdf');await fs.writeFile(file,image);const result=await runWriter({pages:[{file,mime:'image/png'}],output});assert.ok(result.bytes>100);assert.equal(result.bytes,(await fs.stat(output)).size);
 });
+test('PNG-first scan creates its thumbnail inside the owned writer without native image decode',async t=>{
+ const f=await fixture(t);delete f.services.inspectNative;delete f.services.runWriter;f.services.createWindow=()=>assert.fail('PNG thumbnail must not open a native decoder');const result=await scanAssetPdf({assets:{'assets/a.png':f.raw},meta:{scanPages:[{asset:'assets/a.png',rotation:90}]}},{},f.services);assert.equal(result.info.pages,1);assert.equal(f.imports,2);assert.equal(f.releases,1);assert.deepEqual(await fs.readdir(f.directory),[]);
+});

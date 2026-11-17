@@ -1,9 +1,15 @@
 // One-page image admission/embedding. Only compressed PDF streams survive a page.
 const fs=require('node:fs/promises'),{parentPort,workerData}=require('node:worker_threads');
-const {decodeScanPNG}=require('./scan-png.cjs');
+const {decodeScanPNG,crc}=require('./scan-png.cjs');
 const limits=require('./scan-limits.js');
 const cancelled=()=>Object.assign(Error('Scan preparation cancelled.'),{name:'AbortError'});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+function pngThumbnail(image,rotation=0){
+ const swap=rotation%180!==0,viewWidth=swap?image.height:image.width,viewHeight=swap?image.width:image.height,scale=Math.min(1,320/viewWidth,320/viewHeight),width=Math.max(1,Math.round(viewWidth*scale)),height=Math.max(1,Math.round(viewHeight*scale)),rows=Buffer.alloc((width*3+1)*height),pixel=(x,y,c)=>{const at=y*image.width+x,alpha=image.alphaChannel?image.alphaChannel[at]/255:1;return image.rgbChannel[at*3+c]*alpha+255*(1-alpha)};
+ for(let y=0;y<height;y++)for(let x=0;x<width;x++){const u=(x+.5)/width,v=(y+.5)/height,[su,sv]=rotation===90?[v,1-u]:rotation===180?[1-u,1-v]:rotation===270?[1-v,u]:[u,v],sx=Math.max(0,Math.min(image.width-1,su*image.width-.5)),sy=Math.max(0,Math.min(image.height-1,sv*image.height-.5)),x0=Math.floor(sx),y0=Math.floor(sy),x1=Math.min(image.width-1,x0+1),y1=Math.min(image.height-1,y0+1),fx=sx-x0,fy=sy-y0,o=y*(width*3+1)+1+x*3;for(let c=0;c<3;c++)rows[o+c]=Math.round((pixel(x0,y0,c)*(1-fx)+pixel(x1,y0,c)*fx)*(1-fy)+(pixel(x0,y1,c)*(1-fx)+pixel(x1,y1,c)*fx)*fy);}
+ const chunk=(type,data)=>{const out=Buffer.alloc(data.length+12);out.writeUInt32BE(data.length);out.write(type,4);data.copy(out,8);out.writeUInt32BE(crc(out.subarray(4,-4)),out.length-4);return out},header=Buffer.alloc(13);header.writeUInt32BE(width);header.writeUInt32BE(height,4);header[8]=8;header[9]=2;
+ return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',require('node:zlib').deflateSync(rows)),chunk('IEND',Buffer.alloc(0))]);
+}
 // Image-size reads EXIF without decoding pixel channels; pdf-lib otherwise ignores it.
 function imagePlacement(width,height,orientation=1,rotation=0){
  if(![0,90,180,270].includes(rotation))throw Error('Invalid scan rotation.');
@@ -16,8 +22,8 @@ async function writeScanPDF(packet,{check=()=>{},onPage=()=>{}}={}){
  const {PDFDocument,PDFImage,PngEmbedder,PDFName,PDFRawStream,pushGraphicsState,popGraphicsState,concatTransformationMatrix,drawObject}=require('pdf-lib'),{imageSize}=require('image-size');
  limits.assertPageCount(packet.pages?.length,{allowEmpty:false});const doc=await PDFDocument.create();doc.setTitle('Scan');let compressed=0;
  for(let index=0;index<packet.pages.length;index++){
-  check();const source=packet.pages[index];let bytes=await fs.readFile(source.file);check();const info=await limits.validateBytes(bytes,{signal:{get aborted(){try{check();return false}catch{return true}}}});if(info.mime!==source.mime)throw Error('Scan image type changed.');
-  let image;if(info.mime==='image/png'){const channels=await decodeScanPNG(bytes,{check});const ref=doc.context.nextRef();image=PDFImage.of(ref,doc,new PngEmbedder(channels));doc.images.push(image);}else image=await doc.embedJpg(bytes);let orientation=1;if(info.mime==='image/jpeg')orientation=imageSize(bytes).orientation||1;
+  check();const source=packet.pages[index];if(![0,90,180,270].includes(source.rotation??0))throw Error('Invalid scan rotation.');let bytes=await fs.readFile(source.file);check();const info=await limits.validateBytes(bytes,{signal:{get aborted(){try{check();return false}catch{return true}}}});if(info.mime!==source.mime)throw Error('Scan image type changed.');
+  let image;if(info.mime==='image/png'){const channels=await decodeScanPNG(bytes,{check});if(index===0&&packet.thumbnail){check();await fs.writeFile(packet.thumbnail,pngThumbnail(channels,source.rotation??0),{flag:'wx',mode:0o600});check();}const ref=doc.context.nextRef();image=PDFImage.of(ref,doc,new PngEmbedder(channels));doc.images.push(image);}else image=await doc.embedJpg(bytes);let orientation=1;if(info.mime==='image/jpeg')orientation=imageSize(bytes).orientation||1;
   check();await image.embed();check();if(image.embedder!==undefined)throw Error('Scan image channels were retained after embedding.');
   const page=doc.addPage([210/25.4*72,297/25.4*72]),name=page.node.newXObject('Image',image.ref);page.pushOperators(pushGraphicsState(),concatTransformationMatrix(...imagePlacement(image.width,image.height,orientation,source.rotation??0)),drawObject(name),popGraphicsState());
   // Context owns encoded image/alpha streams only. Count immediately, before
@@ -29,4 +35,4 @@ async function writeScanPDF(packet,{check=()=>{},onPage=()=>{}}={}){
  const output=await doc.save({useObjectStreams:true,addDefaultPage:false,objectsPerTick:16});check();limits.assertPDFSize(output.byteLength);await fs.writeFile(packet.output,output,{flag:'wx',mode:0o600});check();return {bytes:output.byteLength,pages:packet.pages.length,compressed};
 }
 if(parentPort){const flag=workerData?.cancel?new Int32Array(workerData.cancel):null,check=()=>{if(flag&&Atomics.load(flag,0))throw cancelled()},onPage=workerData.telemetry?stage=>parentPort.postMessage({telemetry:{...stage,memory:process.memoryUsage(),heapLimit:require('node:v8').getHeapStatistics().heap_size_limit}}):undefined;writeScanPDF(workerData,{check,onPage}).then(result=>parentPort.postMessage({result}),error=>parentPort.postMessage({error:{message:error.message,name:error.name}}));}
-module.exports={writeScanPDF,imagePlacement};
+module.exports={writeScanPDF,imagePlacement,pngThumbnail};
