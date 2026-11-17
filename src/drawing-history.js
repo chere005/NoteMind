@@ -8,6 +8,14 @@ const decodedGeometry = new WeakMap();
 const freshStrokes = new WeakSet();
 let geometrySequence = 0;
 const certifyFreshStroke = stroke => { freshStrokes.add(stroke); return stroke; };
+async function prepareFreshStroke(source, prepare) {
+  const next = await prepare(source);
+  if (next === source || !freshStrokes.has(source)) return next;
+  if (!next || !Array.isArray(next.points) || next.points === source.points || next.points.length !== source.points.length || next.colorHex !== source.colorHex || !Object.is(next.width, source.width) || next.pressures !== source.pressures) {
+    freshStrokes.delete(source); throw TypeError('Prepared drawing stroke changed its owned geometry contract.');
+  }
+  freshStrokes.delete(source); freshStrokes.add(next); return next;
+}
 const clock = () => globalThis.performance?.now() ?? Date.now();
 const yieldTask = () => new Promise(resolve => {
   if (typeof setImmediate === 'function') setImmediate(resolve);
@@ -139,10 +147,11 @@ class DrawingHistoryBudget {
     if (state) return state;
     const link = strokeAppend(array), base = link && this.states.get(link.previous);
     const certified = this.canAggregate(array);
-    const freshAppend = base && freshStrokes.delete(link.stroke);
+    const append = base && array.length === base.array.length + 1 && array.at(-1) === link.stroke;
+    const freshAppend = append && freshStrokes.delete(link.stroke);
     if (array.length && !certified && !freshAppend) this.invalidateAggregates();
     let tree;
-    if (base && array.length === base.array.length + 1 && array.at(-1) === link.stroke) {
+    if (append) {
       const next = this.push(base.tree, this.prime(link.stroke));
       tree = next.overflow ? this.node([next.node, next.overflow], next.node.level + 1) : next.node;
     } else tree = this.build(array, certified);
@@ -483,4 +492,4 @@ class DrawingHistory {
   }
 }
 globalThis.NoteMindDrawingHistory = { primeStroke: (stroke) => sharedBudget.prime(stroke), primeDecodedArray: array => decodedGeometry.set(array, ++geometrySequence) };
-module.exports = { DrawingHistoryBudget, DrawingHistory, sharedBudget, certifyFreshStroke };
+module.exports = { DrawingHistoryBudget, DrawingHistory, sharedBudget, certifyFreshStroke, prepareFreshStroke };
