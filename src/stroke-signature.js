@@ -1,5 +1,6 @@
 // Committed strokes are immutable. Weak references never keep an undo array alive.
 const strokes = new WeakMap(), appends = new WeakMap(), decodedSheets = new WeakMap();
+const fingerprintText = value => value.toString(16).padStart(16, '0');
 const PRIME_A = 16777619, PRIME_B = 2246822519;
 function inverse(odd) { let value = odd;for (let i = 0; i < 5; i++) value = Math.imul(value, 2 - Math.imul(odd, value));return value; }
 const INVERSE_A = inverse(PRIME_A), INVERSE_B = inverse(PRIME_B);
@@ -15,14 +16,15 @@ function removeSuffix(hash, suffix) {
  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
 }
 function fingerprint(value) { return hashText(typeof value === 'string' ? value : JSON.stringify(value)); }
-function strokeFingerprint(stroke) { let hash = strokes.get(stroke);if (!hash) { hash = fingerprint(stroke);strokes.set(stroke, hash); }return hash; }
+function strokeFingerprint(stroke) { const known = strokes.get(stroke);if (known !== undefined) return fingerprintText(known);const hash = fingerprint(stroke);strokes.set(stroke, BigInt('0x' + hash));return hash; }
 function primeStrokeFingerprints(ink, hashes) {
  if (!Array.isArray(hashes) || hashes.length !== ink.length || !hashes.every(hash => typeof hash === 'string' && /^[a-f0-9]{16}$/.test(hash))) throw Error('Invalid drawing fingerprints.');
- ink.forEach((stroke, i) => strokes.set(stroke, hashes[i]));
+ ink.forEach((stroke, i) => strokes.set(stroke, BigInt('0x' + hashes[i])));
 }
-function primeStrokeFingerprint(stroke,hash){if(typeof hash!=='string'||!/^[a-f0-9]{16}$/.test(hash))throw Error('Invalid drawing fingerprint.');strokes.set(stroke,hash);}
+function primeStrokeFingerprint(stroke,hash){if(typeof hash!=='string'||!/^[a-f0-9]{16}$/.test(hash))throw Error('Invalid drawing fingerprint.');strokes.set(stroke,BigInt('0x'+hash));}
+function primeStrokeFingerprintWords(stroke,high,low){if(!Number.isInteger(high)||high<0||high>0xffffffff||!Number.isInteger(low)||low<0||low>0xffffffff)throw Error('Invalid drawing fingerprint.');strokes.set(stroke,(BigInt(high)<<32n)|BigInt(low));}
 function recordStrokeAppend(previous, next, stroke) { appends.set(next, { previous: new WeakRef(previous), stroke });globalThis.NoteMindStrokeBounds?.appendInkBox(previous,next,stroke); }
 function strokeAppend(next) { const link = appends.get(next), previous = link?.previous.deref();return previous && next.length === previous.length + 1 && next[next.length - 1] === link.stroke ? { previous, stroke: link.stroke } : null; }
 async function canonicalStrokeFingerprintAsync(stroke,yieldControl){const hash=hashWriter().write('{"colorHex":'+JSON.stringify(stroke.colorHex)+',"width":'+String(stroke.width)+',"points":[');let work=0;for(let i=0;i<stroke.points.length;i++){const point=stroke.points[i];hash.write((i?',':'')+'{"x":'+String(point.x)+',"y":'+String(point.y)+'}');if(++work%8192===0)await yieldControl();}hash.write(']');if(stroke.pressures){hash.write(',"pressures":[');for(let i=0;i<stroke.pressures.length;i++){hash.write((i?',':'')+String(stroke.pressures[i]));if(++work%8192===0)await yieldControl();}hash.write(']');}return hash.write('}').digest();}
-const api = { fingerprint, knownStrokeFingerprint:stroke=>strokes.get(stroke)||null,hashText, hashWriter, removeSuffix, strokeFingerprint, primeStrokeFingerprints, primeStrokeFingerprint, canonicalStrokeFingerprintAsync, recordStrokeAppend, strokeAppend, primeDecodedSheet:(sheet,hashes)=>decodedSheets.set(sheet,hashes), decodedSheet:sheet=>decodedSheets.get(sheet) };
+const api = { fingerprint, knownStrokeFingerprint:stroke=>{const hash=strokes.get(stroke);return hash===undefined?null:fingerprintText(hash)},hashText, hashWriter, removeSuffix, strokeFingerprint, primeStrokeFingerprints, primeStrokeFingerprint, primeStrokeFingerprintWords, canonicalStrokeFingerprintAsync, recordStrokeAppend, strokeAppend, primeDecodedSheet:(sheet,hashes)=>decodedSheets.set(sheet,hashes), decodedSheet:sheet=>decodedSheets.get(sheet) };
 module.exports = globalThis.NoteMindStrokeSignatures ||= api;
