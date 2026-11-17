@@ -7,6 +7,8 @@ const shared=globalThis.NoteMindStrokeBounds||(()=>{const boxes=new WeakMap(),in
  function primeInkBox(strokes,box){inkBoxes.set(strokes,{...box});}
  function inkBox(strokes){let box=inkBoxes.get(strokes);if(!box){box=emptyInkBox();for(const stroke of strokes)extendInkBox(box,strokeBox(stroke));primeInkBox(strokes,box);box=inkBoxes.get(strokes);}return box;}
  function appendInkBox(previous,next,stroke){const box=inkBoxes.get(previous);if(box)primeInkBox(next,extendInkBox({...box},strokeBox(stroke)));}
- return {strokeBox,primeStrokeBox,emptyInkBox,extendInkBox,primeInkBox,inkBox,appendInkBox};})();
+ async function strokeBoxAsync(stroke,{signal,yieldControl=()=>new Promise(resolve=>setTimeout(resolve,0))}={}){const cached=boxes.get(stroke);if(cached&&cached.count===stroke.points.length)return cached;const box={count:stroke.points.length,x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};for(let i=0;i<stroke.points.length;i++){if(signal?.aborted)throw Error('Drawing hit test cancelled.');const point=stroke.points[i];box.x=Math.min(box.x,point.x);box.y=Math.min(box.y,point.y);box.right=Math.max(box.right,point.x);box.bottom=Math.max(box.bottom,point.y);if(i%8192===8191)await yieldControl();}boxes.set(stroke,box);return box;}
+ const knownStrokeBox=stroke=>{const box=boxes.get(stroke);return box&&box.count===stroke.points.length?box:null;};
+ return {strokeBox,strokeBoxAsync,knownStrokeBox,primeStrokeBox,emptyInkBox,extendInkBox,primeInkBox,inkBox,appendInkBox};})();
 globalThis.NoteMindStrokeBounds=shared;
 module.exports=shared;

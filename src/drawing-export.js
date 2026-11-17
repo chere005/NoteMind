@@ -90,8 +90,9 @@ async function normalizeGraphicsBytes(bytes,options={}){
 }
 async function transformDrawingInk(strokes,from,to,options={}){
  let result;const local=async()=>{const {transformInkBinary}=require('./transform-ink.js');return transformInkBinary(await graphics.encodeBytesAsync({name:'Ink',aspect:1,strokes,backdrop:null},options),from,to,options);};if(typeof Worker==='undefined')result=await local();else try{result=await exporter().transform(strokes,from,to,options);}catch(error){if(options.signal?.aborted)throw error;result=await local();}
- const changed=(await graphics.decodeAsync(result.bytes,{...options,owned:true,prepared:result})).strokes;if(changed.length!==result.indexes.length)throw Error('Invalid transformed drawing length.');const replacements=new Map();let previous=-1;
- for(let i=0;i<changed.length;i++){const index=result.indexes[i];if(index<=previous||index>=strokes.length)throw Error('Invalid transformed stroke identity.');previous=index;const original=strokes[index],stroke=changed[i];if(original.pressures)stroke.pressures=original.pressures;replacements.set(original,stroke);if(i%4096===4095)await graphics.yieldTask();}return replacements;
+ let previous=-1;for(let i=0;i<result.indexes.length;i++){const index=result.indexes[i];if(index<=previous||index>=strokes.length)throw Error('Invalid transformed stroke identity.');previous=index;if(i%4096===4095)await graphics.yieldTask();}
+ const changed=(await graphics.decodeAsync(result.bytes,{...options,owned:true,prepared:result,pressuresForStroke:index=>strokes[result.indexes[index]].pressures||null})).strokes;if(changed.length!==result.indexes.length)throw Error('Invalid transformed drawing length.');const replacements=new Map();
+ for(let i=0;i<changed.length;i++){replacements.set(strokes[result.indexes[i]],changed[i]);if(i%4096===4095)await graphics.yieldTask();}return replacements;
 }
 function renderInk(request,options){return exporter().raster(request,options);}
 function cancelInk(session){shared?.cancelInk(session);}

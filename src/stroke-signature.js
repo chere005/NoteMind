@@ -8,7 +8,7 @@ function hashText(text, hash) {
  for (let i = 0; i < text.length; i++) { const code = text.charCodeAt(i);a = Math.imul(a ^ code, PRIME_A);b = Math.imul(b ^ code, PRIME_B); }
  return (a >>> 0).toString(16).padStart(8, '0') + (b >>> 0).toString(16).padStart(8, '0');
 }
-function hashWriter(initial){let a=initial?parseInt(initial.slice(0,8),16):2166136261,b=initial?parseInt(initial.slice(8),16):3335557771;return {write(text){for(let i=0;i<text.length;i++){const code=text.charCodeAt(i);a=Math.imul(a^code,PRIME_A);b=Math.imul(b^code,PRIME_B);}return this;},digest(){return(a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0');}};}
+function hashWriter(initial){let a=initial?parseInt(initial.slice(0,8),16):2166136261,b=initial?parseInt(initial.slice(8),16):3335557771;return {write(text){let x=a|0,y=b|0;for(let i=0;i<text.length;i++){const code=text.charCodeAt(i);x=Math.imul(x^code,PRIME_A);y=Math.imul(y^code,PRIME_B);}a=x;b=y;return this;},digest(){return(a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0');}};}
 function removeSuffix(hash, suffix) {
  let a = parseInt(hash.slice(0, 8), 16), b = parseInt(hash.slice(8), 16);
  for (let i = suffix.length - 1; i >= 0; i--) { const code = suffix.charCodeAt(i);a = Math.imul(a, INVERSE_A) ^ code;b = Math.imul(b, INVERSE_B) ^ code; }
