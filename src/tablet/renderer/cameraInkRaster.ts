@@ -47,16 +47,16 @@ export class CameraInkRenderer{
  private closed=false
  constructor(private options:any={}){}
  private create(){return new InkRenderer({...this.options,pack:(sheet:any,options:any)=>packCameraInk(sheet,options,this.options.pack||graphics.encodeBytesAsync)})}
- request(source:{page:any;strokes:InkStroke[];view:InkView;ratio:number;forceFull?:boolean;valid?:()=>boolean},onFrame:(frame:any,plan:CameraRasterPlan,current:()=>boolean)=>boolean,onError?:(error:any,plan:CameraRasterPlan|null,current:()=>boolean)=>any){
+ request(source:{page:any;strokes:InkStroke[];ownerStrokes?:InkStroke[];view:InkView;ratio:number;forceFull?:boolean;valid?:()=>boolean},onFrame:(frame:any,plan:CameraRasterPlan,current:()=>boolean)=>boolean,onError?:(error:any,plan:CameraRasterPlan|null,current:()=>boolean)=>any){
   if(this.closed)return null
-  const generation=++this.generation,page=new WeakRef(source.page),strokes=new WeakRef(source.strokes),valid=source.valid,view=source.view,ratio=source.ratio,key=viewKey(view,ratio),current=()=>{const owner=page.deref(),ink=strokes.deref();return !this.closed&&generation===this.generation&&!!owner&&!!ink&&viewKey(view,ratio)===key&&(!(owner as any).strokes||(owner as any).strokes===ink)&&(valid?.()??true)}
+  const generation=++this.generation,page=new WeakRef(source.page),strokes=new WeakRef(source.ownerStrokes??source.strokes),valid=source.valid,view=source.view,ratio=source.ratio,key=viewKey(view,ratio),current=()=>{const owner=page.deref(),ink=strokes.deref();return !this.closed&&generation===this.generation&&!!owner&&!!ink&&viewKey(view,ratio)===key&&(!(owner as any).strokes||(owner as any).strokes===ink)&&(valid?.()??true)}
   let plan:CameraRasterPlan|null
   try{plan=cameraRasterPlan(source.view,source.ratio)}catch(error){onError?.(error,null,current);return null}
   if(!plan){this.renderer?.dispose();this.renderer=null;this.owner=null;this.appliedKey='';return null}
-  if(this.owner?.deref()!==source.page||this.factor!==plan.widthScale){this.owner=page;this.factor=plan.widthScale;this.token={}}
+  if(this.owner?.deref()!==source.page||Math.abs(this.factor-plan.widthScale)>1e-12*Math.max(1,this.factor,plan.widthScale)){this.owner=page;this.factor=plan.widthScale;this.token={}}
   this.renderer ||=this.create()
-  const captured=plan
-  this.renderer.request({page:this.token,strokes:source.strokes,aspect:1,config:captured.config,forceFull:!!source.forceFull||captured.key!==this.appliedKey},frame=>{if(!current())return false;const applied=onFrame(frame,captured,current)===true;if(applied)this.appliedKey=captured.key;return applied;},(error,_scene,owned)=>{if(current()&&owned())return onError?.(error,captured,()=>current()&&owned())})
+  const captured=plan,config=this.factor===captured.widthScale?captured.config:{...captured.config,paper:{...captured.config.paper,cameraWidthScale:this.factor}}
+  this.renderer.request({page:this.token,strokes:source.strokes,aspect:1,config,forceFull:!!source.forceFull||captured.key!==this.appliedKey},frame=>{if(!current())return false;const applied=onFrame(frame,captured,current)===true;if(applied)this.appliedKey=captured.key;return applied;},(error,_scene,owned)=>{if(current()&&owned())return onError?.(error,captured,()=>current()&&owned())})
   return captured
  }
  whenIdle(){return this.renderer?.whenIdle()||Promise.resolve()}
