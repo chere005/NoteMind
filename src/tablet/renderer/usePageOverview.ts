@@ -2,6 +2,7 @@ import {useEffect,useMemo,useRef,useSyncExternalStore} from 'react'
 import {OverviewModels} from '../../page-overview-model.cjs'
 import {OverviewCoordinator,loadOverviewPage} from '../../page-overview-coordinator.cjs'
 import {OverviewThumbnailClient} from '../../overview-thumbnail-client.cjs'
+import {create as normalizeBackground} from '../../overview-background.js'
 
 const empty=Object.freeze([]),subscribeEmpty=()=>()=>{},readEmpty=()=>empty
 // The App owns this controller above PadHost; a portal move only changes leases.
@@ -10,7 +11,7 @@ export function usePageOverview(options:any){
  const latest=useRef(options);latest.current=options
  const view=useMemo(()=>{
   if(!options.open)return null
-  const models=new OverviewModels({models:options.models,metadata:row=>latest.current.metadata(row),head:row=>latest.current.head(row),project:(page,strokes)=>latest.current.project(page,strokes),loadSaved:(id,settings)=>loadOverviewPage(latest.current.api,id,settings)}),client=new OverviewThumbnailClient(),render=Object.assign(client.render.bind(client),{dispose:()=>client.dispose()}),coordinator=new OverviewCoordinator({load:models.load,render})
+  const models=new OverviewModels({models:options.models,metadata:row=>latest.current.metadata(row),head:row=>latest.current.head(row),project:(page,strokes)=>latest.current.project(page,strokes),loadSaved:(id,settings)=>loadOverviewPage(latest.current.api,id,settings)}),client=new OverviewThumbnailClient(),normalize=normalizeBackground({sync:window.NoteMindDocumentSync}),render=Object.assign(async(packet,settings)=>client.render(await normalize(packet,settings),settings),{dispose:()=>client.dispose()}),coordinator=new OverviewCoordinator({load:models.load,render})
   return{models,coordinator,mounts:0}
  },[options.open,options.models])
  const pages=useSyncExternalStore(view?.models.subscribe||subscribeEmpty,view?.models.getSnapshot||readEmpty,view?.models.getSnapshot||readEmpty)
