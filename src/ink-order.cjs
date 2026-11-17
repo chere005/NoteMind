@@ -40,7 +40,7 @@ function includeBounds(out, value) {
   }
   extend(out, value);
 }
-const isLocators = (value) => ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === "[object Float64Array]";
+const isLocators = (value) => ArrayBuffer.isView(value) && (["[object Float64Array]", "[object Uint32Array]"].includes(Object.prototype.toString.call(value)));
 const empty = (box) => box.x === Infinity;
 const finite = (box) => empty(box) || [box.x, box.y, box.right, box.bottom].every(Number.isFinite);
 function extend(out, box) {
@@ -57,7 +57,7 @@ function leaf(values, context2) {
     if (!validLocator(value)) throw Error("Invalid ink locator.");
     includeBounds(box, context2.boundsOf(value));
   }
-  const raw = empty(box) ? 0 : finite(box) ? context2.costOfBounds(box) : Infinity, cost = Number.isSafeInteger(raw) && raw >= 0 ? raw : Infinity, node = { height: 0, values, count: values.length, box, cost, indexed: false, indexRefs: 0, overflow: values.length, leaves: 1, nodes: 1 };
+  const raw = empty(box) ? 0 : finite(box) ? context2.costOfBounds(box) : Infinity, cost = Number.isSafeInteger(raw) && raw >= 0 ? raw : Infinity, node = { height: 0, values, count: values.length, typedBytes: values.byteLength, box, cost, indexed: false, indexRefs: 0, overflow: values.length, leaves: 1, nodes: 1 };
   context2.leafBuilds++;
   context2.created.add(node);
   return node;
@@ -66,7 +66,7 @@ function branch(children, context2) {
   if (!children.length) return null;
   if (children.length > FANOUT || !children.every((child) => child.height === children[0].height)) throw Error("Invalid ink order branch.");
   const box = { ...EMPTY }, prefix = new Uint32Array(children.length);
-  let count = 0, indexRefs = 0, overflow = 0, leaves = 0, nodes = 1;
+  let count = 0, indexRefs = 0, overflow = 0, leaves = 0, nodes = 1, typedBytes = prefix.byteLength;
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     extend(box, child.box);
@@ -75,8 +75,9 @@ function branch(children, context2) {
     overflow += child.overflow;
     leaves += child.leaves;
     nodes += child.nodes;
+    typedBytes += child.typedBytes;
   }
-  const node = { height: children[0].height + 1, children, prefix, count, box, indexRefs, overflow, leaves, nodes };
+  const node = { height: children[0].height + 1, children, prefix, count, box, indexRefs, overflow, leaves, nodes, typedBytes };
   context2.created.add(node);
   return node;
 }
@@ -112,7 +113,8 @@ function join(left, right, ctx) {
   if (left.height === right.height) {
     if (!left.height) {
       if (left.count >= LEAF / 2 && right.count >= LEAF / 2 && left.count + right.count > LEAF) return [left, right];
-      const values = new Float64Array(left.count + right.count);
+      const ArrayType = left.values instanceof Float64Array || right.values instanceof Float64Array ? Float64Array : Uint32Array;
+      const values = new ArrayType(left.count + right.count);
       values.set(left.values);
       values.set(right.values, left.count);
       if (values.length <= LEAF) return [leaf(values, ctx)];
@@ -137,8 +139,12 @@ async function buildRoot(values, ctx) {
   if (!isLocators(values) || values.length > MAX_LENGTH) throw Error("Invalid ink order.");
   let level = [];
   for (let at = 0; at < values.length; at += LEAF) {
-    const copy = new Float64Array(Math.min(LEAF, values.length - at));
-    for (let index = 0; index < copy.length; index++) copy[index] = values[at + index];
+    const count = Math.min(LEAF, values.length - at);let signedZero = false;
+    // Validate original values before narrowing; coercion must never hide invalid input.
+    for (let index = 0; index < count; index++) {const value = values[at + index];if (!validLocator(value)) throw Error("Invalid ink locator.");signedZero ||= Object.is(value, -0);}
+    // Real locators fit Uint32. Preserve the old observable -0 edge for generic callers.
+    const copy = signedZero ? new Float64Array(count) : new Uint32Array(count);
+    copy.set(values.subarray(at, at + count));
     level.push(leaf(copy, ctx));
     if (ctx.pacer.poll(copy.length)) await ctx.pacer.pause();
   }
@@ -183,7 +189,7 @@ class PersistentInkOrder {
     this.maxIndexRefs = ctx.maxIndexRefs;
     this.viewKey = ctx.viewKey;
     this.length = root?.count || 0;
-    this.stats = Object.freeze({ indexRefs: root?.indexRefs || 0, overflow: root?.overflow || 0, leaves: root?.leaves || 0, nodes: root?.nodes || 0, createdNodes: ctx.created.size, rebuiltLeaves: ctx.leafBuilds });
+    this.stats = Object.freeze({ indexRefs: root?.indexRefs || 0, overflow: root?.overflow || 0, leaves: root?.leaves || 0, nodes: root?.nodes || 0, typedBytes: root?.typedBytes || 0, createdNodes: ctx.created.size, rebuiltLeaves: ctx.leafBuilds });
   }
   static async build(values, options = {}) {
     const ctx = context(options), root = await buildRoot(values, ctx);
