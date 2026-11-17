@@ -1,6 +1,19 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{ArchiveCodec}=require('../src/archive-codec.cjs'),format=require('../src/notepad-format.cjs');
 function fixture(options={}){const workers=[];class FakeWorker extends EventEmitter{constructor(){super();workers.push(this);this.messages=[]}postMessage(value){this.messages.push(value)}ref(){}unref(){}terminate(){this.stopped=true;return Promise.resolve(0)}}return {workers,codec:new ArchiveCodec({workerFactory:()=>new FakeWorker(),idleMs:100000,...options})};}
 const tick=()=>new Promise(resolve=>setImmediate(resolve)),answer=(worker,value)=>worker.emit('message',{id:worker.messages.at(-1).id,value});
+test('idle worker telemetry and empty completion cannot enter a missing archive job',async t=>{
+ const h=fixture();t.after(()=>h.codec.dispose());const first=h.codec.encode({text:'first'}),worker=h.workers[0];answer(worker,Uint8Array.from([1]));await first;
+ for(const packet of [{fixtureWordInlineMemory:{phase:'released'}},{rawStats:{}},null,undefined])assert.doesNotThrow(()=>worker.emit('message',packet));
+ assert.doesNotThrow(()=>h.codec.finish(null,null));assert.equal(h.codec.active,null);assert.equal(h.codec.bytes,0);
+ const next=h.codec.encode({text:'next'});answer(worker,Uint8Array.from([2]));assert.deepEqual(await next,Buffer.from([2]));await h.codec.dispose();
+});
+test('uncorrelated and duplicate packets cannot consume the next valid archive job',async t=>{
+ const h=fixture();t.after(()=>h.codec.dispose());const first=h.codec.encode({text:'first'}),second=h.codec.encode({text:'second'}),worker=h.workers[0],firstId=worker.messages[0].id;
+ for(const packet of [null,undefined,{fixtureWordInlineMemory:{phase:'parse'}}])assert.doesNotThrow(()=>worker.emit('message',packet));
+ answer(worker,Uint8Array.from([1]));await first;const current=h.codec.active;
+ assert.doesNotThrow(()=>worker.emit('message',{id:firstId,error:{message:'stale failure'}}));assert.equal(h.codec.active,current);
+ const rejected=assert.rejects(second,/real failure/);worker.emit('message',{id:current.id,error:{name:'Error',message:'real failure'}});await rejected;assert.equal(h.codec.bytes,0);await h.codec.dispose();
+});
 test('archive work is serialized, bounded and freezes queued document state',async()=>{
  const h=fixture({maxPending:2,maxBytes:1024}),doc={text:'first',assets:{},meta:{tags:['before']}},first=h.codec.encode(doc),second=h.codec.encode(doc);
  doc.text='changed';doc.meta.tags.push('later');doc.assets['assets/new']='AA==';await assert.rejects(h.codec.encode(doc),/busy/);
