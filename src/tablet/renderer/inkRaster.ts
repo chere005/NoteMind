@@ -4,7 +4,7 @@ import { inkOn,parsePaper } from './tabletPaper'
 import { InkRecordTable,emptyRecord,type InkRecord } from './inkRecords'
 
 type Config={width:number;height:number;paintWidth:number;paintHeight:number;ratio:number;region:{x:number;y:number;width:number;height:number};paper:any}
-const EDGE=128,MAX_PIXELS=16*1024*1024,MAX_REFS=1000000,MAX_CELLS=64,MAX_BINARY=192*1024*1024
+const EDGE=128,MAX_PIXELS=16*1024*1024,MAX_REFS=1000000,MAX_CELLS=64,MAX_BINARY=192*1024*1024,FULL_TILE_POINTS=50000
 function configuration(raw:any):Config{
  const {width,height,ratio,region}=raw||{},paintWidth=raw?.paintWidth??width,paintHeight=raw?.paintHeight??height
  if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<=0||height<=0||width>8192||height>8192||width*height>MAX_PIXELS||!Number.isFinite(ratio)||ratio<=0||!region||![region.x,region.y,region.width,region.height,region.x+region.width,region.y+region.height].every(Number.isFinite)||region.width<=0||region.height<=0)throw Error('Invalid ink raster size.')
@@ -68,7 +68,7 @@ export class InkRaster{
  }
  async render(request:any,cancelled:()=>boolean=()=>false,canvasFactory=(w:number,h:number)=>new OffscreenCanvas(w,h),prepared?:()=>void){
   const started=globalThis.performance?.now()??Date.now();let sync:any;try{sync=await this.sync(request,cancelled)}catch(error){if(cancelled())return{cancelled:true,accepted:false};throw error}if(sync.resync)return sync;const synced=globalThis.performance?.now()??Date.now();prepared?.();if(request.selection)return this.preview(request,cancelled,canvasFactory)
-  const config=this.config!,tileCount=Math.ceil(config.width/EDGE)*Math.ceil(config.height/EDGE),full=this.dirty.size>Math.max(4,tileCount*.3),rects=full?[{x:0,y:0,width:config.width,height:config.height}]:[...this.dirty].map(id=>frameRect(config,id)),tiles:any[]=[]
+  const config=this.config!,tileCount=Math.ceil(config.width/EDGE)*Math.ceil(config.height/EDGE),full=this.dirty.size>Math.max(4,tileCount*.3),dense=this.points>=FULL_TILE_POINTS||this.records.length>=FULL_TILE_POINTS,rects=full?dense?Array.from({length:tileCount},(_,id)=>frameRect(config,id)):[{x:0,y:0,width:config.width,height:config.height}]:[...this.dirty].map(id=>frameRect(config,id)),tiles:any[]=[]
   try{for(const rect of rects){if(cancelled())break;const canvas=canvasFactory(rect.width,rect.height);try{const ctx=canvas.getContext('2d');if(!ctx)throw Error('Could not paint drawing ink.');const complete=await this.paint(ctx,rect,cancelled);if(!complete)break;tiles.push({...rect,bitmap:canvas.transferToImageBitmap()})}finally{canvas.width=1;canvas.height=1}}}catch(error){for(const tile of tiles)tile.bitmap.close();throw error}
   if(cancelled()){for(const tile of tiles)tile.bitmap.close();return{cancelled:true,accepted:true}}
   return{frame:++this.lastFrame,revision:this.revision,tiles,stats:{syncMs:synced-started,paintMs:(globalThis.performance?.now()??Date.now())-synced,typedBytes:this.records.typedBytes,indexRefs:this.refs,overflow:this.overflow,binaryBytes:this.bytes,strokeRecords:this.records.size,storedRecords:this.records.storedRecords,points:this.points,tileCount,paintedTiles:rects.length}}
