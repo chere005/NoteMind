@@ -1,6 +1,7 @@
 // Transient save lookup: geometry stays in packs and records use fixed-width
 // external buffers, rather than one retained object/Map entry per stroke.
 const {validRecord}=require('./sheet-order-index.cjs');
+const {isPrivateSheetIds}=require('./sheet-private-ids.js');
 const ROW_BYTES=32,BLOCK_ROWS=16384;
 class SheetRecordTable{
  constructor(){this.blocks=[];this.refs=[];this.refIds=new Map();this.length=0;this.size=0;this.ordered=true;this.previous=0;this.sorted=null;this.sealed=false;this.last=-1;}
@@ -24,6 +25,6 @@ class SheetRecordTable{
  clear(){this.blocks=[];this.refs=[];this.refIds.clear();this.sorted=null;this.length=this.size=0;this.last=-1;}
 }
 function assertUniqueStrokeIds(ids){
- if(!(Array.isArray(ids)||ids instanceof Float64Array)||ids.length>2000000)throw Error('Invalid drawing stroke identities.');let ordered=true,previous=0;for(const id of ids){if(!Number.isSafeInteger(id)||id<=0)throw Error('Duplicate drawing stroke identity.');if(id<=previous)ordered=false;previous=id;}if(ordered)return;const sorted=Float64Array.from(ids);try{sorted.sort();for(let at=1;at<sorted.length;at++)if(sorted[at]===sorted[at-1])throw Error('Duplicate drawing stroke identity.');}finally{if(sorted.byteLength&&typeof sorted.buffer.transfer==='function')sorted.buffer.transfer(0);}
+ if(!(Array.isArray(ids)||ids instanceof Float64Array||isPrivateSheetIds(ids))||ids.length>2000000)throw Error('Invalid drawing stroke identities.');let ordered=true,previous=0;for(const id of ids){if(!Number.isSafeInteger(id)||id<=0)throw Error('Duplicate drawing stroke identity.');if(id<=previous)ordered=false;previous=id;}if(ordered)return;const sorted=Float64Array.from(ids);try{sorted.sort();for(let at=1;at<sorted.length;at++)if(sorted[at]===sorted[at-1])throw Error('Duplicate drawing stroke identity.');}finally{if(sorted.byteLength&&typeof sorted.buffer.transfer==='function')sorted.buffer.transfer(0);}
 }
 module.exports={SheetRecordTable,assertUniqueStrokeIds,ROW_BYTES,BLOCK_ROWS};
