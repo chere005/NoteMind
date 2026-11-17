@@ -16,11 +16,22 @@ function installNativeFailureExit({app,report,telemetry,processObject=process}) 
   }
   // A monitor runs before Electron's uncaughtException listener. Exit synchronously;
   // cleanup cannot be awaited after an uncaught error in a main-process probe.
-  try { app.exit(1); } finally { processObject.exit(1); }
+  try { app.exit(1); } finally {
+   // Electron replaces process.exit with another asynchronous app.exit call.
+   // Node's original native exit is required to stop this listener dispatch.
+   try { if (typeof processObject.reallyExit === 'function') processObject.reallyExit(1); } catch {}
+   // Last resort is restricted to this owned disposable probe, after its artifact.
+   try { processObject.kill(processObject.pid,'SIGKILL'); } catch {}
+   processObject.exit(1);
+  }
  };
  const uncaught = error => fail(error,'uncaughtException'), rejection = reason => fail(reason,'unhandledRejection');
+ // Replace Electron's main-process dialog handlers only in this disposable test.
+ processObject.removeAllListeners('uncaughtException');
+ processObject.removeAllListeners('unhandledRejection');
  processObject.prependListener('uncaughtExceptionMonitor',uncaught);
+ processObject.prependListener('uncaughtException',uncaught);
  processObject.prependListener('unhandledRejection',rejection);
- return () => {processObject.removeListener('uncaughtExceptionMonitor',uncaught);processObject.removeListener('unhandledRejection',rejection);};
+ return () => {processObject.removeListener('uncaughtExceptionMonitor',uncaught);processObject.removeListener('uncaughtException',uncaught);processObject.removeListener('unhandledRejection',rejection);};
 }
 module.exports = {installNativeFailureExit};
