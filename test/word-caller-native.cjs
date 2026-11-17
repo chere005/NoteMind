@@ -6,14 +6,15 @@ const telemetry={source:require('node:child_process').execFileSync('git',['rev-p
 require('./native-failure-exit.cjs').installNativeFailureExit({app,report,telemetry});
 function fixtureWorker(file){
  const inlineFile=path.join(path.dirname(file),'word-inline.cjs'),code=`
- const {parentPort}=require('node:worker_threads');
- const report=(name,values={})=>parentPort.postMessage({fixtureWordStage:{name,...values,memory:process.memoryUsage()}});
+ const {parentPort}=require('node:worker_threads'),post=parentPort.postMessage.bind(parentPort),counters={};
+ parentPort.postMessage=(packet,...rest)=>{if(packet?.id&&('value'in packet||'prepared'in packet||'error'in packet))post({fixtureWordSummary:counters});return post(packet,...rest);};
+ const report=(name,values={})=>post({fixtureWordStage:{name,...values,memory:process.memoryUsage()}});
  parentPort.postMessage({fixtureHeapLimit:require('node:v8').getHeapStatistics().heap_size_limit});
- try{const inline=require(${JSON.stringify(inlineFile)});for(const name of ['parseInline','releaseInline']){const original=inline[name];if(typeof original==='function')inline[name]=(...args)=>{report(name+'-before',{textChars:typeof args[0]==='string'?args[0].length:undefined});const result=original(...args);report(name+'-after');return result;};}}catch(error){report('instrumentation-error',{message:error.message});}
+ try{const inline=require(${JSON.stringify(inlineFile)});for(const name of ['parseInline','releaseInline']){const original=inline[name];if(typeof original==='function')inline[name]=(...args)=>{const stats=counters[name]||=( {calls:0,maxTextChars:0} );stats.calls++;stats.maxTextChars=Math.max(stats.maxTextChars,typeof args[0]==='string'?args[0].length:0);const sample=stats.calls<=4||stats.calls%10000===0;if(sample)report(name+'-before',{calls:stats.calls,textChars:typeof args[0]==='string'?args[0].length:undefined});const result=original(...args);if(sample)report(name+'-after',{calls:stats.calls});return result;};}}catch(error){report('instrumentation-error',{message:error.message});}
  const timer=setInterval(()=>parentPort.postMessage({fixtureWorkerMemory:process.memoryUsage()}),250);timer.unref();
  require(${JSON.stringify(file)});
  `,worker=new Worker(code,{eval:true});
- worker.on('message',packet=>{if(packet.fixtureHeapLimit)telemetry.workerHeapLimit=packet.fixtureHeapLimit;if(packet.fixtureWordStage)(telemetry.workerStages ||= []).push({phase,...packet.fixtureWordStage});if(packet.fixtureWorkerMemory){const memory=packet.fixtureWorkerMemory,peaks=telemetry.workerMemoryPeaks ||= {};for(const key of ['heapUsed','heapTotal','external','arrayBuffers'])peaks[key]=Math.max(peaks[key]||0,memory[key]||0);}});return worker;
+ worker.on('message',packet=>{if(packet.fixtureHeapLimit)telemetry.workerHeapLimit=packet.fixtureHeapLimit;if(packet.fixtureWordSummary)(telemetry.workerSummaries ||= []).push({phase,...packet.fixtureWordSummary});if(packet.fixtureWordStage){const stages=telemetry.workerStages ||= [];if(stages.length<4096)stages.push({phase,...packet.fixtureWordStage});else telemetry.droppedWorkerStageSamples=(telemetry.droppedWorkerStageSamples||0)+1;}if(packet.fixtureWorkerMemory){const memory=packet.fixtureWorkerMemory,peaks=telemetry.workerMemoryPeaks ||= {};for(const key of ['heapUsed','heapTotal','external','arrayBuffers'])peaks[key]=Math.max(peaks[key]||0,memory[key]||0);}});return worker;
 }
 function record(name,values={}){phase=name;last=performance.now();telemetry.stages.push({name,...values,memory:process.memoryUsage(),raw:codec?.assetStats().raw});fs.writeFileSync(report,JSON.stringify(telemetry,null,2));}
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
