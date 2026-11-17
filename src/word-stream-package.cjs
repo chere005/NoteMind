@@ -57,12 +57,17 @@ class XMLSpool {
   }
   assert() {
     const stat = fs.lstatSync(this.file, { bigint: true });
-    if (!stat.isFile() || stat.isSymbolicLink() || stamp(stat) !== this.expected) throw Error("Word XML spool changed.");
+    if (stat.isSymbolicLink()) throw Error("Word XML spool changed.");
+    this.assertStat(stat);
+  }
+  assertStat(stat) {
+    if (!stat.isFile() || stamp(stat) !== this.expected) throw Error("Word XML spool changed.");
   }
   async *source() {
     this.assert();
-    const handle = await fsp.open(this.file, "r");
+    const handle = await fsp.open(this.file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     try {
+      this.assertStat(await handle.stat({ bigint: true }));
       const bytes = Buffer.allocUnsafeSlow(CHUNK);
       let at = 0;
       while (at < this.bytes) {
@@ -72,6 +77,7 @@ class XMLSpool {
         at += bytesRead;
         yield bytes.subarray(0, bytesRead);
       }
+      this.assertStat(await handle.stat({ bigint: true }));
       this.assert();
     } finally {
       await handle.close();
@@ -81,17 +87,22 @@ class XMLSpool {
     this.finish();
     this.assert();
     other.flush();
-    const fd = fs.openSync(this.file, "r"), bytes = Buffer.allocUnsafeSlow(CHUNK);
+    const fd = fs.openSync(this.file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)), bytes = Buffer.allocUnsafeSlow(CHUNK), hash = createHash("sha256");
     try {
+      this.assertStat(fs.fstatSync(fd, { bigint: true }));
       let at = 0;
       while (at < this.bytes) {
         this.owner.check();
         const count = fs.readSync(fd, bytes, 0, Math.min(bytes.length, this.bytes - at), at);
         if (!count) throw Error("Word XML spool was truncated.");
-        other.writeBytes(bytes.subarray(0, count));
+        const part = bytes.subarray(0, count);
+        hash.update(part);
+        other.writeBytes(part);
         at += count;
       }
+      this.assertStat(fs.fstatSync(fd, { bigint: true }));
       this.assert();
+      if (hash.digest("hex") !== this.result.sha256) throw Error("Word XML source digest changed.");
     } finally {
       fs.closeSync(fd);
     }
