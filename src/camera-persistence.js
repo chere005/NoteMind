@@ -17,7 +17,7 @@ class CameraPersistence {
     for(const action of ['begin','write','finish','cancel'])if(typeof api[action+'CameraPagesDeltaUpload']==='function')writeAPI[action+'SheetsDeltaUpload']=(...args)=>api[action+'CameraPagesDeltaUpload'](...args);
     this.queue=new SheetSaveQueue(writeAPI);
     this.cache=new SheetModelCache();
-    const pageAPI={...(typeof api.cancelCameraPageLoad==='function'?{cancelSheetPageLoad:id=>api.cancelCameraPageLoad(id)}:{}),loadSheetPage:(id,options)=>api.loadCameraPage(id,options),loadSheetChunk:(...args)=>api.loadSheetChunk(...args),finishSheetLoad:(...args)=>api.finishSheetLoad(...args)};
+    const pageAPI={...(typeof api.ackSheetChunk==='function'?{ackSheetChunk:(...args)=>api.ackSheetChunk(...args)}:{}),...(typeof api.cancelCameraPageLoad==='function'?{cancelSheetPageLoad:id=>api.cancelCameraPageLoad(id)}:{}),loadSheetPage:(id,options)=>api.loadCameraPage(id,options),loadSheetChunk:(...args)=>api.loadSheetChunk(...args),finishSheetLoad:(...args)=>api.finishSheetLoad(...args)};
     this.lazy=new SheetLazyLoader({api:pageAPI,queue:this.queue,getSheets:()=>this.models.current,subscribe:typeof this.models.subscribe==='function'?listener=>this.models.subscribe(listener):undefined,install:(...args)=>this.install(...args)});
   }
   async load() {
