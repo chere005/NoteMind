@@ -1,9 +1,10 @@
 // Focused hidden browser check; it never launches NoteMind or accesses its profile.
 const {app,BrowserWindow}=require('electron'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),esbuild=require('esbuild');
+const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'notemind-preset-ui-'));app.setPath('userData',path.join(directory,'profile'));const cleanup=()=>fs.rmSync(directory,{recursive:true,force:true});
 if(process.platform==='darwin')app.dock.hide();app.disableHardwareAcceleration();
 app.whenReady().then(async()=>{
- const window=new BrowserWindow({show:false,width:800,height:650,webPreferences:{contextIsolation:false,nodeIntegration:false,backgroundThrottling:false}});let pad;
- window.webContents.setWindowOpenHandler(()=>({action:'allow',overrideBrowserWindowOptions:{show:false,width:800,height:650,webPreferences:{backgroundThrottling:false}}}));window.webContents.on('did-create-window',child=>{pad=child;});
+ const window=new BrowserWindow({show:false,focusable:false,width:800,height:650,webPreferences:{contextIsolation:false,nodeIntegration:false,backgroundThrottling:false}});let pad;
+ window.webContents.setWindowOpenHandler(()=>({action:'allow',overrideBrowserWindowOptions:{show:false,focusable:false,width:800,height:650,webPreferences:{backgroundThrottling:false}}}));window.webContents.on('did-create-window',child=>{pad=child;});
  try{
   await window.loadURL('data:text/html,<html><head><style>body{font:14px sans-serif}button{min-width:24px;min-height:24px}.tablet{width:500px;height:200px;border:1px solid gray}.float-menu{position:fixed;background:white;border:1px solid gray;padding:4px;z-index:100}.float-row>button{display:flex;min-width:180px}.float-label{flex:1}.float-custom{display:block}</style></head><body><div id="root"></div></body></html>');
   const result=esbuild.buildSync({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`import React,{useSyncExternalStore} from 'react';import{createRoot}from'react-dom/client';import{createPortal}from'react-dom';import{ToolPresetControl}from'./src/tablet/renderer/ToolPresetControl';import{createToolPresetController}from'./src/tablet/renderer/toolPresetController';import{registerPadMirrorInput,forwardPadMirrorKey}from'./src/tablet/renderer/padMirrorInput';
@@ -25,6 +26,6 @@ app.whenReady().then(async()=>{
    t.controller.activate('default-pen');pad.querySelector('[data-tablet="surface"]').focus();const packet={type:'keydown',key:'2',code:'Digit2',repeat:false,ctrlKey:false,altKey:false,shiftKey:false,metaKey:false};check(t.forwardPadMirrorKey(packet)&&t.controller.current().width===7,'Real pad mirror bridge applies a handled preset');check(!t.forwardPadMirrorKey({...packet,key:'9'}),'Unbound mirror number remains unconsumed');pad.querySelector('input').focus();check(!t.forwardPadMirrorKey(packet),'Pad text field keeps mirror number keys');
    check(t.subscribers()===1,'Mirrored controls share one mode subscription');check(t.errors.length===0,'Preset operations complete without reported errors');return {checks,presets:t.controller.getSnapshot().presets.map(p=>({name:p.name,tool:p.settings.tool,width:p.settings.width}))};
   })()`);
-  assert.ok(report.checks.length>=12);console.log(JSON.stringify({ok:true,...report},null,2));pad?.destroy();window.destroy();app.exit(0);
- }catch(error){console.error(error);pad?.destroy();window.destroy();app.exit(1);}
+  assert.ok(report.checks.length>=12);console.log(JSON.stringify({ok:true,...report},null,2));pad?.destroy();window.destroy();cleanup();app.exit(0);
+ }catch(error){console.error(error);pad?.destroy();window.destroy();cleanup();app.exit(1);}
 });setTimeout(()=>app.exit(1),20000).unref();
