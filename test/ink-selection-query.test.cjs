@@ -8,3 +8,9 @@ test('degenerate lassos are empty; repeated endpoints and self-intersecting poly
 test('large first queries yield and cache weak bounds; cancellation does not publish a partial selection',async()=>{const points=Array.from({length:12000},(_,i)=>({x:2+i/12000,y:2})),source=[stroke(points)];let yields=0;await query.click(source,{x:0,y:0},{yieldControl:async()=>{yields++;},maxWork:128});assert.ok(yields>20);yields=0;await query.click(source,{x:0,y:0},{yieldControl:async()=>{yields++;},maxWork:128});assert.equal(yields,0);const controller=new AbortController();await assert.rejects(query.lasso([stroke(points.map(p=>({...p})))],square,{signal:controller.signal,maxWork:128,yieldControl:async()=>controller.abort()}),{name:'AbortError'});});
 
 test('selected bounds reuse the same weak cache and retain degenerate dot extents',async()=>{const source=[stroke([{x:-0,y:.3}]),stroke([{x:.5,y:.7},{x:.9,y:.8}])],selected=new SelectionBits(2).set(0);const first=await query.selectedBounds(source,selected);assert.ok(Object.is(first.x,-0));assert.equal(first.width,0);selected.set(1);assert.deepEqual(await query.selectedBounds(source,selected),{x:-0,y:.3,width:.9,height:.5});assert.equal(await query.selectedBounds(source,new SelectionBits(2)),null);});
+
+test('selection styles preserve exact values and report mixed settings without touching source',async()=>{
+ const {selectedStyle}=require('../src/ink-selection-query.cjs'),a={colorHex:'#AbCdEf',width:2.125,points:[{x:-0,y:.2}]},b={...a,colorHex:'#abcdef'},bits=new SelectionBits(2).set(0).set(1);
+ assert.deepEqual(await selectedStyle([a,a],bits),{colour:'#AbCdEf',width:2.125});assert.deepEqual(await selectedStyle([a,b],bits),{colour:null,width:2.125});assert.ok(Object.is(a.points[0].x,-0));
+ const abort=new AbortController();abort.abort();await assert.rejects(selectedStyle([a,b],bits,{signal:abort.signal}),{name:'AbortError'});
+});

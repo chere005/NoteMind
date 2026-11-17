@@ -9,18 +9,19 @@ type Drag={id:number;page:TabletPage;start:Sample;last:Sample;points:Point[];mod
 type Options={page:TabletPage;focusRoot:()=>HTMLElement|null;pixelSize:()=>Size;widthScale:()=>number;onEdited:(owner:TabletPage)=>void;onError:(error:any)=>void;finish:()=>void}
 export function useInkSelection(options:Options){
  const latest=useRef(options);latest.current=options
- const [count,setCount]=useState(0),[bounds,setBounds]=useState<Rect|null>(null),[lasso,setLasso]=useState<Point[]>([]),[busy,setBusy]=useState(false)
+ const [count,setCount]=useState(0),[bounds,setBounds]=useState<Rect|null>(null),[lasso,setLasso]=useState<Point[]>([]),[busy,setBusy]=useState(false),[style,setStyle]=useState<{colour:string|null;width:number|null}>({colour:null,width:null})
+ const infoJob=useRef<AbortController|null>(null)
  const live=useRef<InkSelection|null>(null),mounted=useRef(false),epoch=useRef(0),drag=useRef<Drag|null>(null),lifetimes=useRef(new WeakMap<object,object>())
  const controller=useMemo(()=>new InkSelection({onChange:model=>{
    if(!mounted.current||live.current!==model)return
-   const version=++epoch.current;setCount(model.bits.count)
-   if(!model.bits.count){setBounds(null);return}
-   void model.bounds().then(value=>{if(mounted.current&&live.current===model&&epoch.current===version)setBounds(value)}).catch(error=>{if(error.name!=='AbortError')latest.current.onError(error)})
+   infoJob.current?.abort();const job=new AbortController();infoJob.current=job;const version=++epoch.current;setCount(model.bits.count)
+   if(!model.bits.count){setBounds(null);setStyle({colour:null,width:null});return}
+   void Promise.all([model.bounds({signal:job.signal}),model.style({signal:job.signal})]).then(([value,look])=>{if(mounted.current&&live.current===model&&epoch.current===version){setBounds(value);setStyle(look)}}).catch(error=>{if(error.name!=='AbortError')latest.current.onError(error)})
  }}),[options.page])
  useLayoutEffect(()=>{
    mounted.current=true;live.current=controller;const token={};lifetimes.current.set(controller,token);controller.bind(options.page)
    return()=>{
-     mounted.current=false;if(drag.current?.page===options.page)drag.current=null
+     mounted.current=false;infoJob.current?.abort();if(drag.current?.page===options.page)drag.current=null
      // A command accepted before a portal/tab unmount still belongs to its old page.
      queueMicrotask(()=>{if(lifetimes.current.get(controller)!==token||live.current===controller&&mounted.current)return
        controller.queryJob?.controller.abort()
@@ -45,6 +46,7 @@ export function useInkSelection(options:Options){
      if(!element.closest('.tablet-host')?.contains(active))return
      if(event.key==='Escape'&&(controller.bits.count||drag.current)){event.preventDefault();event.stopPropagation();drag.current=null;controller.clear();setLasso([])}
      else if((event.key==='Delete'||event.key==='Backspace')&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();void run({type:'delete'})}
+     else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)&&!event.ctrlKey&&!event.metaKey&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();const scale=latest.current.pixelSize(),step=event.shiftKey?10:1;void run({type:'move',dx:(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0)/Math.max(1,scale.width),dy:(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)/Math.max(1,scale.height)})}
      else if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='d'&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();void run({type:'duplicate'})}
    }
    doc.addEventListener('keydown',key,true);return()=>doc.removeEventListener('keydown',key,true)
@@ -72,5 +74,5 @@ export function useInkSelection(options:Options){
    const query=g.moved?controller.lasso(g.points,settings):controller.click(g.last.point,settings)
    void query.catch(failed)
  }
- return{controller,count,bounds,lasso,busy,run,clear,begin,move,end,active:(id:number)=>drag.current?.id===id,pendingGesture:()=>!!drag.current,finish:()=>end(false),cancel:()=>{end(true);controller.cancel()}}
+ return{controller,count,bounds,lasso,busy,style,run,clear,begin,move,end,active:(id:number)=>drag.current?.id===id,pendingGesture:()=>!!drag.current,finish:()=>end(false),cancel:()=>{end(true);controller.cancel()}}
 }

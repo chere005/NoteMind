@@ -613,7 +613,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const move = (event: PointerEvent) => {
-    if(inkSelect.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}const sample=at(event);inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px});return}
+    if(inkSelect.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}const all=event.getCoalescedEvents?.()||[];for(const sampleEvent of all.length?all:[event]){const sample=at(sampleEvent);inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px})}return}
     const deferred=pendingInput(event);if(deferred){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}rememberInput(deferred,event);return}
     const g = gesture.current
     const was = touching.current
@@ -827,7 +827,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           </div>
         )}
       </div>
-      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
+      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*unit()} onColour={colour=>{void inkSelect.run({type:'recolor',colorHex:colour})}} onWidth={value=>{void inkSelect.run({type:'width',width:value/unit()})}} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
         <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}
