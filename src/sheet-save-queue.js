@@ -32,8 +32,8 @@ class SheetSaveQueue{
   this.full=false;if(!merge)this.persisted=state.sheets?this.identity(state.sheets):null;return state.sheets;
  }
  seed(state){const steps=this.seedSteps(state);let next;do{next=steps.next();}while(!next.done);return next.value;}
- async seedAsync(state,{yieldControl=yieldTask}={}){const steps=this.seedSteps(state);for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');const next=steps.next();if(next.done)return next.value;await yieldControl();}}
- async seedPage(state,{yieldControl=yieldTask}={}){if(this.eviction)await this.eviction;const steps=this.seedSteps(state,true);for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');const next=steps.next();if(next.done)return next.value;await yieldControl();}}
+ async seedAsync(state,{yieldControl=yieldTask,signal}={}){const steps=this.seedSteps(state);for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');if(signal?.aborted)throw Object.assign(Error('Drawing recovery cancelled.'),{name:'AbortError'});const next=steps.next();if(next.done)return next.value;await yieldControl();}}
+ async seedPage(state,{yieldControl=yieldTask,signal}={}){if(this.eviction)await this.eviction;const steps=this.seedSteps(state,true);for(;;){if(this.disposed)throw Error('Drawing persistence is closing.');if(signal?.aborted)throw Object.assign(Error('Drawing recovery cancelled.'),{name:'AbortError'});const next=steps.next();if(next.done)return next.value;await yieldControl();}}
  *buildSteps(data,requestId,{compact=false}={}){
   if(!Array.isArray(data)||!data.length)throw Error('Invalid drawing sheets.');const seedEpoch=this.seedEpoch;
   if(!this.session)return {seedEpoch,payload:{requestId,session:null,baseVersion:0,expectedSession:this.ownedSession,expectedPersisted:this.ownedPersisted},usedStrokes:new SheetIdSet(),usedBackdrops:new Set()};
