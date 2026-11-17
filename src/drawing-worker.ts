@@ -1,5 +1,6 @@
 import graphics from './graphics-pane.js'
 import {transformInkBinary} from './transform-ink.js'
+import {normalizeBinaryDrawing,fingerprintBinaryDrawing} from './binary-normalize.js'
 import {inspectBinaryDrawing,cropBinaryDrawing,paintBinaryDrawing} from './binary-drawing.js'
 import {pressureScale} from '@notemind/core'
 import {snapshotDrawing,rasterDrawing} from './tablet/renderer/drawingSnapshot'
@@ -42,13 +43,15 @@ async function runJob(job:any){
  const controller=new AbortController();background.set(job.id,controller);let canvas:OffscreenCanvas|null=null
  const pause=async()=>{if(controller.signal.aborted)throw Error('Drawing export cancelled.');await graphics.yieldTask();const visible=activeInk;if(visible)await visible.done;if(controller.signal.aborted)throw Error('Drawing export cancelled.')}
  try{
+  if(job?.fingerprint){const source=await inspectBinaryDrawing(job.bytes,{signal:controller.signal,yieldControl:pause}),hashBytes=await fingerprintBinaryDrawing(source,{signal:controller.signal,yieldControl:pause});self.postMessage({id:job.id,hashBytes},[hashBytes.buffer]);return}
   if(job?.transform){
    const result=await transformInkBinary(job.bytes,job.transform.from,job.transform.to,{signal:controller.signal,yieldControl:pause})
    self.postMessage({id:job.id,...result},[result.bytes.buffer,result.indexes.buffer,result.hashBytes.buffer]);return
   }
   if(job?.normalize){
    if(!Number.isSafeInteger(job.id)||!job.bytes)throw Error('Invalid drawing load request.')
-   const source=graphics.isBinary(job.bytes)?await graphics.decodeAsync(job.bytes,{signal:controller.signal,yieldControl:pause}):graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=await graphics.encodeBytesAsync({...source,backdrop:null},{signal:controller.signal,yieldControl:pause}),hashBytes=new Uint8Array(strokes.length*8),view=new DataView(hashBytes.buffer);let work=0
+   if(graphics.isBinary(job.bytes)){const result=await normalizeBinaryDrawing(job.bytes,{signal:controller.signal,yieldControl:pause});self.postMessage({id:job.id,...result},[result.bytes.buffer,result.hashBytes.buffer,...(result.backdropBytes?[result.backdropBytes.buffer]:[])]);return}
+   const source=graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=await graphics.encodeBytesAsync({...source,backdrop:null},{signal:controller.signal,yieldControl:pause}),hashBytes=new Uint8Array(strokes.length*8),view=new DataView(hashBytes.buffer);let work=0
    for(let i=0;i<strokes.length;i++){const hash=await canonicalStrokeFingerprintAsync(strokes[i],pause);view.setUint32(i*8,parseInt(hash.slice(0,8),16),true);view.setUint32(i*8+4,parseInt(hash.slice(8),16),true);work+=strokes[i].points.length+1;if(work>=8192){work=0;await pause()}}
    const backdropBytes=source.backdrop?await asciiBytes(source.backdrop,pause):null,backdropHash=source.backdrop?fingerprint(source.backdrop):null;metadata.backdrop=null
    self.postMessage({id:job.id,bytes,metadata,hashBytes,backdropBytes,backdropHash},[bytes.buffer,hashBytes.buffer,...(backdropBytes?[backdropBytes.buffer]:[])]);return
@@ -80,6 +83,6 @@ self.onmessage=event=>{
  if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
  if(job?.cancelExport){background.get(job.cancelExport)?.abort();return}
  if(job?.ink){acceptInk(job);return}
- if(job?.transform){void runJob(job);return}
+ if(job?.transform||job?.fingerprint){void runJob(job);return}
  queue=queue.catch(()=>{}).then(()=>runJob(job))
 }

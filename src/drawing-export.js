@@ -52,16 +52,18 @@ class DrawingExporter {
    const result=await Promise.race([pending,stopped]);if(!result.resync&&!result.cancelled&&(!Number.isSafeInteger(result.frame)||!Array.isArray(result.tiles))){closeTiles(result);throw Error('Invalid drawing paint response.');}return result;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.rasterCount--;this.rasterBytes-=bytes;this.maybeIdle();}
  }
- async transform(strokes,from,to,{signal}={}){
+ async geometry(strokes,operation,{signal}={}){
   if(this.disposed)throw closed();const cost=strokes.reduce((n,stroke)=>n+16+stroke.points.length*(stroke.pressures?24:16),128);
   if(this.transformCount>=2||this.transformBytes+cost*2>256*1024*1024)throw Error('Another large selection is moving. Try again shortly.');this.transformCount++;this.transformBytes+=cost*2;
   const id=this.nextId++;let timer,abort;const cancelled=()=>Error('Drawing transformation cancelled.');try{
    if(signal?.aborted)throw cancelled();const bytes=await this.pack({name:'Ink',aspect:1,strokes,backdrop:null},{signal});if(signal?.aborted)throw cancelled();if(this.disposed)throw closed();
-   const pending=this.send({id,bytes,transform:{from:{...from},to:{...to}}},[bytes.buffer]);
+   const pending=this.send({id,bytes,...operation},[bytes.buffer]);
    const stopped=new Promise((_resolve,reject)=>{const stop=error=>{try{this.worker?.postMessage({cancelExport:id});}catch{}const held=this.responses.get(id);this.responses.delete(id);held?.reject(error);reject(error);};abort=()=>stop(cancelled());signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted){abort();return;}timer=setTimeout(()=>stop(Error('Drawing transformation timed out.')),this.timeout);});
-   const result=await Promise.race([pending,stopped]);if(!ArrayBuffer.isView(result.bytes)||!graphics.isBinary(result.bytes)||!(result.indexes instanceof Uint32Array)||!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==result.indexes.length*8)throw Error('Invalid transformed drawing response.');return result;
+   const result=await Promise.race([pending,stopped]);if(operation.fingerprint){if(!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==strokes.length*8)throw Error('Invalid drawing fingerprints.');return result;}if(!ArrayBuffer.isView(result.bytes)||!graphics.isBinary(result.bytes)||!(result.indexes instanceof Uint32Array)||!(result.hashBytes instanceof Uint8Array)||result.hashBytes.byteLength!==result.indexes.length*8)throw Error('Invalid transformed drawing response.');return result;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);this.transformCount--;this.transformBytes-=cost*2;this.maybeIdle();}
  }
+ transform(strokes,from,to,options){return this.geometry(strokes,{transform:{from:{...from},to:{...to}}},options);}
+ fingerprint(strokes,options){return this.geometry(strokes,{fingerprint:true},options);}
  async pump(){
   if(this.running)return;this.running=true;
   while(this.queue.length&&!this.disposed){
@@ -97,5 +99,6 @@ async function transformDrawingInk(strokes,from,to,options={}){
 function renderInk(request,options){return exporter().raster(request,options);}
 function cancelInk(session){shared?.cancelInk(session);}
 function holdDrawingWorker(){return exporter().hold();}
-if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes};
-module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk};
+async function fingerprintStroke(stroke,options={}){const signatures=require('./stroke-signature.js');try{if(typeof Worker==='undefined')throw Error('Drawing worker unavailable.');const packet=await exporter().fingerprint([stroke],options),view=new DataView(packet.hashBytes.buffer,packet.hashBytes.byteOffset,8);return view.getUint32(0,true).toString(16).padStart(8,'0')+view.getUint32(4,true).toString(16).padStart(8,'0');}catch(error){if(options.signal?.aborted)throw error;return signatures.canonicalStrokeFingerprintAsync(stroke,graphics.yieldTask);}}
+if(typeof window!=='undefined')globalThis.NoteMindDrawingExport={normalize:normalizeGraphicsBytes,fingerprintStroke};
+module.exports={DrawingExporter,exportDrawingAssets,validSidecarEnvelope,normalizeGraphicsBytes,renderInk,cancelInk,holdDrawingWorker,transformDrawingInk,fingerprintStroke};
