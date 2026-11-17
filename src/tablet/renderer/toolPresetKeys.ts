@@ -1,10 +1,10 @@
 interface KeyTarget { parentElement?:KeyTarget|null;isContentEditable?:boolean;tagName?:string;getAttribute?:(name:string)=>string|null }
 export interface ToolPresetKey {
- key:string;ctrlKey?:boolean;metaKey?:boolean;altKey?:boolean;shiftKey?:boolean;isComposing?:boolean;keyCode?:number;repeat?:boolean;defaultPrevented?:boolean;target?:KeyTarget|null;composedPath?:()=>unknown[];
+ key:string;ctrlKey?:boolean;metaKey?:boolean;altKey?:boolean;shiftKey?:boolean;isComposing?:boolean;keyCode?:number;repeat?:boolean;defaultPrevented?:boolean;target?:unknown;composedPath?:()=>unknown[];
 }
 export interface ToolPresetKeyOwner { visible:boolean;canvasFocused:boolean;composing?:boolean;modalOpen?:boolean }
 export function presetKeyInField(event:ToolPresetKey):boolean{
- const path=event.composedPath?.()||[];if(event.target&&!path.length){let node=event.target;while(node){path.push(node);node=node.parentElement;}}
+ const path=event.composedPath?.()||[];if(event.target&&!path.length){let node=event.target as KeyTarget|null;while(node){path.push(node);node=node.parentElement;}}
  let editableBoundary=false;
  for(const candidate of path){const element=candidate as KeyTarget;if(!element)continue;
   if(['INPUT','TEXTAREA','SELECT','BUTTON','OPTION'].includes(element.tagName?.toUpperCase()||''))return true;
