@@ -45,7 +45,7 @@ class DrawingResourceLedger {
     page.current[slot] = 0;
     page.active++;
     if (page.free === this.pageSize) this.removeAvailable(page);
-    return { page, slot };
+    return page.id * this.pageSize + slot;
   }
   adjust(key, bytes, kind, delta) {
     if ((typeof key !== 'object' || key === null) && typeof key !== 'function') throw TypeError('Invalid drawing resource key.');
@@ -57,8 +57,9 @@ class DrawingResourceLedger {
       if (delta < 0) throw Error('Invalid drawing resource release.');
       if (delta > 0xffffffff) throw RangeError('Drawing resource ownership overflow.');
       if (!Number.isSafeInteger(this._total + bytes)) throw RangeError('Drawing resource byte accounting overflow.');
-      ({ page, slot } = this.allocate());
-      handle = page.id * this.pageSize + slot;
+      handle = this.allocate();
+      page = this.pages.get(Math.floor(handle / this.pageSize));
+      slot = handle % this.pageSize;
       page.bytes[slot] = bytes;
       this.keys.set(key, handle);
       this._size++;
