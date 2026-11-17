@@ -43,6 +43,6 @@ function duplicateArchiveOwned(bytes,{id}={}){
  if(typeof id!=='string'||!id||id.length>1000)throw Error('Invalid duplicate Notepad identity.');
  const {files,manifest,kind}=validatedFiles(bytes),now=new Date().toISOString();
  const next=manifest?{...manifest,id,created:now,modified:now}:{format:'notemind',version:1,kind,id,title:'',created:now,modified:now,meta:{},content:'document.md',files:Object.fromEntries(Object.entries(files).map(([name,data])=>[name,{bytes:data.length,sha256:hash(data)}]))};
- const index=Buffer.from(JSON.stringify(next,null,2));if(index.length>ENTRY_BYTES)throw Error('The Notepad manifest is too large.');files['manifest.json']=index;return pack(files);
+ const index=Buffer.from(JSON.stringify(next,null,2));if(index.length>ENTRY_BYTES)throw Error('The Notepad manifest is too large.');files['manifest.json']=index;if(Object.values(files).reduce((total,data)=>total+data.length,0)>200*1024*1024)throw Error('The duplicated Notepad exceeds the archive reader size limit.');return pack(files);
 }
 module.exports={encode,decode,encodeDrawingOwned,duplicateArchiveOwned};
