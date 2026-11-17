@@ -21,7 +21,7 @@ test('append, batched append, metadata, Undo, Redo and replacement keep legacy n
 });
 test('an appended stroke does not revisit the old stroke array or point fingerprints',()=>{
  const page=new TabletPage(1.5),sheet={name:'Large',page,paper:{}};page.strokes=Array.from({length:10000},(_,i)=>stroke(i));sheetSignature(sheet);
- page.add(stroke(10001));let oldReads=0;const old=page.strokes;for(let i=0;i<old.length-1;i++){const value=old[i];Object.defineProperty(old,i,{get(){oldReads++;return value;},configurable:true});}
+ const previous=page.strokes,added=stroke(10001),old=[...previous,added];let oldReads=0;for(let i=0;i<old.length-1;i++){const value=old[i];Object.defineProperty(old,i,{get(){oldReads++;return value;},configurable:true});}require('../src/stroke-signature.js').recordStrokeAppend(previous,old,added);page.strokes=old;
  sheetSignature(sheet);assert.equal(oldReads,0);sheet.paper={kind:'grid'};sheetSignature(sheet);assert.equal(oldReads,0);
 });
 test('worker-provided leaf fingerprints skip renderer traversal without changing signatures',()=>{

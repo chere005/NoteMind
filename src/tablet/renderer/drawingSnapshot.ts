@@ -1,13 +1,14 @@
 import type { InkStroke } from './tabletPage'
 import { pressureScale } from '@notemind/core'
 import { colourOfPaper, inkOn, paintPaper, parsePaper, type Paper } from './tabletPaper'
+import {knownImmutableInk} from '../../drawing-history.js'
 
 type Region = { x: number; y: number; width: number; height: number }
 type Source = { name: string; aspect: number; strokes: InkStroke[]; backdrop?: string | null; paper: Paper; target?: any; viewport?: Region }
 
 /** Committed strokes are immutable; retain their identities while freezing the export's sheet and selection. */
 export function snapshotDrawing(source: Source, selection: Region | null = null) {
-  return { ...source, strokes: source.strokes.slice(), paper: { ...source.paper }, selection: selection ? { ...selection } : null, region: { ...(selection || source.viewport || { x: 0, y: 0, width: 1, height: 1 }) }, target: source.target ? { ...source.target } : null }
+  return { ...source, strokes: knownImmutableInk(source.strokes)?source.strokes:source.strokes.slice(), paper: { ...source.paper }, selection: selection ? { ...selection } : null, region: { ...(selection || source.viewport || { x: 0, y: 0, width: 1, height: 1 }) }, target: source.target ? { ...source.target } : null }
 }
 
 const attribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
@@ -48,7 +49,7 @@ export function svgDrawing(snapshot: ReturnType<typeof snapshotDrawing>, withPap
 }
 
 export const denseDrawing = (snapshot: ReturnType<typeof snapshotDrawing>): boolean =>
-  (snapshot.backdrop?.length || 0) > 8*1024*1024 || snapshot.strokes.reduce((count,stroke)=>count+stroke.points.length,0)>=50000
+  (snapshot.backdrop?.length || 0) > 8*1024*1024 || (knownImmutableInk(snapshot.strokes)?.points??snapshot.strokes.reduce((count,stroke)=>count+stroke.points.length,0))>=50000
 
 /** A bounded display preview; the independent sidecar always retains exact editable geometry. */
 export function pngDrawingSvg(snapshot: ReturnType<typeof snapshotDrawing>, png: string): string {

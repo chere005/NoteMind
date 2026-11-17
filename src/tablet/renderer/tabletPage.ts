@@ -365,13 +365,14 @@ export class TabletPage {
     this.extent = includeInk(this.extent, [stroke])
     const previous = this.strokes
     const next = [...previous, stroke]
+    Object.freeze(next)
     recordStrokeAppend(previous, next, stroke)
     this.strokes = next
     this.emit({ op: "add", stroke })
   }
   async addAsync(stroke:InkStroke,options:GeometryChangeOptions={}):Promise<boolean>{
     const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);if(!current())return false;
-    const next:InkStroke[]=new Array(original.length+1);for(let i=0;i<original.length;i++){next[i]=original[i]!;if((i+1)%4096===0){await(options.yieldControl||yieldTask)();if(!current())return false;}}next[original.length]=stroke;recordStrokeAppend(original,next,stroke);
+    const next:InkStroke[]=new Array(original.length+1);for(let i=0;i<original.length;i++){next[i]=original[i]!;if((i+1)%4096===0){await(options.yieldControl||yieldTask)();if(!current())return false;}}next[original.length]=stroke;Object.freeze(next);recordStrokeAppend(original,next,stroke);
     const extent=includeInk(this.extent,[stroke]);return this.changePrepared(next,()=>{this.silently(()=>this.mark());this.extent=extent;this.strokes=next;this.emit({op:'add',stroke})},{...options,valid:current},{extent});
   }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */
@@ -397,6 +398,7 @@ export class TabletPage {
     const original=this.strokes
     if (!Number.isInteger(index) || index < 0 || index >= original.length) return
     const next = original.filter((_, i) => i !== index)
+    Object.freeze(next)
     this.history.prepareRemoval(next, index)
     if(index===original.length-1)recordStrokeTailRemoval(original,next)
     this.strokes = next
@@ -416,6 +418,7 @@ export class TabletPage {
         if (!current()) return false
       }
     }
+    Object.freeze(next)
     this.history.prepareRemoval(next, index)
     if(index===original.length-1)recordStrokeTailRemoval(original,next)
     return this.changePrepared(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})

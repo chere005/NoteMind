@@ -497,7 +497,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       const ready=paintedInk.current
       if(!ink||!paperLayer||gesture.current||pendingStrokes.current.get(current.page)?.size||!ready||ready.page!==current.page||ready.strokes!==current.page.strokes||ready.key!==rasterKey()||snapshot.aspect!==current.page.aspect
         ||snapshot.backdrop!==current.page.backdrop||snapshot.strokes.length!==current.page.strokes.length
-        ||snapshot.strokes.some((stroke,index)=>stroke!==current.page.strokes[index])
+        ||snapshot.strokes!==current.page.strokes&&snapshot.strokes.some((stroke,index)=>stroke!==current.page.strokes[index])
         ||snapshot.paper.kind!==current.paper.kind||snapshot.paper.spacing!==current.paper.spacing||snapshot.paper.colour!==current.paper.colour
         ||!painted||painted.backdrop!==(snapshot.backdrop||null)||painted.paper!==JSON.stringify([snapshot.paper.kind,snapshot.paper.spacing,snapshot.paper.colour])
         ||painted.viewport.x!==shown.x||painted.viewport.y!==shown.y||painted.viewport.width!==shown.width||painted.viewport.height!==shown.height)return null

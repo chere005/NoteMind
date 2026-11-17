@@ -1,4 +1,5 @@
 const graphics=require('./graphics-pane.js');
+const {knownImmutableInk}=require('./drawing-history.js');
 const {backdropReady}=require('./tablet/renderer/tabletBackdrop');
 const closed=()=>Error('Drawing exporter is closed.');
 const closeTiles=value=>{for(const tile of [...(value?.tiles||[]),...(value?.preview?.fixed||[]),...(value?.preview?.ink?[value.preview.ink]:[])])tile.bitmap?.close();};
@@ -13,7 +14,7 @@ class DrawingExporter {
  run(snapshot,options={}){
   if(this.disposed)return Promise.reject(closed());
   if(this.queue.length+(this.active?1:0)>=4)return Promise.reject(Error('Too many drawing exports are pending.'));
-  snapshot=options.normalize?snapshot:{...snapshot,strokes:snapshot.strokes.slice(),paper:{...snapshot.paper},region:{...snapshot.region},extent:snapshot.extent?{...snapshot.extent}:undefined};
+  snapshot=options.normalize?snapshot:{...snapshot,strokes:knownImmutableInk(snapshot.strokes)?snapshot.strokes:snapshot.strokes.slice(),paper:{...snapshot.paper},region:{...snapshot.region},extent:snapshot.extent?{...snapshot.extent}:undefined};
   return new Promise((resolve,reject)=>{
    const controller=new AbortController(),job={id:this.nextId++,snapshot,options,resolve,reject,controller,done:false};
    job.abort=()=>{controller.abort();if(this.active===job){try{this.worker?.postMessage({cancelExport:job.id});}catch{}job.responseReject?.(Error('Drawing export cancelled.'));}else this.queue=this.queue.filter(value=>value!==job);this.finish(job,Error('Drawing export cancelled.'));};
@@ -88,7 +89,7 @@ function validSidecarEnvelope(value){return typeof value==='string'&&value.lengt
 let shared=null,legacy=null,legacyCount=0,legacyBytes=0;
 function exporter(){if(!shared){shared=new DrawingExporter();globalThis.addEventListener?.('pagehide',()=>{shared?.dispose();shared=null;legacy?.dispose();legacy=null;},{once:true});}return shared;}
 async function temporary(cost,run){if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');legacy ||= new DrawingExporter({idle:0});const owner=legacy;legacyCount++;legacyBytes+=cost;try{return await run(owner);}finally{legacyCount--;legacyBytes-=cost;if(!legacyCount){owner.dispose();if(legacy===owner)legacy=null;}}}
-function exportDrawingAssets(snapshot,options={}){if((snapshot.backdrop?.length||0)>65536){const geometry=snapshot.strokes.reduce((bytes,stroke)=>bytes+16+stroke.points.length*(stroke.pressures?24:16),24),pixels=options.png===false?0:Math.min(16*1024*1024,options.maxPixels||16*1024*1024),cost=(geometry+snapshot.backdrop.length)*2+Math.ceil(pixels*16/3);return temporary(cost,owner=>owner.run(snapshot,options));}return exporter().run(snapshot,options);}
+function exportDrawingAssets(snapshot,options={}){if((snapshot.backdrop?.length||0)>65536){const geometry=knownImmutableInk(snapshot.strokes)?.binaryBytes??snapshot.strokes.reduce((bytes,stroke)=>bytes+16+stroke.points.length*(stroke.pressures?24:16),24),pixels=options.png===false?0:Math.min(16*1024*1024,options.maxPixels||16*1024*1024),cost=(geometry+snapshot.backdrop.length)*2+Math.ceil(pixels*16/3);return temporary(cost,owner=>owner.run(snapshot,options));}return exporter().run(snapshot,options);}
 async function normalizeGraphicsBytes(bytes,options={}){
  if(graphics.isBinary(bytes)&&bytes.byteLength>=24){const header=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);if(header.getUint32(8,true)<=65536&&header.getUint32(12,true)<50000&&header.getUint32(16,true)<50000)return ownNormalizedPacket(await exporter().normalize(bytes,options),options);}
  // Retire transient normalization memory before the editable graph is hydrated.

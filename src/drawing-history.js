@@ -3,8 +3,9 @@
 // Current ink and the nearest complete Undo/Redo are protected; inactive pages must unload.
 const { strokeAppend } = require("./stroke-signature.js");
 const { DrawingResourceLedger } = require("./drawing-resource-ledger.js");
-const WIDTH = 32, LEAF_WIDTH = 256, ENTRY_BYTES = 96;
+const WIDTH = 32, LEAF_WIDTH = 256, ENTRY_BYTES = 96, NODE_BYTES=72;
 const decodedGeometry = new WeakMap();
+const fixedGeometryCounts=new WeakSet();
 const freshStrokes = new WeakSet();
 let geometrySequence = 0;
 const certifyFreshStroke = stroke => { freshStrokes.add(stroke); return stroke; };
@@ -72,16 +73,17 @@ class DrawingHistoryBudget {
     return stroke;
   }
   node(children, level, certified = false, epoch = this.aggregateEpoch) {
-    let count = 0, pointCount = 0, estimatedBytes = 64 + children.length * 8;
+    let count = 0, pointCount = 0, binaryBytes=0,estimatedBytes = NODE_BYTES + children.length * 8;
     for (const child of children) {
       count += level ? child.count : 1;
       pointCount += level ? child.pointCount : child.points.length;
+      binaryBytes += level ? child.binaryBytes : 16 + child.points.length * (child.pressures ? 24 : 16);
       estimatedBytes += level ? child.estimatedBytes : 160 + child.points.length * 64 + (child.pressures ? 32 + child.pressures.length * 8 : 0);
     }
-    return { current: 0, history: 0, children, level, count, pointCount, estimatedBytes, aggregate: !level && certified, aggregateEpoch: epoch };
+    return { current: 0, history: 0, children, level, count, pointCount,binaryBytes, estimatedBytes, aggregate: !level && certified, aggregateEpoch: epoch };
   }
   adjustNode(node, wasCurrent, wasHistory) {
-    const bytes = node.aggregate ? node.estimatedBytes : 64 + node.children.length * 8;
+    const bytes = node.aggregate ? node.estimatedBytes : NODE_BYTES + node.children.length * 8;
     const current = node.current > 0, history = node.history > 0;
     if ((wasCurrent || wasHistory) !== (current || history)) this.ownTotal += current || history ? bytes : -bytes;
     if ((wasHistory && !wasCurrent) !== (history && !current)) this.ownExtra += history && !current ? bytes : -bytes;
@@ -89,7 +91,7 @@ class DrawingHistoryBudget {
   canAggregate(array) { return (decodedGeometry.get(array) || 0) > this.lastUncertified; }
   materializeLeaf(node) {
     if (!node.aggregate) return;
-    const bytes = node.estimatedBytes - (64 + node.children.length * 8);
+    const bytes = node.estimatedBytes - (NODE_BYTES + node.children.length * 8);
     for (const kind of ['current', 'history']) if (node[kind] > 0) {
       for (const stroke of node.children) this.holdStroke(stroke, kind, 1);
     }
@@ -154,6 +156,7 @@ class DrawingHistoryBudget {
     const certified = this.canAggregate(array);
     const append = base && array.length === base.array.length + 1 && array.at(-1) === link.stroke;
     const freshAppend = append && freshStrokes.delete(link.stroke);
+    if(freshAppend&&Object.isFrozen(array)&&fixedGeometryCounts.has(base.array))fixedGeometryCounts.add(array);
     if (array.length && !certified && !freshAppend) this.invalidateAggregates();
     let tree;
     if (append) {
@@ -191,7 +194,7 @@ class DrawingHistoryBudget {
   }
   prepareRemoval(previous, next, index) {
     const base = this.state(previous);
-    if (next.length === previous.length - 1 && Number.isInteger(index) && index >= 0 && index < previous.length) this.states.set(next, { array: next, tree: this.remove(base.tree, index), current: 0, history: 0, memory: this.resource(next, 32 + next.length * 8) });
+    if (next.length === previous.length - 1 && Number.isInteger(index) && index >= 0 && index < previous.length){if(Object.isFrozen(next)&&fixedGeometryCounts.has(previous))fixedGeometryCounts.add(next);this.states.set(next, { array: next, tree: this.remove(base.tree, index), current: 0, history: 0, memory: this.resource(next, 32 + next.length * 8) });}
   }
   async prepareSparse(previous, next, change, {valid = () => true, pause = yieldTask} = {}) {
     if (!Array.isArray(previous) || !Array.isArray(next) || change?.source !== previous || !(change.replacements instanceof Map) || !Array.isArray(change.duplicates)) return undefined;
@@ -574,5 +577,6 @@ class DrawingHistory {
     await this.budget.releaseAsync(record);
   }
 }
-globalThis.NoteMindDrawingHistory = { primeStroke: (stroke) => sharedBudget.prime(stroke), primeDecodedArray: array => decodedGeometry.set(array, ++geometrySequence) };
-module.exports = { DrawingHistoryBudget, DrawingHistory, sharedBudget, certifyFreshStroke, prepareFreshStroke };
+globalThis.NoteMindDrawingHistory = { primeStroke: (stroke) => sharedBudget.prime(stroke), primeDecodedArray: array => {decodedGeometry.set(array, ++geometrySequence);if(Object.isFrozen(array))fixedGeometryCounts.add(array);} };
+function knownImmutableInk(array){const state=sharedBudget.states.get(array);return state&&(state.current>0||state.history>0)&&Object.isFrozen(array)?{points:fixedGeometryCounts.has(array)?state.tree?.pointCount||0:null,binaryBytes:fixedGeometryCounts.has(array)?24+(state.tree?.binaryBytes||0):null}:null;}
+module.exports = { DrawingHistoryBudget, DrawingHistory, sharedBudget, certifyFreshStroke, prepareFreshStroke,knownImmutableInk };
