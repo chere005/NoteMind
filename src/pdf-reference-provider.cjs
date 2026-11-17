@@ -4,7 +4,7 @@ function create({pdfjs,makeCanvas=()=>document.createElement('canvas'),baseURL,m
  if(!pdfjs?.getDocument)throw Error('PDF rendering is unavailable.');
  return {async open(source,{signal}={}){
   check(signal);const data=source?.data||source,password=source?.password;if(!(data instanceof Uint8Array)||data.byteLength>maxBytes)throw Error('Choose a PDF up to 150 MB.');
-  const options={data,password,isEvalSupported:false,useSystemFonts:true,maxImageSize:16000000,canvasMaxAreaInBytes:64*1024*1024,stopAtErrors:true};if(baseURL){options.cMapUrl=new URL('./vendor/pdfjs/cmaps/',baseURL).href;options.cMapPacked=true;options.standardFontDataUrl=new URL('./vendor/pdfjs/standard_fonts/',baseURL).href;options.wasmUrl=new URL('./vendor/pdfjs/wasm/',baseURL).href;}
+  const options={data,password,isEvalSupported:false,useSystemFonts:true,maxImageSize:16000000,canvasMaxAreaInBytes:64*1024*1024,stopAtErrors:true};if(baseURL){options.useWorkerFetch=true;options.cMapUrl=new URL('./vendor/pdfjs/cmaps/',baseURL).href;options.cMapPacked=true;options.standardFontDataUrl=new URL('./vendor/pdfjs/standard_fonts/',baseURL).href;options.wasmUrl=new URL('./vendor/pdfjs/wasm/',baseURL).href;}
   const task=pdfjs.getDocument(options),cancel=()=>{void Promise.resolve(task.destroy()).catch(()=>{});};signal?.addEventListener('abort',cancel,{once:true});let pdf;
   try{pdf=await task.promise;check(signal);}catch(error){await task.destroy().catch(()=>{});if(signal?.aborted)throw abort();throw error;}finally{signal?.removeEventListener('abort',cancel);}
   let closed=false;
