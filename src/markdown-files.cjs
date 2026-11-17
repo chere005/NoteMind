@@ -43,6 +43,7 @@ async function writeAsset(target,data){
   await visitAsset(data,async bytes=>{let offset=0;while(offset<bytes.length){const written=await handle.write(bytes,offset,bytes.length-offset,position+offset);if(!written.bytesWritten)throw Error('Attachment write stopped.');offset+=written.bytesWritten;}position+=bytes.length;});
   await handle.sync();await handle.close();handle=null;
   try{await fs.link(temp,target);}catch(error){if(error.code!=='EEXIST')throw error;await matchesAsset(target,data);}
+  await require('./snapshot-store.cjs').syncHierarchy(path.dirname(target),path.dirname(target));
  }finally{await handle?.close();await fs.unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});}
 }
 
@@ -86,9 +87,8 @@ async function absent(file){if(await readExisting(file)!==null)throw Object.assi
 async function writeDocument(doc,target){await absent(target);const prepared=await prepare(doc,target,{metadata:false});await replaceIfUnchanged(target,Buffer.from(prepared.text),null,{afterCommit:()=>writeMetadata(prepared,target)});return prepared;}
 async function copyInScope(source,target,{duplicate=false,move=false}={}){
  if(duplicate&&/\.(nm|wm)$/i.test(source)&&/\.(nm|wm)$/i.test(target)){
-  const bytes=await fs.readFile(source),format=require('./notepad-format.cjs'),doc=format.decode(bytes),zip=require('./zip.cjs'),files=zip.unpack(bytes);
-  if(files['manifest.json']){const manifest=JSON.parse(files['manifest.json']);manifest.id=crypto.randomUUID();manifest.created=manifest.modified=new Date().toISOString();files['manifest.json']=Buffer.from(JSON.stringify(manifest,null,2));await replaceIfUnchanged(target,zip.pack(files),null);}
-  else{const extra=Object.fromEntries(['drawing.json','workspace.json'].filter(name=>files[name]).map(name=>[name,JSON.parse(files[name].toString())]));await replaceIfUnchanged(target,format.encode({...doc,id:crypto.randomUUID(),created:new Date().toISOString()},{kind:doc.kind,extra}),null);}
+  const bytes=await require('./read-limited.cjs').readLimited(source,200*1024*1024,'The Notepad is too large to duplicate.'),input=bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?bytes:Uint8Array.from(bytes),duplicated=await require('./archive-codec.cjs').duplicateArchiveOwned(input,{id:crypto.randomUUID()});
+  await replaceIfUnchanged(target,duplicated,null);
   return;
  }
  if(!markdown(source)||!markdown(target)||(await fs.stat(source)).isDirectory()){

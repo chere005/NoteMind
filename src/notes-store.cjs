@@ -7,10 +7,10 @@ const digest = data => createHash('sha256').update(data).digest('hex');
 const titleOf = text => String(text || '').split(/\r?\n/).map(s => s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`=]/g, '').trim()).find(Boolean)?.slice(0, 100) || 'Untitled';
 const metadata = value => ({tags: [...new Set((Array.isArray(value?.tags) ? value.tags : []).map(t => String(t).trim().replace(/^#/, '').slice(0, 60)).filter(Boolean))].slice(0, 100), pinned: !!value?.pinned, collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter(x => typeof x === 'string').slice(0, 1000) : [], attachments: value?.attachments && typeof value.attachments==='object' ? value.attachments : {}, graphicsPanes: Object.fromEntries(Object.entries(value?.graphicsPanes||{}).filter(([,pane])=>pane?.version===1).map(([name])=>[name,{version:1}]))});
 async function atomic(file, data) {
- await fs.mkdir(path.dirname(file), {recursive:true});
- const temp = file + '.' + randomUUID() + '.tmp';
- try { await fs.writeFile(temp, data, {flag:'wx'}); await fs.rename(temp, file); }
- finally { await fs.unlink(temp).catch(() => {}); }
+ const directory=path.dirname(file),created=await fs.mkdir(directory, {recursive:true}),temp=file+'.'+randomUUID()+'.tmp';let handle,published=false;
+ try {handle=await fs.open(temp,'wx');await handle.writeFile(data);await handle.sync();await handle.close();handle=null;await fs.rename(temp,file);published=true;await require('./snapshot-store.cjs').syncHierarchy(created||directory,directory);}
+ catch(error){if(published)error.notemindFileCommitted=true;throw error;}
+ finally {await handle?.close();await fs.unlink(temp).catch(() => {});}
 }
 class NotesStore {
  constructor(root, recoveryRoot = path.join(root, 'recovery')) { this.root = root; this.recoveryRoot = recoveryRoot; this.pending = Promise.resolve(); this.snapshotObjects = new Map(); this.versionPending = new Map(); }
