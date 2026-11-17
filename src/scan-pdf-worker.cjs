@@ -23,14 +23,14 @@ async function writeScanPDF(packet,{check=()=>{},onPage=()=>{}}={}){
  limits.assertPageCount(packet.pages?.length,{allowEmpty:false});const doc=await PDFDocument.create();doc.setTitle('Scan');let compressed=0;
  for(let index=0;index<packet.pages.length;index++){
   check();const source=packet.pages[index];if(![0,90,180,270].includes(source.rotation??0))throw Error('Invalid scan rotation.');let bytes=await fs.readFile(source.file);check();const info=await limits.validateBytes(bytes,{signal:{get aborted(){try{check();return false}catch{return true}}}});if(info.mime!==source.mime)throw Error('Scan image type changed.');
-  let image;if(info.mime==='image/png'){const channels=await decodeScanPNG(bytes,{check});if(index===0&&packet.thumbnail){check();await fs.writeFile(packet.thumbnail,pngThumbnail(channels,source.rotation??0),{flag:'wx',mode:0o600});check();}const ref=doc.context.nextRef();image=PDFImage.of(ref,doc,new PngEmbedder(channels));doc.images.push(image);}else image=await doc.embedJpg(bytes);let orientation=1;if(info.mime==='image/jpeg')orientation=imageSize(bytes).orientation||1;
+  let image,sourceReleased=false;if(info.mime==='image/png'){const channels=await decodeScanPNG(bytes,{check});if(bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function'){bytes.buffer.transfer(0);sourceReleased=true;}bytes=null;if(index===0&&packet.thumbnail){check();await fs.writeFile(packet.thumbnail,pngThumbnail(channels,source.rotation??0),{flag:'wx',mode:0o600});check();}const ref=doc.context.nextRef();image=PDFImage.of(ref,doc,new PngEmbedder(channels));doc.images.push(image);}else image=await doc.embedJpg(bytes);let orientation=1;if(info.mime==='image/jpeg')orientation=imageSize(bytes).orientation||1;
   check();await image.embed();check();if(image.embedder!==undefined)throw Error('Scan image channels were retained after embedding.');
   const page=doc.addPage([210/25.4*72,297/25.4*72]),name=page.node.newXObject('Image',image.ref);page.pushOperators(pushGraphicsState(),concatTransformationMatrix(...imagePlacement(image.width,image.height,orientation,source.rotation??0)),drawObject(name),popGraphicsState());
   // Context owns encoded image/alpha streams only. Count immediately, before
   // accepting another image; PDF serialization has a separate exact final cap.
   let total=0;for(const [,object]of doc.context.enumerateIndirectObjects())if(object instanceof PDFRawStream){const filter=object.dict.get(PDFName.of('Filter'));if(filter)total+=object.getContentsSize();}
   compressed=total;if(compressed>limits.ENTRY_BYTES)throw Error('The generated scan PDF exceeds the 50 MiB attachment limit.');
-  bytes=null;await onPage({index,compressed,embedderReleased:image.embedder===undefined});await tick();check();
+  bytes=null;await onPage({index,compressed,embedderReleased:image.embedder===undefined,sourceReleased});await tick();check();
  }
  const output=await doc.save({useObjectStreams:true,addDefaultPage:false,objectsPerTick:16});check();limits.assertPDFSize(output.byteLength);await fs.writeFile(packet.output,output,{flag:'wx',mode:0o600});check();return {bytes:output.byteLength,pages:packet.pages.length,compressed};
 }
