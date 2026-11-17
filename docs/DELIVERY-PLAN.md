@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 4:07 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 5:20 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
 
@@ -22,7 +22,7 @@ Prioritize the drawing/pen/page/crash fixes, the already integrated useful featu
 | **C2b — PDF command and save ownership** | **Complete in `de299dc`** | Actual App/PadHost passes active-PDF next/previous, clear-markup/Undo and preserved hidden camera ink, plus pending-save/open/portal ownership. Six recorded phases; zero runtime warnings/errors. |
 | **C2c — PDF transport and supported scale** | **Transport integrated; supported-scale and lease gates active** | Raw markup save/reopen uses the existing scoped chunk transport and archive worker. Actual 2.4 MB pressure-markup roundtrip has no Main whole-byte borrow. The strict 100-page workflow passes. Worker-loss lease cleanup and large supported workloads remain actively assigned. |
 | **D1 — page overview** | **Integrated: `42754e3`** | Actual App/PadHost eight-phase workflow passes camera reorder, portal ownership, hidden-command suspension and 3,000 pages with 30 mounted cards at 809,402,368 B sampled peak. Real >2 MiB SVG preview/color/cancellation gate passes at 569,180,160 B. 63 focused integrated checks pass. |
-| **D2 — large import** | **After its shared PDF/attachment seam** | Cancellable page selection and page-by-page text-first import; retain exact insertion ownership. Separate recoverable checkpoint. |
+| **D2 — large import** | **Implemented in isolation; focused checks pass, actual UI gate active** | Cancellable page selection and page-by-page text-first import; retain exact insertion ownership. Separate recoverable checkpoint. |
 | **First stable bundle** | **Target 3–6 hours from the 1:32 PM decision** | First data panel passed23fa66b; first UI panel passed5bce336 with101 focused cases and actual App9-phase/presets17-check/PDF14-phase gates. Data extensions passed Word publication/shutdown, private archive retirement and Word column widening. Coordinate-correct pressure and2M producer now both exit0 with original pixels. Full-App identity, large-image transport, repeats and packaged gates remain active. Resolve repeated drawing native-memory and all fresh findings, then freeze, preflight, package and verify; notify before installation. |
 | **All-feature panel** | **Subsequent reviewed increments** | Review all approved features together, implement findings, and repeat affected end-to-end/performance stages. |
 | **Final audits and release** | **After all approved scope passes** | Three fresh whole-app audits; resolve findings; frozen stress/recovery/soak, full packaged validation and Claude handoff. |
@@ -54,6 +54,8 @@ Report the checkpoint in chat when reached, alongside the hourly whole-roadmap u
 - Keep findings and requested planning in this chat/repository; do not put this work in TaskMind.
 
 ## Work happening now
+
+Current gate update:100 canonical JPEGs now complete opening and typing with zero full-byte cache materializations, but history autosave still exceeds1GiB. Data owns streamed CAS/history publication. Actual distinct2M App+IPC now completes durable erase and Undo upload, then exceeds1GiB during Undo preparation; Architecture owns measured high-water idle storage-worker retirement. Perf closes lifetime claim-journal exhaustion and torn-owner recovery. Root's D2 chooser passes14focused checks and is in the hidden100-page PDF UI gate. The5PM whole-roadmap update was delivered; installed0.35.0 remains untouched. The following earlier measurements retain their original scopes and are superseded by these current gate states where they conflict.
 
 | Work package | Owner | Present evidence | Required next result |
 |---|---|---|---|
