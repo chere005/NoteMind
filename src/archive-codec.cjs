@@ -2,7 +2,7 @@ const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=requ
 const {TextEncoder}=require('node:util'),{randomUUID}=require('node:crypto');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
 const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawAcquireWorking','rawReleaseWorking','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
-const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord','exportWordFile','wordImageNames']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
+const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord','exportWordFile','wordImageNames','pdfInk']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
  const pending=[value],seen=new Set();let bytes=0;

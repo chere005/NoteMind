@@ -10,7 +10,7 @@ export function VideoControl({source,visible,documentActive=false,documentId=nul
  return <MenuButton icon={documentActive?'doc':source==='tablet'?'pen':'camera'} label={label} chevron name="Capture source" title="Choose drawing, camera or a document" dataBar="video-menu" menuBar="video-options" onOpen={refresh} live items={()=>[
   {label:'Drawing',icon:'pen',checked:!documentActive&&source==='tablet',dataBar:'video-tablet',onClick:()=>command('source:tablet')},
   {label:'Camera',icon:'camera',checked:!documentActive&&source==='camera',dataBar:'video-camera',onClick:()=>command('source:camera')},
-  ...(openDocuments.length?[{label:'Open Documents',submenu:openDocuments.map(item=>({label:item.name,checked:item.path===documentId,onClick:()=>onDocument(item.path)}))}]:[]),
+  ...(openDocuments.length?[{label:'Open Documents',submenu:openDocuments.map(item=>({label:item.name,checked:(item.key||item.path)===documentId,onClick:()=>onDocument(item.key||item.path)}))}]:[]),
   {label:'Open Document…',icon:'doc',onClick:()=>document.getElementById('open').click()},'-',
   {label:'Camera Device',submenu:devices.length?devices.map(item=>({label:item.label||'Camera',checked:item.deviceId===device||(!device&&item===devices[0]),onClick:()=>{command('source:camera');input({device:item.deviceId})}})):[{label:scanning?'Finding cameras…':'No cameras found',disabled:true}]},
   {label:'Refresh Devices',dataBar:'video-refresh',onClick:()=>{refresh();input({refresh:true})}},'-',

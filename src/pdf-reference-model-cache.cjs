@@ -1,0 +1,5 @@
+const MAX_BYTES=96*1024*1024,MAX_MODELS=3;
+function retainedBytes(model){const value=model.retainedGeometryBytes;if(!Number.isSafeInteger(value)||value<0)throw Error('Invalid retained PDF ink budget.');return value;}
+function candidates(models,{active,maxBytes=MAX_BYTES,maxModels=MAX_MODELS}={}){let bytes=0,count=models.size;for(const value of models.values())bytes+=retainedBytes(value.model);const result=[];for(const [number,value]of models){if(bytes<=maxBytes&&count<=maxModels)break;if(number===active||value.model.geometryRetained)continue;result.push([number,value]);bytes-=retainedBytes(value.model);count--;}return result;}
+async function pruneModels(models,{active=()=>null,valid=()=>true,dispose,maxBytes=MAX_BYTES,maxModels=MAX_MODELS}={}){for(const [number,value]of candidates(models,{active:active(),maxBytes,maxModels})){if(!valid())break;if(number===active()||value.model.geometryRetained||models.get(number)!==value)continue;models.delete(number);await dispose(value);}}
+module.exports={retainedBytes,candidates,pruneModels,MAX_BYTES,MAX_MODELS};
