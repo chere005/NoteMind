@@ -72,7 +72,7 @@ async function publishSnapshot(root,id,prepared,cache=new Map()){
  // Both document hashing and JSON serialization have already completed in the trusted worker.
  try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
 }
-async function readSnapshot(root,id,{referencesOnly=false}={}){
+async function readSnapshot(root,id,{referencesOnly=false,assetResolver}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});
  if(referencesOnly){
   const knownHashes=[];await mapLimit([...new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref])).values()],8,async ref=>{try{const stat=await fs.lstat(objectFile(root,ref.hash));if(stat.isFile()&&!stat.isSymbolicLink()&&stat.size===ref.bytes)knownHashes.push(ref.hash);}catch(error){if(error.code!=='ENOENT')throw error;}});
@@ -83,7 +83,7 @@ async function readSnapshot(root,id,{referencesOnly=false}={}){
  for(const [name,ref]of Object.entries(manifest.assets)){
   if(!loaded.has(ref.hash)){
    const file=objectFile(root,ref.hash),stat=await fs.lstat(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');
-   const bytes=await readLimited(file,ref.bytes,'A version asset is damaged.');if(bytes.length!==ref.bytes||sha(bytes)!==ref.hash)throw Error('A version asset is damaged.');validateEntry(name,bytes);loaded.set(ref.hash,bytes.toString('base64'));
+   const bytes=await readLimited(file,ref.bytes,'A version asset is damaged.');if(bytes.length!==ref.bytes||sha(bytes)!==ref.hash)throw Error('A version asset is damaged.');validateEntry(name,bytes);loaded.set(ref.hash,assetResolver?.(bytes,{bytes:ref.bytes,sha256:ref.hash})??bytes.toString('base64'));
   }
   assets[name]=loaded.get(ref.hash);
  }

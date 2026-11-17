@@ -5,7 +5,7 @@ test('archive work is serialized, bounded and freezes queued document state',asy
  const h=fixture({maxPending:2,maxBytes:1024}),doc={text:'first',assets:{},meta:{tags:['before']}},first=h.codec.encode(doc),second=h.codec.encode(doc);
  doc.text='changed';doc.meta.tags.push('later');doc.assets['assets/new']='AA==';await assert.rejects(h.codec.encode(doc),/busy/);
  assert.equal(h.workers.length,1);assert.equal(h.workers[0].messages.length,1);answer(h.workers[0],Uint8Array.from([1]));await first;
- const queued=h.workers[0].messages[1].args[0];assert.equal(queued.text,'first');assert.deepEqual(queued.meta.tags,['before']);assert.deepEqual(queued.assets,{});
+ const message=h.workers[0].messages[1],queued=message.args[0];assert.equal(queued.text,'first');assert.deepEqual(queued.meta.tags,['before']);assert.equal(queued.assets,undefined);assert.deepEqual({...message.assetPacket.refs},{});assert.deepEqual(message.assetPacket.added,{});
  answer(h.workers[0],Uint8Array.from([2]));assert.deepEqual(await second,Buffer.from([2]));assert.equal(h.codec.bytes,0);await h.codec.dispose();
 });
 test('a failed worker rejects only its active job, ignores late replies and recovers queued work',async()=>{
