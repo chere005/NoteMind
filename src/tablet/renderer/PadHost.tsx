@@ -55,7 +55,7 @@ export function PadHost({children}:{children:ReactNode}){
    <div className="pane-chrome-slot" data-pane-slot="header"/>
    <div className="pane-chrome-slot" data-pane-slot="find"/>
    <PadMirror frame={frame} viewport={viewport}/>
-   {penStatus&&<p className="pad-status" role="status">{penStatus}{needsAccess&&<button type="button" title="Open Input Monitoring to allow NoteMind to read the tablet pen" onClick={()=>{void (window as any).notemind.pad.requestAccess().catch((error:Error)=>setPenStatus(error.message))}}>Open System Settings</button>}</p>}
+   {penStatus&&<p className="pad-status" role="status">{penStatus}{needsAccess&&<button type="button" title="Open Input Monitoring to allow NoteMind to read the tablet pen" onClick={()=>{void (window as any).notemind.pad.requestAccess().catch((error:Error)=>setPenStatus(error.message))}}>Open System Settings</button>}{needsAccess&&<button type="button" title="Try independent pen capture again without changing the current drawing" onClick={()=>{void (window as any).notemind.pad.retry().catch((error:Error)=>setPenStatus(error.message))}}>Retry pen input</button>}</p>}
    <div className="pane-chrome-slot" data-pane-slot="footer"/>
   </div>}
   {target?createPortal(children,target):children}

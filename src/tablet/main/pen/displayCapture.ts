@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import type { PenSample } from "../../shared/pen"
 export interface OneCaptureStatus { state: "checking" | "listening" | "active" | "needs-input-monitoring" | "unavailable" | "failed" | "idle"; reason: string | null }
-const WACOM_ONE_INPUT_MONITORING = "NoteMind needs Input Monitoring to capture this pen display. Allow NoteMind in System Settings; pen input retries automatically."
+const WACOM_ONE_INPUT_MONITORING = "Using the Wacom driver for pen input. Independent capture could not get access; you can retry it after checking System Settings."
 function parseHelperLine(text: string): any { try {const value=JSON.parse(text);return value && typeof value.k === "string" ? value : null} catch {return null} }
 
 export function sampleOf(r: { f: number; x: number; y: number; p: number }, device: { maxX: number; maxY: number; maxP: number }, t: number): PenSample | null {
@@ -80,6 +80,9 @@ export class MacWacomOneCaptureController {
       return
     }
     this.child = child
+    // Pipe writes can fail asynchronously after write() returns; try/catch cannot handle the stream's error event.
+    child.stdin?.on("error", (error) => this.fail(gen, ownerId, "failed", `the Wacom One heartbeat pipe closed: ${error.message}`))
+    child.stdout?.on("error", (error) => this.fail(gen, ownerId, "failed", `the Wacom One sample pipe closed: ${error.message}`))
     let buffered = ""
     child.stdout?.setEncoding("utf8")
     child.stdout?.on("data", (chunk: string) => {
@@ -148,7 +151,7 @@ export class MacWacomOneCaptureController {
 
   /** Called only for a fresh, validated pad-renderer heartbeat after main checked this owner is still active. */
   heartbeat(ownerId: number): boolean {
-    if (ownerId !== this.ownerId || !this.child?.stdin?.writable) return false
+    if (ownerId !== this.ownerId || !this.child?.stdin?.writable || this.child.stdin.destroyed || this.child.stdin.writableEnded) return false
     try { return this.child.stdin.write("ping\n") } catch { this.stop("controller heartbeat failed"); return false }
   }
 

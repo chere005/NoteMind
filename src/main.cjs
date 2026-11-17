@@ -136,7 +136,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
   win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
 
-  pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>inputMonitoring.onStatus(status), displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
+  pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>{const request=inputMonitoring.onStatus(status);if(request)void request.then(result=>{if(result.access==='granted')pen?.displayRetry?.();});}, displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
 
   pen.attachWindow();
 
@@ -257,6 +257,7 @@ ipcMain.handle('search-folder', async (_, folder, query) => {
 });
 
 ipcMain.handle('load-sheets', async () => {
+  await sheetWrite;
 
   try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'sheets.json'), 'utf8')); }
 
@@ -278,7 +279,7 @@ ipcMain.handle('save-sheets', async (_, data) => {
 
 });
 
-ipcMain.handle('load-camera-pages', async () => { try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
+ipcMain.handle('load-camera-pages', async () => { await cameraWrite; try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
 
 ipcMain.handle('save-camera-pages', async (_, data) => { if (!Array.isArray(data)) throw Error('Invalid camera page data'); const content = JSON.stringify(data); if (Buffer.byteLength(content) > 200 * 1024 * 1024) throw Error('Camera pages are too large'); const file = path.join(app.getPath('userData'), 'camera-pages.json'); const write = async () => { const temp = `${file}.${require('node:crypto').randomUUID()}.tmp`; try { await fs.writeFile(temp, content, { flag: 'wx' }); await fs.rename(temp, file); } finally { await fs.unlink(temp).catch(() => {}); } }; const pending = cameraWrite.then(write, write); cameraWrite = pending.catch(() => {}); await pending; });
 
@@ -295,7 +296,8 @@ ipcMain.handle('duplicate-entry', async (_, source) => { const ext = path.extnam
 ipcMain.handle('move-entry', async (_, source, folder) => { const src = path.resolve(source), dir = path.resolve(folder), target = path.join(dir, path.basename(src)); const key = p => process.platform === 'win32' ? p.toLowerCase() : p; if (key(src) === key(target)) return src; const stat = await fs.lstat(src); if (stat.isDirectory() && (key(dir) === key(src) || key(dir).startsWith(key(src) + path.sep))) throw Error('A folder cannot be moved inside itself.'); try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(src);await fileActions.rename(src,target);await notesStore.rename(src,target);notesIPC.send();return target; });
 
 ipcMain.handle('trash-entry', async (_, source) => {await settleDocumentWrites(source);await fileActions.trash(source);notesIPC.send();});
-ipcMain.handle('pad:request-access',event=>{if(event.sender!==win?.webContents)return null;return inputMonitoring.request();});
+ipcMain.handle('pad:request-access',async event=>{if(event.sender!==win?.webContents)return null;const result=await inputMonitoring.request();if(result.access==='granted')pen?.displayRetry?.();return result;});
+ipcMain.handle('pad:retry',event=>{if(event.sender===win?.webContents)pen?.displayRetry?.();});
 ipcMain.handle('pad:state',event=>event.sender===win?.webContents?padController?.state():null);
 ipcMain.handle('pad:close',event=>{if(event.sender!==win?.webContents)return null;padController?.setEnabled(false);return padController?.state();});
 ipcMain.handle('pad:set',async(event,enabled)=>{if(event.sender!==win?.webContents||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();});

@@ -71,5 +71,17 @@ test('display capture validates the device, renews its lease and releases the pe
 test('capture leases accept only the active display and expire without a heartbeat',()=>{
  const {createPadCaptureLease}=bundle('lease','src/tablet/main/pen/padCapture.ts');let now=0,target=7;const calls=[],driver={start:id=>calls.push(['start',id]),heartbeat:id=>calls.push(['beat',id]),stop:reason=>calls.push(['stop',reason])};
  const lease=createPadCaptureLease({driver,target:()=>target,now:()=>now});lease.heartbeat(8);assert.equal(calls.length,0);lease.heartbeat(7);assert.deepEqual(calls.slice(0,2),[['start',7],['beat',7]]);now=751;lease.audit();assert.match(calls.at(-1)[1],/expired/);
- now=1000;lease.heartbeat(7);target=null;lease.audit();assert.match(calls.at(-1)[1],/unavailable/);target=7;now=2000;lease.heartbeat(7);lease.status(7,{state:'needs-input-monitoring',reason:'permission'});assert.equal(calls.at(-1)[1],'permission');const count=calls.length;now=3000;lease.heartbeat(7);assert.equal(calls.length,count);now=7000;lease.heartbeat(7);assert.equal(calls.at(-2)[0],'start');
+ now=1000;lease.heartbeat(7);target=null;lease.audit();assert.match(calls.at(-1)[1],/unavailable/);target=7;now=2000;lease.heartbeat(7);lease.status(7,{state:'needs-input-monitoring',reason:'permission'});const count=calls.length;now=3000;lease.heartbeat(7);assert.equal(calls.length,count);now=7000;lease.heartbeat(7);assert.equal(calls.length,count);lease.retry();lease.heartbeat(7);assert.equal(calls.at(-2)[0],'start');
+});
+
+test('a broken asynchronous heartbeat pipe releases capture without an uncaught error',async()=>{
+ const {EventEmitter}=require('node:events'),{PassThrough,Writable}=require('node:stream'),{MacWacomOneCaptureController}=bundle('broken-capture','src/tablet/main/pen/displayCapture.ts');
+ const child=new EventEmitter();child.stdout=new PassThrough();child.kill=()=>{child.killed=true};child.stdin=new Writable({write(_data,_encoding,callback){setImmediate(()=>callback(Object.assign(Error('write EPIPE'),{code:'EPIPE'})));}});
+ const capture=new MacWacomOneCaptureController('helper',()=>42,()=>child),samples=[];capture.onSample((_id,sample)=>samples.push(sample));capture.start(7);
+ child.stdout.write('{"k":"device","pid":974,"maxX":25632,"maxY":14418,"maxP":4095}\n{"k":"opened","mode":"one"}\n{"k":"p","f":225,"x":12816,"y":3604.5,"p":2047.5}\n');
+ capture.heartbeat(7);await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(capture.status().state,'failed');assert.match(capture.status().reason,/heartbeat pipe/);assert.equal(capture.heartbeat(7),false);assert.equal(child.killed,true);assert.equal(samples.at(-1).inRange,false);
+ child.stdin.emit('error',Object.assign(Error('late EPIPE'),{code:'EPIPE'}));
+ const replacement=new EventEmitter();replacement.stdout=new PassThrough();replacement.stdin=new PassThrough();replacement.kill=()=>{};
+ const second=new MacWacomOneCaptureController('helper',()=>42,()=>replacement);second.start(8);second.stop();assert.doesNotThrow(()=>replacement.stdin.emit('error',Error('pipe closed after stop')));
 });

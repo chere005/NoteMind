@@ -57,6 +57,19 @@ export class MacPenButtons {
       return false
     }
     this.child = child
+    // Pipe failures belong to the stream, not ChildProcess. Keep these listeners through shutdown for late errors.
+    const streamFailed = (error: Error): void => {
+      if (gen !== this.generation || this.child !== child) return
+      this.child = null
+      const next = ++this.generation
+      this.feed.set({ ...NO_BUTTONS })
+      this.trace.event("manager", "buttons-pipe-error", { message: error.message })
+      try { child.stdin?.destroy() } catch { /* already closed */ }
+      try { child.kill("SIGTERM") } catch { /* already exited */ }
+      this.again(next)
+    }
+    child.stdin?.on("error", streamFailed)
+    child.stdout?.on("error", streamFailed)
     let buffered = ""
     child.stdout?.setEncoding("utf8")
     child.stdout?.on("data", (chunk: string) => {

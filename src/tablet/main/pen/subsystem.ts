@@ -54,6 +54,7 @@ export interface PenSubsystem {
   available: boolean
   displayHeartbeat?(): void
   displayStop?(): void
+  displayRetry?(): void
   manager: FeedManagerEx | null
   /** Call after the notes window is (re)created: its focus / visibility go to the manager, and a closed or reloaded page lets go. */
   attachWindow(): void
@@ -215,6 +216,7 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
     manager,
     displayHeartbeat(){const target=eligible();if(capture&&target)lease.heartbeat(target.id)},
     displayStop(){lease.stop()},
+    displayRetry(){lease.retry()},
     attachWindow() {
       try { unwatch?.() } catch { /* ignore */ }
       for (const off of unlisten.splice(0)) { try { off() } catch { /* ignore */ } }

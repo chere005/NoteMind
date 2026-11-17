@@ -35,10 +35,22 @@ export function createPadCaptureLease(deps: { driver: PadCaptureDriver; target()
     },
     status(sender: number, status: OneCaptureStatus) {
       if (sender !== owner) return
-      if (["failed", "unavailable", "needs-input-monitoring", "idle"].includes(status.state)) {
+      if (status.state === "needs-input-monitoring") {
+        // The controller has already released the helper. Stopping it again would replace this actionable status
+        // with idle; periodic retries would keep seizing/releasing the device while access is still denied.
+        retryAt = Infinity
+        owner = null
+      } else if (["failed", "unavailable", "idle"].includes(status.state)) {
         retryAt = deps.now() + 5000
         stop(status.reason ?? status.state)
       }
+    },
+    retry() {
+      const permissionBlocked = retryAt === Infinity
+      retryAt = 0
+      // A failed controller retains its old owner for status reporting. Release it before the next start so its
+      // idle notification cannot reenter status() and cancel a newly established renderer lease.
+      if (permissionBlocked) deps.driver.stop("pen input retry requested")
     },
     stop(sender?: number) { if (sender === undefined || owner === sender) stop("pad input stopped") },
   }

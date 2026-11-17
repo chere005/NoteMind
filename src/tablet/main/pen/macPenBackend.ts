@@ -101,6 +101,14 @@ export class MacPenBackend implements PenBackend {
       let settled = false
       let info: DeviceInfo | null = null
       const settle = (result: BackendStart): void => { if (!settled) { settled = true; resolve(result) } }
+      // Closing a helper can report a pipe error after stop; retain listeners but ignore stale children.
+      const streamFailed = (error: Error): void => {
+        if (gen !== this.generation || this.child !== child) return
+        ++this.generation
+        settle(this.fail(`wm-pen pipe: ${error.message}`, "later"))
+      }
+      child.stdin?.on("error", streamFailed)
+      child.stdout?.on("error", streamFailed)
       let buffered = ""
       child.stdout?.setEncoding("utf8")
       child.stdout?.on("data", (chunk: string) => {

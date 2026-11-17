@@ -27,7 +27,7 @@ if(!inside(process.env.NOTEMIND_HOME))process.env.NOTEMIND_HOME=data;
 if(!inside(process.env.NOTEMIND_WORKSPACES))process.env.NOTEMIND_WORKSPACES=path.join(data,'workspaces');
 require('./src/main.cjs');
 `);
-cp.execFileSync('/usr/bin/codesign',['--force','--deep','--sign','-',staging],{stdio:'inherit'});
+require('./mac-signing.cjs').signMacApp(staging);
 const previous=destination+'.previous';
 fs.rmSync(previous,{recursive:true,force:true});
 if(fs.existsSync(destination))fs.renameSync(destination,previous);
