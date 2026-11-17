@@ -269,6 +269,7 @@ ipcMain.handle('load-sheet-state', async (event,options) => {await sheetWrite;co
 ipcMain.handle('load-sheet-chunk',(event,session,key,offset)=>sheetLoads.read(event.sender.id,session,key,offset));
 ipcMain.handle('finish-sheet-load',(event,session)=>sheetLoads.release(event.sender.id,session));
 ipcMain.handle('save-sheets', async (_,data) => {const pending=sheetPersistence().save(data);sheetWrite=pending.catch(()=>{});await pending;});
+require('./sheet-delta-ipc.cjs').registerSheetDeltaUploadHandlers(ipcMain,{service:()=>sheetPersistence(),onWrite:pending=>{sheetWrite=pending.catch(()=>{});}});
 ipcMain.handle('save-sheets-delta', async (_,delta) => {const pending=sheetPersistence().saveDelta(delta);sheetWrite=pending.catch(()=>{});return pending;});
 
 ipcMain.handle('load-camera-pages', async () => { await cameraWrite; try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'camera-pages.json'), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } });
