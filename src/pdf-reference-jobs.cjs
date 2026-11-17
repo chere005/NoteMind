@@ -10,7 +10,7 @@ class PDFReferenceJobs {
  }
  createWorker(){
   if(this.worker)return this.worker;const worker=this.workerFactory(path.join(__dirname,'pdf-reference-jobs-worker.cjs'));this.worker=worker;
-  worker.on('message',packet=>{if(this.worker!==worker||packet.id!==this.active?.id)return;const job=this.active;if(packet.progress){try{job.progress?.(packet.progress);}catch{}return;}const error=packet.error?Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,recovery:packet.error.recovery}):null;this.complete(job,error,packet.value);});
+  worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.progress){try{job.progress?.(packet.progress);}catch{}return;}const error=packet.error?Object.assign(Error(packet.error.message),{name:packet.error.name,code:packet.error.code,recovery:packet.error.recovery}):null;this.complete(job,error,packet.value);});
   worker.on('error',error=>{if(this.worker!==worker)return;const job=this.active;this.stop();if(job)this.complete(job,error);});
   worker.on('exit',code=>{if(this.worker===worker){const job=this.active;this.worker=null;if(job)this.complete(job,Error('PDF file worker stopped ('+code+').'));}if(this.stopping?.worker===worker){this.stopping=null;this.failed=null;this.pump();}});return worker;
  }
@@ -19,7 +19,7 @@ class PDFReferenceJobs {
   try{const worker=this.createWorker();worker.ref?.();job.timer=setTimeout(()=>{if(this.active!==job)return;this.stop();this.complete(job,Error('PDF file work timed out.'));},this.timeoutMs);const transfers=Object.values(job.args).filter(value=>value instanceof Uint8Array&&value.byteOffset===0&&value.byteLength===value.buffer.byteLength).map(value=>value.buffer);worker.postMessage({id:job.id,operation:job.operation,args:job.args},transfers);job.args=null;}catch(error){this.stop();this.complete(job,error);}
  }
  finishQueued(job,error){this.bytes-=job.bytes;job.signal?.removeEventListener('abort',job.abort);job.args=null;job.reject(error);}
- complete(job,error,value){if(this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.signal?.removeEventListener('abort',job.abort);job.args=null;error?job.reject(error):job.resolve(value);this.pump();}
+ complete(job,error,value){if(!job||this.active!==job)return;clearTimeout(job.timer);this.active=null;this.bytes-=job.bytes;job.signal?.removeEventListener('abort',job.abort);job.args=null;error?job.reject(error):job.resolve(value);this.pump();}
  stop(){
   clearTimeout(this.idleTimer);const worker=this.worker;if(!worker)return;this.worker=null;const state=this.stopping={worker,promise:null};
   state.promise=Promise.resolve().then(()=>worker.terminate()).then(()=>{if(this.stopping===state){this.stopping=null;this.failed=null;this.pump();}},error=>{if(this.stopping!==state)return;this.failed=Error('The previous PDF worker is still closing: '+error.message);for(const job of this.queue.splice(0))this.finishQueued(job,this.failed);});
