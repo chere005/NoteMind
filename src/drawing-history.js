@@ -52,12 +52,12 @@ class DrawingHistoryBudget {
     if (!stroke || !Array.isArray(stroke.points) || stroke.pressures != null && !Array.isArray(stroke.pressures)) throw TypeError("Invalid immutable drawing stroke.");
     const resources = [this.resource(stroke, 128), this.resource(stroke.points, 32 + stroke.points.length * 64)];
     if (stroke.pressures) resources.push(this.resource(stroke.pressures, 32 + stroke.pressures.length * 8));
-    token = { current: 0, history: 0, resources, children: null, pointCount: stroke.points.length };
+    token = { current: 0, history: 0, resources, children: null, pointCount: stroke.points.length, estimatedBytes: resources.reduce((n,resource)=>n+resource.bytes,0) };
     this.tokens.set(stroke, token);
     return token;
   }
   node(children, level) {
-    return { current: 0, history: 0, children, level, count: level ? children.reduce((n, child) => n + child.count, 0) : children.length, pointCount: children.reduce((n, child) => n + child.pointCount, 0), resources: [{ bytes: 64 + children.length * 8, current: 0, history: 0 }] };
+    return { current: 0, history: 0, children, level, count: level ? children.reduce((n, child) => n + child.count, 0) : children.length, pointCount: children.reduce((n, child) => n + child.pointCount, 0), estimatedBytes:64+children.length*8+children.reduce((n,child)=>n+child.estimatedBytes,0), resources: [{ bytes: 64 + children.length * 8, current: 0, history: 0 }] };
   }
   build(array) {
     if (!array.length) return null;
@@ -315,6 +315,12 @@ class DrawingHistory {
     // Conservative upper bound: shared points in these three complete scenes
     // may be counted more than once. Cache budgeting never walks their strokes.
     return (record.current?.tree?.pointCount || 0) + (record.past.at(-1)?.state.tree?.pointCount || 0) + (record.future.at(-1)?.state.tree?.pointCount || 0);
+  }
+  get retainedGeometryBytes() {
+    const record=this.record;
+    if(!record||record.released)return 0;
+    const states=[record.current,record.past.at(-1)?.state,record.future.at(-1)?.state];
+    return states.reduce((bytes,state)=>bytes+(state?(state.tree?.estimatedBytes||0)+state.memory.bytes:0),0);
   }
   setCurrent(array) {
     this.revision++;
