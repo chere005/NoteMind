@@ -1,5 +1,6 @@
 // Word-only semantic Markdown stream reuses rules with a compact block ledger.
 const { md, mime } = require("./document-renderer.cjs");
+const {parseInline, linkifyTokens, joinText} = require("./word-inline.cjs");
 const PAGE = 8192, MAX_TEXT = 16 * 1024 * 1024;
 class BlockSink {
   constructor(check) {
@@ -55,7 +56,7 @@ class BlockSink {
   }
 }
 function streamMarkdown(text, onToken, { check = () => {
-}, onStats } = {}) {
+}, onStats, inlineThreshold = 32768 } = {}) {
   if (typeof text !== "string" || Buffer.byteLength(text) > MAX_TEXT) throw Error("Invalid Word export text.");
   if (typeof onToken !== "function") throw TypeError("Word token consumer is required.");
   check();
@@ -69,12 +70,12 @@ function streamMarkdown(text, onToken, { check = () => {
   md.block.tokenize(state, 0, state.lineMax);
   sink.flush();
   check();
-  const inlineRules = coreRules.filter((rule) => rule.enabled && !["normalize", "block", "strip_references", "inline", "tasks"].includes(rule.name)).map((rule) => rule.fn);
+  const inlineRules = coreRules.filter((rule) => rule.enabled && !["normalize", "block", "strip_references", "inline", "tasks"].includes(rule.name));
   sink.reset((token, previous) => {
     if (token.type === "reference_definition") return;
     if (token.type === "inline") {
-      token.children = [];
-      md.inline.parse(token.content, md, env, token.children);
+      if (token.content.length >= inlineThreshold) token.children = parseInline(token.content, md, env, {check});
+      else { token.children = []; md.inline.parse(token.content, md, env, token.children); }
       if (previous[previous.length - 1] === "paragraph_open" && previous[previous.length - 2] === "list_item_open") {
         const first = token.children[0];
         if (first?.type === "text" && /^\[[ xX]\] /.test(first.content)) {
@@ -87,7 +88,7 @@ function streamMarkdown(text, onToken, { check = () => {
       }
       const inline = new md.core.State("", md, env);
       inline.tokens = [token];
-      for (const rule of inlineRules) rule(inline);
+      for (const rule of inlineRules) { if (rule.name === 'linkify' && linkifyTokens(token.children, token.content, md, check)) continue; if (rule.name === 'text_join' && joinText(token.children, {normalize: true, check})) continue; rule.fn(inline); }
     }
     onToken(token);
   });
