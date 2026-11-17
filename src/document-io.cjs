@@ -22,6 +22,7 @@ async function callCancelable(name,args,signal){
  if(!signal)return call(name,...args);checkAbort(signal);const w=await createWorker(signal),abort=()=>{if(!w.isDestroyed())w.destroy();};
  try{checkAbort(signal);signal.addEventListener('abort',abort,{once:true});return await invokeWorker(w,name,args,signal);}catch(error){if(signal.aborted)throw abortError();throw error;}finally{signal.removeEventListener('abort',abort);if(!w.isDestroyed())w.destroy();}
 }
+async function convertImage(bytes,type,{signal,dimensions,maxDimension=4096}={}){const image=await callCancelable('image',[bytes,type,false,maxDimension,dimensions],signal),data=Buffer.isBuffer(image.data)?image.data:Buffer.from(image.data,'base64');return{data,bytes:data,width:image.width,height:image.height}}
 async function importPDF(bytes,{mode='both',password,language='auto',signal,onProgress=()=>{}}={}){
  checkAbort(signal);onProgress('Reading PDF pages');const pages=await callCancelable('pdf',[bytes,password],signal),assets={},parts=[];
  for(const page of pages){checkAbort(signal);onProgress('Reading page '+page.page+' of '+pages.length);let text=page.text;if(mode!=='images'&&text.replace(/\s/g,'').length<15){const result=await reader.read(Buffer.isBuffer(page.image)?page.image:Buffer.from(page.image,'base64'),{language,signal});text=result.text;}
@@ -66,4 +67,4 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc){
  app.on('will-quit',dispose);
 }
 function dispose(){disposed=true;void printLeases.dispose();for(const controller of conversions.values())controller.abort();conversions.clear();reader.dispose();if(helper&&!helper.isDestroyed())helper.destroy();helper=null;pendingHelper?.then(w=>{if(!w.isDestroyed())w.destroy();}).catch(()=>{});}
-module.exports={register,printDocument,previewImages:(doc,options)=>require('./print-preview.cjs').images(doc,options,(...args)=>call('image',...args)),exportDocument,previewFile,importFile,importPDF,exportFile,reader,call,dispose};
+module.exports={register,printDocument,previewImages:(doc,options)=>require('./print-preview.cjs').images(doc,options,(...args)=>call('image',...args)),exportDocument,previewFile,importFile,importPDF,exportFile,reader,call,convertImage,dispose};
