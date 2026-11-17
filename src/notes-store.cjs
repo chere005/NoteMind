@@ -76,6 +76,12 @@ class NotesStore {
  async patch(id, meta) { return this.transaction(index=>{const r=index.records[id]; if(!r)throw Error('This Notepad is no longer in the library.'); r.meta=metadata({...r.meta,...meta});return r;}); }
  async record(id) { const r=(await this.readIndex()).records[id]; if(!r || r.deleted) throw Error('This Notepad could not be found. Restore it from Recently Deleted if needed.'); return r; }
  async rename(from,to) { return this.transaction(index=>{for(const r of Object.values(index.records)){if(r.path && (keyPath(r.path)===keyPath(from)||keyPath(r.path).startsWith(keyPath(from)+path.sep))) r.path=to+r.path.slice(from.length);}}); }
+ async preflightDraft(doc,{signal}={}) {
+  const check=()=>{if(signal?.aborted)throw Object.assign(Error('Import validation cancelled.'),{name:'AbortError'});};check();
+  const index=await this.readIndex(),projected={...index,records:Object.assign(Object.create(null),index.records)},registered=await this.registerInIndex(projected,doc,{meta:doc.meta});check();
+  const state={recoveryId:'00000000-0000-0000-0000-000000000000',path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle},canonical=await require('./markdown-files.cjs').canonicalAsync(registered);check();
+  const result=await archiveCodec.validateNotepad(canonical,{extra:{'recovery.json':state},signal});check();return result;
+ }
  async draft(doc) { return this.transaction(async index=>{const registered=await this.registerInIndex(index,doc,{meta:doc.meta}),state={recoveryId:randomUUID(),path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle}; await atomicArchive(path.join(this.recoveryRoot, registered.id+'.wm'), await require('./markdown-files.cjs').canonicalAsync(registered),{extra:{'recovery.json':state}}); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify(state));index.records[registered.id].recoveryRoot=this.recoveryRoot;return {...registered,recoveryId:state.recoveryId};}); }
  async recordCommitIntent(doc,file,revision) {
   if(!doc||typeof doc.id!=='string'||!/^[\w-]{1,80}$/.test(doc.id)||typeof file!=='string'||!path.isAbsolute(file)||typeof revision!=='string'||!/^[a-f0-9]{64}$/.test(revision))throw Error('Invalid document commit intent.');

@@ -32,6 +32,18 @@ async function deflate(source,write,check){
   for(const bytes of inputs)discard(bytes);for(const backing of partialOutputs)if(backing.byteLength)discard(new Uint8Array(backing));
  }
 }
+async function validateZipFileSize(entries,{maxBytes=MAX_BYTES,maxNameBytes=MAX_NAMES,check=()=>{}}={}){
+ if(!Number.isSafeInteger(maxBytes)||maxBytes<22||maxBytes>MAX_BYTES)throw Error('Invalid ZIP file size limit.');
+ if(!Number.isSafeInteger(maxNameBytes)||maxNameBytes<1||maxNameBytes>50*1024*1024)throw Error('Invalid ZIP entry name budget.');
+ const files=describe(entries,maxBytes,maxNameBytes),overhead=22+files.reduce((sum,entry)=>sum+92+2*entry.nameBytes.length,0);
+ // A conservative DEFLATE bound avoids source reads in ordinary admission.
+ // Only uncertain near-limit archives need the real bounded compressor.
+ const bound=bytes=>bytes+Math.ceil(bytes/8)+Math.ceil(bytes/64)+64;
+ let upper=overhead,measured=overhead;for(const entry of files){check();upper+=entry.store?entry.bytes:bound(entry.bytes);if(entry.store)measured+=entry.bytes;}
+ if(upper<=maxBytes)return;
+ for(const entry of files){check();if(entry.store)continue;await deflate(boundedSource(entry,check),async bytes=>{check();measured+=bytes.byteLength;if(measured>maxBytes)throw Error('The archive exceeds its file size limit.');},check);}
+ check();if(measured>maxBytes)throw Error('The archive exceeds its file size limit.');
+}
 async function writeZipFile(entries,target,services={}){
  const limit=services.maxBytes??MAX_BYTES;if(!Number.isSafeInteger(limit)||limit<22||limit>MAX_BYTES)throw Error('Invalid ZIP file size limit.');const nameLimit=services.maxNameBytes??MAX_NAMES;if(!Number.isSafeInteger(nameLimit)||nameLimit<1||nameLimit>50*1024*1024)throw Error('Invalid ZIP entry name budget.');const files=describe(entries,limit,nameLimit);if(!target||typeof target.file!=='string'||!path.isAbsolute(target.file))throw Error('Word output requires an absolute file path.');revision(target.expected);const check=target.check||(()=>{}),io=services.fs||fs,guard=services.guard||require('./guarded-write.cjs'),syncDirectory=services.syncDirectory||((root,directory)=>require('./snapshot-store.cjs').syncHierarchy(root,directory)),file=target.file,directory=path.dirname(file);let handle,temp,staging,ownedStat,offset=0,committed=false,outputRevision;const warnings=[],hash=createHash('sha256');check();const created=await io.mkdir(directory,{recursive:true});
  const write=async bytes=>{check();if(offset+bytes.byteLength>limit)throw Error(limit===MAX_BYTES?'The Word document exceeds the ZIP32 file limit.':'The archive exceeds its file size limit.');let at=0;while(at<bytes.byteLength){check();const result=await handle.write(bytes,at,Math.min(CHUNK,bytes.byteLength-at),offset+at);if(!result.bytesWritten)throw Error('The Word file write stopped.');at+=result.bytesWritten;}hash.update(bytes);offset+=bytes.byteLength;};
@@ -48,4 +60,4 @@ async function writeZipFile(entries,target,services={}){
  }catch(error){if(committed){warnings.push('The Word file was saved, but finalization could not be confirmed: '+(error?.message||String(error)));return{file,bytes:offset,revision:outputRevision,committed:true,warnings};}throw error;}
  finally{await handle?.close().catch(()=>{});try{await staging?.finish({committed});}catch(error){if(committed)warnings.push('The Word file was saved, but temporary-file cleanup could not be confirmed: '+(error?.message||String(error)));else throw error;}}
 }
-module.exports={writeZipFile,describeZipEntries:describe,crc32,checkedName,MAX_BYTES,MAX_ENTRIES};
+module.exports={writeZipFile,validateZipFileSize,describeZipEntries:describe,crc32,checkedName,MAX_BYTES,MAX_ENTRIES};
