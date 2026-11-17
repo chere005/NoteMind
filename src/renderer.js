@@ -125,10 +125,10 @@ async function editGraphics(img) {
   window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url,sheet,target:{tabId:tab.id,assetName:name,expectedData}}}));if($('pane').hidden)$('paneToggle').click();return true;
  }catch(error){if(controller.signal.aborted)return false;throw error;}finally{if(graphicsEditAbort===controller)graphicsEditAbort=null;}
 }
-function insertAsset(name, data, sheet=null, sidecar=null,sidecarChunks=null) {
+function insertAsset(name, data, sheet=null, sidecar=null,sidecarChunks=null,imageChunks=null) {
  if(doc.path&&!/\.(nm|wm|md)$/i.test(doc.path)){alert('Save as a .nm or .md Notepad before adding graphics.');return false;}
  if(visual&&rich.contentEditable!=='true')return false;
- const assets={[name]:data};if(sidecar){assets[name+'.json']=sidecar;window.NoteMindDocumentSync?.hint(assets,name+'.json',sidecar,sidecarChunks)}else if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);
+ const assets={[name]:data};if(imageChunks)window.NoteMindDocumentSync?.hint(assets,name,data,imageChunks);if(sidecar){assets[name+'.json']=sidecar;window.NoteMindDocumentSync?.hint(assets,name+'.json',sidecar,sidecarChunks)}else if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);
  window.NoteMindAssetAdmission?.admit(doc.assets,{add:assets,chunks:(owned,key)=>window.NoteMindDocumentSync?.assetChunks(owned,key)});if(visual){restoreCaret();if(!getSelection()?.rangeCount)throw Error('Choose an insertion point in the Notepad.');}window.NoteMindHistory?.initialize(activeTab);for(const[key,value]of Object.entries(assets))Object.defineProperty(doc.assets,key,{value,enumerable:true,writable:true,configurable:true});window.NoteMindDocumentSync?.copyHints(assets,doc.assets);doc.meta ||= {};doc.meta.graphicsPanes ||= {};Object.defineProperty(doc.meta.graphicsPanes,name,{value:{version:1},enumerable:true,writable:true,configurable:true});
  const text='\n\n!['+(sheet||sidecar?'Drawing':'Image')+']('+name+')\n\n';
  if(visual){restoreCaret();const selection=getSelection(),range=selection.getRangeAt(0);const node=range.endContainer.nodeType===1?range.endContainer:range.endContainer.parentElement;const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol');if(block&&rich.contains(block)){range.setStartAfter(block);range.collapse(true);}else range.collapse(false);const fragment=range.createContextualFragment(render(text)+'<p><br></p>'),last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range);}richChanged=true;}
@@ -136,7 +136,7 @@ function insertAsset(name, data, sheet=null, sidecar=null,sidecarChunks=null) {
  markDirty();return true;
 }
 
-$('insertImage').onclick = () => action(async () => { const target=window.NoteMindNotes?.captureInsertion();const image = await window.notemind.image(); if(image){if(target)window.NoteMindNotes.insertAssetFor(target,image.name,image.data);else insertAsset(image.name,image.data);} });
+$('insertImage').onclick = () => action(async () => { const target=window.NoteMindNotes?.captureInsertion();const image = await(window.NoteMindDocumentSync?.image?window.NoteMindDocumentSync.image():window.notemind.image()); if(image){const chunks=image.assets&&window.NoteMindDocumentSync?.assetChunks(image.assets,image.name);if(target)window.NoteMindNotes.insertAssetFor(target,image.name,image.data,null,null,null,chunks);else insertAsset(image.name,image.data,null,null,null,chunks);} });
 
 $('run').onclick = () => action(async () => { const target = activeTab; if (!target.doc.path || !/\.py$/i.test(target.doc.path)) { alert('Save this document as a .py file before running it.'); return; } if (target.dirty && !await save()) return; if (target.dirty) { alert('The document changed while it was being saved. Save it again before running.'); return; } $('output').hidden = false; $('outputText').textContent = 'Running…'; const result = await window.notemind.runPython(target.doc.path); $('outputText').textContent = `${result.output}\n[Exit: ${result.code ?? 'could not start'}]`; });
 
