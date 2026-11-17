@@ -2,6 +2,7 @@ import graphics from '../../graphics-pane.js'
 import {renderInk,cancelInk,holdDrawingWorker} from '../../drawing-export.js'
 import {createInkSceneJournal} from '../../ink-scene-deltas.js'
 import {NumericInkSet} from '../../numeric-ink-set.js'
+import {ownedInkId,allocateInkId} from '../../owned-ink-metadata.js'
 
 type Scene={page:object;strokes:any[];aspect:number;config:any;forceFull?:boolean;selection?:any;previewBase?:boolean;extraDirty?:any[];session?:string;generation?:number}
 const closeFrame=(frame:any)=>{for(const tile of [...(frame?.tiles||[]),...(frame?.preview?.fixed||[]),...(frame?.preview?.ink?[frame.preview.ink]:[])])tile.bitmap?.close()}
@@ -11,6 +12,8 @@ export class InkRenderer{
  ids=new WeakMap<object,number>();nextId=1;known=new NumericInkSet();duplicates=new Map<number,number>();acceptedSource:any[]|null=null;acceptedRevision=0;journal:any=null;session='';page:object|null=null;generation=0;ack=0;full=true;pending:any=null;active:any=null;running=false;disposed=false;waiters:(()=>void)[]=[];life=new AbortController();release:()=>void
  constructor(private options:{render?:typeof renderInk;cancel?:typeof cancelInk;hold?:typeof holdDrawingWorker;pack?:typeof graphics.encodeBytesAsync;id?:()=>string}={}){this.release=(options.hold||holdDrawingWorker)()}
  private freshId(){return (this.options.id||(()=>crypto.randomUUID()))()}
+ private strokeId(stroke:object){const owned=ownedInkId(stroke);let id=owned??this.ids.get(stroke);if(!id){id=allocateInkId();this.ids.set(stroke,id)}this.nextId=Math.max(this.nextId,id+1);return id}
+ private knownStrokeId(stroke:object){return ownedInkId(stroke)??this.ids.get(stroke)}
  request(source:Scene,onFrame:(frame:any,scene:Scene)=>boolean,onError?:(error:any,scene:Scene,current:()=>boolean)=>any,onDispose?:()=>void){
   if(this.disposed)return
   if(source.page!==this.page){if(this.session)(this.options.cancel||cancelInk)(this.session);this.journal?.dispose();this.journal=createInkSceneJournal(source.page);this.page=source.page;this.session=this.freshId();this.known.clear();this.duplicates.clear();this.acceptedSource=null;this.acceptedRevision=0;this.ack=0;this.full=true}
@@ -22,8 +25,8 @@ export class InkRenderer{
  current(scene:Scene){return !this.disposed&&scene.session===this.session&&scene.generation===this.generation}
  private async incremental(scene:Scene,signal:AbortSignal){
   if(this.full||!this.acceptedSource)return null;const changes=this.journal?.path(this.acceptedSource,scene.strokes);if(!changes)return null;const patches:any[]=[],added:any[]=[],addIds:number[]=[],newIds=new Set<number>(),counts=new Map<number,number>()
-  const idOf=(stroke:object)=>{let id=this.ids.get(stroke);if(!id){id=this.nextId++;this.ids.set(stroke,id)}return id},update=(id:number,delta:number)=>{const count=(counts.get(id)??this.duplicates.get(id)??(this.known.has(id)?1:0))+delta;if(count<0||count>2000000)throw Error('Drawing paint occurrence count is invalid.');counts.set(id,count)}
-  for(const change of changes){if(signal.aborted||!this.current(scene))return null;for(const stroke of change.remove){const id=this.ids.get(stroke);if(!id)return null;update(id,-1)}const insert=new Float64Array(change.insert.length);for(let at=0;at<change.insert.length;at++){const stroke=change.insert[at],id=idOf(stroke);insert[at]=id;update(id,1);if(!this.known.has(id)&&!newIds.has(id)){newIds.add(id);added.push(stroke);addIds.push(id)}}patches.push({index:change.index,deleteCount:change.remove.length,insert})}
+  const idOf=(stroke:object)=>this.strokeId(stroke),update=(id:number,delta:number)=>{const count=(counts.get(id)??this.duplicates.get(id)??(this.known.has(id)?1:0))+delta;if(count<0||count>2000000)throw Error('Drawing paint occurrence count is invalid.');counts.set(id,count)}
+  for(const change of changes){if(signal.aborted||!this.current(scene))return null;for(const stroke of change.remove){const id=this.knownStrokeId(stroke);if(!id)return null;update(id,-1)}const insert=new Float64Array(change.insert.length);for(let at=0;at<change.insert.length;at++){const stroke=change.insert[at],id=idOf(stroke);insert[at]=id;update(id,1);if(!this.known.has(id)&&!newIds.has(id)){newIds.add(id);added.push(stroke);addIds.push(id)}}patches.push({index:change.index,deleteCount:change.remove.length,insert})}
   let addedPoints=0;for(const id of newIds)if(!counts.get(id))return null;for(const stroke of added){addedPoints+=stroke.points.length;if(addedPoints>2000000)return null}
   const additions=added.length?await(this.options.pack||graphics.encodeBytesAsync)({name:'Ink',aspect:scene.aspect,strokes:added,paper:scene.config.paper,backdrop:null},{signal}):null;if(signal.aborted||!this.current(scene))return null
   return{incremental:true,counts,request:{session:scene.session,full:false,base:this.acceptedRevision,revision:this.acceptedRevision+1,ack:this.ack,patches,additions,addIds:Float64Array.from(addIds),config:scene.config,forceFull:!!scene.forceFull,selection:scene.selection,previewBase:scene.previewBase,extraDirty:scene.extraDirty}}
@@ -33,7 +36,7 @@ export class InkRenderer{
   const order=new Float64Array(scene.strokes.length),used=new NumericInkSet(),duplicates=new Map<number,number>(),full=this.full;let added:any[]|null=null,addIds:number[]|null=null
   for(let i=0;i<scene.strokes.length;i++){
    if(signal.aborted||!this.current(scene))return null
-   const stroke=scene.strokes[i]!;let id=this.ids.get(stroke);if(!id){id=this.nextId++;this.ids.set(stroke,id)}order[i]=id
+   const stroke=scene.strokes[i]!,id=this.strokeId(stroke);order[i]=id
    const seen=used.has(id),include=!seen&&(full||!this.known.has(id));if(seen)duplicates.set(id,(duplicates.get(id)||1)+1)
    // Until the first cached/duplicate occurrence, every source item is needed
    // exactly once. Keep that immutable source instead of copying two big arrays.
