@@ -1,4 +1,5 @@
 const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto'),{runWithNativeLock}=require('./native-file-lock.cjs'),graphics=require('./graphics-pane.js'),inkCodec=require('./pdf-ink-codec.cjs');
+const {PDFExportLeases}=require('./pdf-export-leases.cjs');
 const HASH=/^[a-f0-9]{64}$/i,MAX_PAGE=150*1024*1024,MAX_SOURCE=150*1024*1024;
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),missingSource=()=>Object.assign(Error('The PDF changed after it was opened.'),{code:'PDF_OPENED_BYTES_REQUIRED'});
 const {syncDirectory,syncReadOnlyHandle}=require('./fs-durability.cjs');
@@ -8,7 +9,7 @@ async function* originalSource(file){try{for await(const chunk of raw.createRead
 async function atomic(file,bytes){const temp=file+'.'+randomUUID()+'.tmp';await ensureDirectory(path.dirname(file));let handle,committed=false;try{handle=await fs.open(temp,'wx');await handle.writeFile(bytes);await handle.sync();await handle.close();handle=null;await fs.rename(temp,file);committed=true;await syncDirectory(path.dirname(file));}catch(error){if(committed)error.notemindFileCommitted=true;throw error;}finally{await handle?.close();await fs.unlink(temp).catch(()=>{});}}
 
 class PDFInkStore {
- constructor(root,{atomicWrite=atomic,confirm=confirmFile,processAlive=pid=>{try{process.kill(pid,0);return true;}catch(error){return error.code!=='ESRCH';}}}={}){this.root=root;this.atomicWrite=atomicWrite;this.confirm=confirm;this.processAlive=processAlive;this.verified=new Map();this.exportCleanup=null;}
+ constructor(root,{atomicWrite=atomic,confirm=confirmFile,exportLeaseOptions={},processAlive=pid=>{try{process.kill(pid,0);return true;}catch(error){return error.code!=='ESRCH';}}}={}){this.root=root;this.atomicWrite=atomicWrite;this.confirm=confirm;this.processAlive=processAlive;this.verified=new Map();this.exportLeases=new PDFExportLeases(path.join(root,'Export Leases'),{...exportLeaseOptions,isProcessAlive:processAlive});}
  folder(identity,hash){if(typeof identity!=='string'||!identity||identity.length>8192||!HASH.test(hash))throw Error('Invalid PDF markup identity.');return path.join(this.root,'References',digest(identity),hash);}
  original(hash){if(!HASH.test(hash))throw Error('Invalid PDF source digest.');return path.join(this.root,'Originals',hash+'.pdf');}
  async read(identity,hash){
@@ -44,15 +45,12 @@ class PDFInkStore {
   });
  }
  async captureExport(identity,sourceHash){
-  await this.cleanupExports();const folder=this.folder(identity,sourceHash);return runWithNativeLock(path.join(folder,'index.json'),async()=>{const index=await this.read(identity,sourceHash);if(!index)return null;const id=randomUUID(),directory=path.join(this.root,'Export Leases',id);await ensureDirectory(directory);try{await atomic(path.join(directory,'owner.json'),JSON.stringify({version:1,pid:process.pid}));for(const entry of Object.values(index.pages))await fs.link(path.join(folder,entry.file),path.join(directory,entry.file));await atomic(path.join(directory,'index.json'),JSON.stringify(index));return{id,index};}catch(error){await fs.rm(directory,{recursive:true,force:true});throw error;}});
+  await this.cleanupExports();const folder=this.folder(identity,sourceHash);return runWithNativeLock(path.join(folder,'index.json'),async()=>{const index=await this.read(identity,sourceHash);return index?this.exportLeases.capture(index,folder):null;});
  }
- async cleanupExports({maxEntries=64,maxRemoved=4}={}){
-  if(!this.exportCleanup)try{this.exportCleanup=await fs.opendir(path.join(this.root,'Export Leases'));}catch(error){if(error.code==='ENOENT')return;throw error;}
-  let removed=0;for(let at=0;at<maxEntries&&removed<maxRemoved;at++){const entry=await this.exportCleanup.read();if(!entry){await this.exportCleanup.close();this.exportCleanup=null;break;}if(!entry.isDirectory()||!/^[a-f0-9-]{36}$/.test(entry.name))continue;const directory=this.exportFolder(entry.name),ownerFile=path.join(directory,'owner.json');let owner;try{const stat=await fs.stat(ownerFile);if(!stat.isFile()||stat.size>256)continue;owner=JSON.parse(await fs.readFile(ownerFile,'utf8'));}catch(error){if(error.code==='ENOENT'){await fs.rmdir(directory).catch(()=>{});continue;}continue;}if(owner?.version!==1||!Number.isSafeInteger(owner.pid)||owner.pid<1||this.processAlive(owner.pid))continue;await fs.rm(directory,{recursive:true,force:true});removed++;}return removed;
- }
- exportFolder(id){if(typeof id!=='string'||!/^[a-f0-9-]{36}$/.test(id))throw Error('Invalid PDF export lease.');return path.join(this.root,'Export Leases',id);}
- async exportPage(lease,page){const entry=lease.index.pages[page];if(!entry)return[];const bytes=await fs.readFile(path.join(this.exportFolder(lease.id),entry.file));if(bytes.length>MAX_PAGE||digest(bytes)!==entry.revision)throw Error('PDF export ink is damaged.');return inkCodec.decode(bytes,{sourceHash:lease.index.sourceHash,page}).strokes;}
- releaseExport(id){return fs.rm(this.exportFolder(id),{recursive:true,force:true});}
+ cleanupExports(options){return this.exportLeases.cleanup(options);}
+ exportFolder(id){return this.exportLeases.folder(id);}
+ async exportPage(lease,page,options){const entry=lease.index.pages[page];if(!entry)return[];const bytes=await this.exportLeases.read(lease.id,entry.file,MAX_PAGE,options);if(digest(bytes)!==entry.revision)throw Error('PDF export ink is damaged.');return inkCodec.decode(bytes,{sourceHash:lease.index.sourceHash,page}).strokes;}
+ releaseExport(id){return this.exportLeases.release(id);}
  async previous(identity,currentHash){
   const directory=path.dirname(this.folder(identity,currentHash));let entries;try{entries=await fs.readdir(directory,{withFileTypes:true});}catch(error){if(error.code==='ENOENT')return [];throw error;}const result=[];
   for(const entry of entries){if(!entry.isDirectory()||!HASH.test(entry.name)||entry.name===currentHash)continue;const value=await this.read(identity,entry.name);if(value&&Object.keys(value.pages).length)result.push({sourceHash:entry.name,modified:value.modified,pageCount:value.pageCount,path:this.original(entry.name)});}

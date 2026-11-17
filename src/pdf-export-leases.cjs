@@ -31,7 +31,7 @@ class PDFExportLeases {
   try{
    handle=await fs.open(journal,'wx+',0o600);journalStat=await handle.stat({bigint:true});release=await this.lease(journal,handle);
    const header={format:'notemind-pdf-export-lease',version:2,id,owner:this.owner,pid:process.pid,native:!!release,parent:stamp(parent),directory:stamp(directoryStat),journal:stamp(journalStat),files},body=Buffer.from(line(header));if(body.length>MAX_JOURNAL-1024)throw Error('PDF export lease journal is too large.');
-   record={id,header,directory,journal,handle,release,bodyBytes:body.length};await write(handle,body,0);await handle.sync();await this.sync(directory);await this.sync(this.root);this.active.set(id,record);
+   record={id,header,directory,journal,handle,release,bodyBytes:body.length,files:new Map(files.map(entry=>[entry.name,entry.stat]))};await write(handle,body,0);await handle.sync();await this.sync(directory);await this.sync(this.root);this.active.set(id,record);
    for(const entry of files){await this.assert(record);await fs.link(path.join(sourceFolder,entry.name),path.join(directory,entry.name));await named(path.join(directory,entry.name),entry.stat);}
    await this.sync(directory);return{id,index};
   }catch(error){
@@ -39,6 +39,14 @@ class PDFExportLeases {
    else{try{if(journalStat)await unlinkOwned(journal,journalStat);await named(directory,directoryStat,{directory:true});await fs.rmdir(directory);}catch(cleanup){if(cleanup.code!=='ENOENT')error.pdfLeaseCleanupError=cleanup.message;}finally{await release?.();await handle?.close().catch(()=>{});}}
    throw error;
   }
+ }
+ async read(id,name,maxBytes,{signal}={}){
+  const record=this.active.get(id),expected=record?.files.get(name);if(!record||!expected||!INK.test(name))throw Error('PDF export lease expired.');await this.assert(record);const file=path.join(record.directory,name);let handle,data;
+  try{
+   signal?.throwIfAborted();handle=await fs.open(file,raw.constants.O_RDONLY|NOFOLLOW);const before=await handle.stat({bigint:true});if(!before.isFile()||!same(before,expected)||before.size>BigInt(maxBytes))throw Error('PDF export ink identity or size changed.');
+   data=Buffer.allocUnsafeSlow(Number(before.size));let at=0;while(at<data.length){signal?.throwIfAborted();const result=await handle.read(data,at,Math.min(512*1024,data.length-at),at);if(!result.bytesRead)throw Error('PDF export ink was truncated.');at+=result.bytesRead;}
+   const after=await handle.stat({bigint:true}),current=await named(file,expected);if(['dev','ino','size','mtimeNs','ctimeNs'].some(key=>before[key]!==after[key]||before[key]!==current[key]))throw Error('PDF export ink changed while reading.');await this.assert(record);signal?.throwIfAborted();return data;
+  }catch(error){if(data?.buffer?.transfer)data.buffer.transfer(0);throw error;}finally{await handle?.close().catch(()=>{});}
  }
  async release(id){
   const record=this.active.get(id);if(!record)return this.cleanOne(id,{maxFiles:Infinity});
