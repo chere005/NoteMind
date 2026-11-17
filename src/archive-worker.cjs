@@ -30,6 +30,8 @@ parentPort.on('message',async packet=>{
   else if(op==='rawRetain')value=raw.retain(args[0]);
   else if(op==='rawRelease')value=raw.release(args[0]);
   else if(op==='rawScopedRelease')value=raw.releaseScoped(args[0],rawContext);
+  else if(op==='rawAcquireWorking')value=raw.acquireWorking(args[0],rawContext);
+  else if(op==='rawReleaseWorking')value=raw.releaseWorking(args[0]);
   else if(op==='rawInfo')value=raw.info(args[0].descriptor,rawContext);
   else if(op==='rawRead'){value=raw.read(args[0],rawContext);transfers.push(value.buffer);}
   else if(op==='rawReadWhole'){value=raw.readWhole(args[0].descriptor,rawContext);transfers.push(value.bytes.buffer);}

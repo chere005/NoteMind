@@ -1,7 +1,7 @@
 const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=require('node:path');
 const {TextEncoder}=require('node:util');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
-const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
+const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawAcquireWorking','rawReleaseWorking','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
 const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
@@ -105,6 +105,8 @@ class ArchiveCodec{
  async importRawAssetFile(file,options){const context=this.rawScope.getStore();this.checkRawContext(context);const value=await this.run('importRawAssetFile',file,options),descriptor=this.brandRaw(value,context.owner);context.tokens.add(descriptor.rawAssetToken);return descriptor;}
  async importRawAssetBytes(bytes){const context=this.rawScope.getStore();this.checkRawContext(context);if(!(bytes instanceof Uint8Array))throw TypeError('Expected raw asset bytes.');const staged=await this.beginRawAsset({owner:context.owner,bytes:bytes.byteLength,chars:4*Math.ceil(bytes.byteLength/3)});try{for(let offset=0;offset<bytes.byteLength;offset+=512*1024)await this.appendRawAsset(staged.upload,bytes.subarray(offset,Math.min(bytes.byteLength,offset+512*1024)),{...staged,owner:context.owner,offset});return await this.finishRawAsset(staged.upload,{...staged,owner:context.owner});}catch(error){await this.cancelRawAsset(staged.upload,{...staged,owner:context.owner}).catch(()=>{});throw error;}}
  async releaseScopedRawAssets(descriptors){const context=this.rawScope.getStore();this.checkRawContext(context);for(const descriptor of descriptors)this.checkRawDescriptor(descriptor,context);await this.run('rawScopedRelease',{descriptors});for(const descriptor of descriptors){context.tokens.delete(descriptor.rawAssetToken);this.rawDescriptors.delete(descriptor.rawAssetToken);}}
+ async unpinScopedRawAssets(descriptors){const context=this.rawScope.getStore();this.checkRawContext(context);for(const descriptor of descriptors)this.checkRawDescriptor(descriptor,context);await this.run('rawScopedRelease',{descriptors,release:false});for(const descriptor of descriptors)context.tokens.delete(descriptor.rawAssetToken);if(descriptors.length)this.notifyRawCapacity();}
+ async acquireScopedRawWorking(bytes){const context=this.rawScope.getStore();this.checkRawContext(context);const {working}=await this.run('rawAcquireWorking',{bytes});this.checkRawContext(context);let released=false;const controller=new AbortController(),unsubscribe=this.subscribeRawCapacity(()=>{try{this.checkRawContext(context);}catch(error){controller.abort(error);}}),release=async()=>{if(released)return false;released=true;unsubscribe();if(context.lost||context.epoch!==this.epoch||!this.worker)return false;return this.run('rawReleaseWorking',{working,owner:context.owner,lease:context.lease,epoch:context.epoch});};release.signal=controller.signal;return release;}
  liveRaw(){return this.rawUploads.size||[...this.rawLeases.values()].some(value=>!value.released&&!value.lost&&value.epoch===this.epoch);}
  retireIfReady(){if(this.retireRequested&&!this.liveRaw()&&!this.active){this.retireRequested=false;this.stopWorker();}else this.pump();}
  encode(doc,options){return this.run('encode',doc,options);}
@@ -169,7 +171,7 @@ class ArchiveCodec{
  }
  stopWorker(force=false){
   if(!force&&this.liveRaw()){this.retireRequested=true;return;}clearTimeout(this.idleTimer);const worker=this.worker;this.worker=null;if(!worker)return;
-  this.stoppingWorker=worker;
+  this.stoppingWorker=worker;if(force)this.notifyRawCapacity();
   const attempt=Promise.resolve().then(()=>worker.terminate()).then(()=>this.retireWorker(worker),error=>{
    if(this.stoppingWorker!==worker)return;if(worker.threadId===-1){this.retireWorker(worker);return;}
    // A rejected termination does not prove that the previous worker has stopped.
