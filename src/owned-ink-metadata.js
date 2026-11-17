@@ -19,16 +19,34 @@ class MetadataRange {
  }
 }
 class MetadataPage {
- #count; #namespace; #view; #known; #used; #first; #stride;
+ #count; #namespace; #view; #known; #used; #first; #stride; #storedFirst; #storedStep;
  constructor(count, { namespace = null, identityBytes = null, hashBytes = null, rasterRange = null, rasterOffset = 0 } = {}) {
   if (!Number.isSafeInteger(count) || count < 0 || count > MAX_PAGE) throw TypeError('Invalid owned ink metadata page.');
   if (identityBytes && hashBytes || identityBytes && (typeof namespace !== 'string' || !namespace)) throw TypeError('Invalid owned ink metadata source.');
-  const input = identityBytes || hashBytes, stride = identityBytes ? 16 : 8;
-  if (input && (!ArrayBuffer.isView(input) || input.byteLength !== count * stride)) throw TypeError('Invalid owned ink metadata size.');
-  const bytes = new Uint8Array(count * stride);
-  if (input) bytes.set(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
+  const input = identityBytes || hashBytes, inputStride = identityBytes ? 16 : 8;
+  if (input && (!ArrayBuffer.isView(input) || input.byteLength !== count * inputStride)) throw TypeError('Invalid owned ink metadata size.');
+  let storedFirst = null, storedStep = 0, source, snapshot;
+  if (identityBytes) {
+   snapshot = new Uint8Array(input.byteLength); snapshot.set(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
+   source = new DataView(snapshot.buffer);
+   const first = count ? source.getFloat64(0, true) : 0, step = count > 1 ? source.getFloat64(16, true) - first : 0;
+   let affine = Number.isSafeInteger(step * Math.max(0, count - 1)) && Number.isSafeInteger(first + step * Math.max(0, count - 1));
+   for (let index = 0; index < count; index++) {
+    const id = source.getFloat64(index * 16, true);
+    if (!Number.isSafeInteger(id) || id <= 0) { snapshot.buffer.transfer?.(0); throw TypeError('Invalid owned ink stored identity.'); }
+    if (id !== first + step * index) affine = false;
+   }
+   if (affine) { storedFirst = first; storedStep = step; }
+  }
+  const stride = identityBytes && storedFirst === null ? 16 : 8;
+  const bytes = identityBytes && storedFirst === null ? snapshot : new Uint8Array(count * stride);
+  if (identityBytes && storedFirst !== null) {
+   const output = new DataView(bytes.buffer);
+   for (let index = 0; index < count; index++) { output.setUint32(index * 8, source.getUint32(index * 16 + 8, true), true); output.setUint32(index * 8 + 4, source.getUint32(index * 16 + 12, true), true); }
+   snapshot.buffer.transfer?.(0);
+  } else if (input && !identityBytes) bytes.set(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
   this.#view = new DataView(bytes.buffer); this.#stride = stride; this.#count = count; this.#namespace = identityBytes ? namespace : null;
-  if (identityBytes) for (let index = 0; index < count; index++) if (!Number.isSafeInteger(this.#view.getFloat64(index * stride, true)) || this.#view.getFloat64(index * stride, true) <= 0) throw TypeError('Invalid owned ink stored identity.');
+  this.#storedFirst = storedFirst; this.#storedStep = storedStep;
   this.#known = new Uint8Array(Math.ceil(count / 8)); if (input) this.#known.fill(255);
   this.#used = new Uint8Array(Math.ceil(count / 8)); this.#first = rasterRange ? MetadataRange.claim(rasterRange, rasterOffset, count) : reserveIds(count); Object.freeze(this);
  }
@@ -40,7 +58,10 @@ class MetadataPage {
   if (page.#used[byte] & mask) throw Error('Owned ink ordinal was already assigned.'); page.#used[byte] |= mask;
  }
  static id(page, index) { return page.#first + index; }
- static storedId(page, index, namespace) { return page.#namespace !== null && page.#namespace === namespace ? page.#view.getFloat64(index * page.#stride, true) : null; }
+ static storedId(page, index, namespace) {
+  if (page.#namespace === null || page.#namespace !== namespace) return null;
+  return page.#storedFirst === null ? page.#view.getFloat64(index * page.#stride, true) : page.#storedFirst + page.#storedStep * index;
+ }
  static known(page, index) { return !!(page.#known[index >>> 3] & 1 << (index & 7)); }
  static words(page, index, output, at) {
   if (!MetadataPage.known(page, index)) return false;

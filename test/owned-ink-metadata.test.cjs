@@ -20,3 +20,15 @@ test('malformed metadata and geometry cannot claim an ordinal or silently round 
 test('one owned range stays affine when generic IDs interleave bounded page construction',()=>{
  const size=api.MAX_OWNED_INK_PAGE,range=api.reserveOwnedInkRange(size+1),first=make(api.createOwnedInkMetadataPage(size,{rasterRange:range,rasterOffset:0}),0),generic=api.allocateInkId(),last=make(api.createOwnedInkMetadataPage(1,{rasterRange:range,rasterOffset:size}),0);assert.equal(api.ownedInkId(last)-api.ownedInkId(first),size);assert.ok(generic>api.ownedInkId(last));assert.throws(()=>api.createOwnedInkMetadataPage(1,{rasterRange:range,rasterOffset:size}),/already assigned/);assert.throws(()=>api.createOwnedInkMetadataPage(1,{rasterRange:range,rasterOffset:1}),/range page/);
 });
+test('stored identity ranges retain only fingerprint columns without changing namespaced IDs',()=>{
+ for(const [count,first,step]of [[4096,1,1],[4096,Number.MAX_SAFE_INTEGER,-17],[5,123456789123,0],[1,Number.MAX_SAFE_INTEGER,0],[0,0,0]]){
+  const bytes=new Uint8Array(count*16),view=new DataView(bytes.buffer);for(let i=0;i<count;i++){view.setFloat64(i*16,first+step*i,true);view.setUint32(i*16+8,(i*1000003)>>>0,true);view.setUint32(i*16+12,(0xffffffff-i)>>>0,true)}const before=bytes.slice(),page=api.createOwnedInkMetadataPage(count,{namespace:'range-store',identityBytes:bytes});assert.equal(page.storageBytes,count*8+2*Math.ceil(count/8));
+  for(let i=0;i<count;i++){const stroke=make(page,i),out=new DataView(new ArrayBuffer(8));assert.equal(api.ownedStoredId(stroke,'range-store'),first+step*i);assert.equal(api.ownedStoredId(stroke,'foreign'),null);assert.equal(api.writeOwnedFingerprintWords(stroke,out),true);assert.equal(out.getUint32(0,true),view.getUint32(i*16+8,true));assert.equal(out.getUint32(4,true),view.getUint32(i*16+12,true));if(i===count-1){api.primeOwnedFingerprintWords(stroke,0xabcdef12,0x34567890);assert.equal(api.knownOwnedFingerprint(stroke),'abcdef1234567890');assert.equal(api.ownedStoredId(stroke,'range-store'),first+step*i)}}assert.deepEqual(bytes,before);
+ }
+});
+test('non-affine safe IDs preserve their exact fallback and shared or offset inputs remain borrowed',()=>{
+ for(const backing of [new ArrayBuffer(96),new SharedArrayBuffer(96)]){
+  const bytes=new Uint8Array(backing,16,64),view=new DataView(backing,16,64),ids=[Number.MAX_SAFE_INTEGER,1,4294967297,77];for(let i=0;i<4;i++){view.setFloat64(i*16,ids[i],true);view.setUint32(i*16+8,i+1,true);view.setUint32(i*16+12,0xfedcba98,true)}const page=api.createOwnedInkMetadataPage(4,{namespace:'mixed-store',identityBytes:bytes});assert.equal(page.storageBytes,64+2);bytes.fill(0);
+  for(let i=0;i<4;i++){const stroke=make(page,i);assert.equal(api.ownedStoredId(stroke,'mixed-store'),ids[i]);assert.equal(api.knownOwnedFingerprint(stroke),(i+1).toString(16).padStart(8,'0')+'fedcba98')}assert.equal(backing.byteLength,96);
+ }
+});
