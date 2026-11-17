@@ -51,10 +51,10 @@ function withAssetContext(hooks,run){return assetContext.run(hooks,run);}
 function remember(cache,hash,stat){cache.delete(hash);cache.set(hash,{dev:stat.dev,ino:stat.ino,size:stat.size,mtimeMs:stat.mtimeMs,ctimeMs:stat.ctimeMs});while(cache.size>CACHE_ENTRIES)cache.delete(cache.keys().next().value);}
 const sameStat=(a,b)=>a&&b&&['dev','ino','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);
 async function mapLimit(values,limit,run){let next=0,failure;await Promise.all(Array.from({length:Math.min(limit,values.length)},async()=>{while(!failure&&next<values.length){const value=values[next++];try{await run(value);}catch(error){failure ||= error;}}}));if(failure)throw failure;}
-async function syncHierarchy(root,directory){
+async function syncHierarchy(root,directory,options){
  const base=path.resolve(root),target=path.resolve(directory),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Invalid durability directory.');
  // Confirm directory entries through root's parent, including a newly created root.
- const stop=path.dirname(base);for(let current=target;;current=path.dirname(current)){const handle=await fs.open(current,'r');try{await handle.sync();}finally{await handle.close();}if(current===stop||current===path.dirname(current))break;}
+ const stop=path.dirname(base);let status={synced:true,unsupported:false};for(let current=target;;current=path.dirname(current)){const result=await require('./fs-durability.cjs').syncDirectory(current,options);if(result.unsupported)status=result;if(current===stop||current===path.dirname(current))break;}return status;
 }
 async function writeSynced(file,bytes){const handle=await fs.open(file,'wx');try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}}
 async function digestHandle(handle,maxBytes){const hash=createHash('sha256'),chunk=Buffer.allocUnsafeSlow(Math.min(256*1024,maxBytes||1));let read=0;while(read<maxBytes){const result=await handle.read(chunk,0,Math.min(chunk.length,maxBytes-read),read);if(!result.bytesRead)throw Error('A version asset is damaged.');hash.update(chunk.subarray(0,result.bytesRead));read+=result.bytesRead;}return hash.digest('hex');}
@@ -62,7 +62,7 @@ async function verifiedObject(root,ref,cache){
  const file=objectFile(root,ref.hash);let handle;try{
   try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));}catch(error){if(error.code==='ENOENT')throw Object.assign(Error('A version asset is missing.'),{code:'SNAPSHOT_OBJECT_MISSING',hash:ref.hash});throw error;}
   const stat=await handle.stat();if(!stat.isFile()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');if(!sameStat(cache.get(ref.hash),stat)&&await digestHandle(handle,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
-  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await handle.sync();remember(cache,ref.hash,stat);return file;
+  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return file;
  }finally{await handle?.close();}
 }
 async function publishObject(root,object,ref,cache){
