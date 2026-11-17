@@ -50,11 +50,20 @@ const legacyFolder=file=>path.basename(file,path.extname(file)).replace(/[^\p{L}
 // Exact filenames distinguish names that sanitize to the same stem, including case-sensitive volumes.
 function sidecarFolder(file){const name=path.basename(file),stem=legacyFolder(file).slice(0,-7);let short='';for(const c of stem){if(Buffer.byteLength(short+c)>120)break;short+=c;}return (short||'note')+'-'+crypto.createHash('sha256').update(name).digest('hex').slice(0,12)+'.assets';}
 async function read(file,text){
- const assets={},base=await fs.realpath(path.dirname(file));let total=0,metadata={};
- for(const folder of [sidecarFolder(file),legacyFolder(file)]){try{const value=JSON.parse(await fs.readFile(path.join(base,folder,'notemind.json'),'utf8'));if(value.sourceName&&value.sourceName!==path.basename(file))continue;if(folder===legacyFolder(file)&&!value.sourceName){const siblings=await fs.readdir(base);if(siblings.some(name=>name!==path.basename(file)&&/\.md$/i.test(name)&&legacyFolder(name)===folder))break;}metadata=value;break;}catch{}}
+ const codec=require('./archive-codec.cjs'),{ENTRY_BYTES,GRAPHICS_BYTES,TOTAL_BYTES,validateEntry}=require('./archive-limits.cjs'),scoped=codec.hasRawAssetScope(),assets={},base=await fs.realpath(path.dirname(file));let total=0,metadata={};
+ for(const folder of [sidecarFolder(file),legacyFolder(file)]){try{const input=await require('./read-limited.cjs').readLimited(path.join(base,folder,'notemind.json'),ENTRY_BYTES,'Notepad metadata is too large.'),value=await codec.parseJson(input);if(!value||typeof value!=='object'||Array.isArray(value))continue;if(value.sourceName&&value.sourceName!==path.basename(file))continue;if(folder===legacyFolder(file)&&!value.sourceName){const siblings=await fs.readdir(base);if(siblings.some(name=>name!==path.basename(file)&&/\.md$/i.test(name)&&legacyFolder(name)===folder))break;}metadata=value;break;}catch(error){if(scoped)codec.hasRawAssetScope();}}
  const links=references(text),refs=new Set([...links,...links.map(url=>url+'.json'),...Object.keys(metadata.meta?.attachments||{}),...Object.values(metadata.meta?.attachments||{}).map(i=>i?.thumbnail).filter(Boolean),...(metadata.extraAssets||[])]);
  for(const url of refs){if(typeof url!=='string'||/^(?:[a-z][a-z0-9+.-]*:|\/|\\)/i.test(url))continue;let decoded;try{decoded=decodeURIComponent(url)}catch{continue;}
-  try{const target=await fs.realpath(path.resolve(base,decoded)),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))continue;const stat=await fs.stat(target);if(!stat.isFile()||stat.size>50*1024*1024||total+stat.size>199*1024*1024)continue;const bytes=await fs.readFile(target);total+=bytes.length;assets[url]=bytes.toString('base64');}catch{}
+  try{
+   const requested=path.resolve(base,decoded),target=await fs.realpath(requested),relative=path.relative(base,target);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))continue;
+   if(requested!==target)continue;
+   const stat=await fs.stat(target),name='assets/linked'+path.extname(decoded).toLowerCase().replace(/[^.a-z0-9]/g,''),maximum=/\.json$/i.test(decoded)?GRAPHICS_BYTES:ENTRY_BYTES;
+   if(!stat.isFile()||stat.size>maximum||total+stat.size>TOTAL_BYTES)continue;
+   // The scoped importer owns one validated file buffer in the archive worker.
+   // Pass the original path so its confinement/identity checks see symlinks too.
+   if(scoped){const asset=await codec.importRawAssetFile(requested,{name,root:base});if(total+asset.bytes>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');assets[url]=asset;total+=asset.bytes;}
+   else{const bytes=await require('./read-limited.cjs').readLimited(target,maximum,'Linked attachment is too large.');validateEntry(name,bytes);if(total+bytes.length>TOTAL_BYTES)continue;assets[url]=bytes.toString('base64');total+=bytes.length;}
+  }catch(error){if(scoped&&(!error.code||!['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error.code)))throw error;}
  }
  return {path:file,text,assets,id:metadata.id,title:metadata.title,created:metadata.created,meta:metadata.meta||{}};
 }
@@ -67,9 +76,15 @@ async function prepare(doc,file,{metadata=true}={}){const assets={},dir=path.dir
  return next;
 }
 const markdown=file=>path.extname(file).toLowerCase()==='.md';
+async function scopedAssets(run){
+ const codec=require('./archive-codec.cjs');if(codec.hasRawAssetScope())return run();
+ const owner=crypto.randomUUID(),lease=await codec.preflightRawAssets([],{owner});let failed=false;
+ try{return await lease.run(run);}catch(error){failed=true;throw error;}
+ finally{try{await lease.release();await codec.releaseRawAssets(owner);}catch(error){if(!failed&&!['ARCHIVE_RAW_LEASE_LOST','ARCHIVE_RAW_ASSET_MISSING'].includes(error.code))throw error;}}
+}
 async function absent(file){if(await readExisting(file)!==null)throw Object.assign(Error('An item already exists at '+file),{code:'EEXIST'});}
 async function writeDocument(doc,target){await absent(target);const prepared=await prepare(doc,target,{metadata:false});await replaceIfUnchanged(target,Buffer.from(prepared.text),null,{afterCommit:()=>writeMetadata(prepared,target)});return prepared;}
-async function copy(source,target,{duplicate=false,move=false}={}){
+async function copyInScope(source,target,{duplicate=false,move=false}={}){
  if(duplicate&&/\.(nm|wm)$/i.test(source)&&/\.(nm|wm)$/i.test(target)){
   const bytes=await fs.readFile(source),format=require('./notepad-format.cjs'),doc=format.decode(bytes),zip=require('./zip.cjs'),files=zip.unpack(bytes);
   if(files['manifest.json']){const manifest=JSON.parse(files['manifest.json']);manifest.id=crypto.randomUUID();manifest.created=manifest.modified=new Date().toISOString();files['manifest.json']=Buffer.from(JSON.stringify(manifest,null,2));await replaceIfUnchanged(target,zip.pack(files),null);}
@@ -89,20 +104,25 @@ async function copy(source,target,{duplicate=false,move=false}={}){
  });
 }
 // A raw copy remains compatible with old snapshots; the adjacent Notepad preserves editable assets.
-async function capture(source,saved){
+async function captureInScope(source,saved){
  const stat=await fs.stat(source),run=async()=>{
   if(stat.isFile())await fs.copyFile(source,saved,require('node:fs').constants.COPYFILE_EXCL);else await fs.cp(source,saved,{recursive:true,force:false,errorOnExist:true});
   if(!stat.isFile())return;
-  try{const bytes=await fs.readFile(saved);if(markdown(source)){const doc=await read(source,bytes.toString('utf8'));await fs.mkdir(saved+'.notemind');await fs.writeFile(path.join(saved+'.notemind','document.nm'),require('./notepad-format.cjs').encode(canonical(doc)),{flag:'wx'});}if(!bytes.equals(await fs.readFile(source)))throw Error('The file changed while its recovery copy was being made. Try again.');}
+  try{
+   if(markdown(source)){const bytes=await require('./read-limited.cjs').readLimited(saved,50*1024*1024,'The Markdown file is too large.'),doc=await read(source,bytes.toString('utf8'));await fs.mkdir(saved+'.notemind');await fs.writeFile(path.join(saved+'.notemind','document.nm'),await require('./archive-codec.cjs').encode(await canonicalAsync(doc)),{flag:'wx'});}
+   const revision=require('./source-file-revision.cjs').sourceFileRevision,options={maxBytes:Number.MAX_SAFE_INTEGER},copied=await revision(saved,options),current=await revision(source,options);
+   if(!copied||!current||copied.bytes!==current.bytes||copied.sha256!==current.sha256)throw Error('The file changed while its recovery copy was being made. Try again.');
+  }
   catch(error){await fs.rm(saved,{recursive:true,force:true});await fs.rm(saved+'.notemind',{recursive:true,force:true});throw error;}
  };
  return stat.isFile()?withFileLock(source,run):run();
 }
-async function restore(saved,target){
- let bytes;try{bytes=await fs.readFile(path.join(saved+'.notemind','document.nm'));}catch(error){if(error.code!=='ENOENT')throw error;}
- if(bytes&&markdown(target))return writeDocument(require('./notepad-format.cjs').decode(bytes),target);
+async function restoreInScope(saved,target){
+ let bytes;try{bytes=await require('./read-limited.cjs').readLimited(path.join(saved+'.notemind','document.nm'),200*1024*1024,'The recovery Notepad is too large.');}catch(error){if(error.code!=='ENOENT')throw error;}
+ if(bytes&&markdown(target)){const input=bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?bytes:Uint8Array.from(bytes);await writeDocument(await require('./archive-codec.cjs').decodeOwned(input,{files:false}),target);return;}
  await fs.cp(saved,target,{recursive:true,force:false,errorOnExist:true});
 }
+const copy=(source,target,options)=>scopedAssets(()=>copyInScope(source,target,options)),capture=(source,saved)=>scopedAssets(()=>captureInScope(source,saved)),restore=(saved,target)=>scopedAssets(()=>restoreInScope(saved,target));
 module.exports={read,prepare,writeMetadata,canonical,canonicalAsync,references,rewrite,sidecarFolder,copy,capture,restore};
 module.exports.legacyFolder=legacyFolder;
 module.exports.remapMeta=remapMeta;

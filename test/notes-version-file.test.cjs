@@ -8,4 +8,19 @@ test('file and in-memory versions share one per-note queue and capture their ini
 });
 test('failed file publication never changes version index and a retry deduplicates exact content',async t=>{const {store,doc}=await fixture(t);let fail=true;codec.publishVersionFromFile=async(_file,options)=>{if(fail)throw Error('Source replaced');return prepared(hash('3'),options);};await assert.rejects(store.versionFromFile('/source.nm',doc,{sha256:hash('a'),bytes:123}),/Source replaced/);assert.equal((await store.versions(doc.id)).length,0);fail=false;await store.versionFromFile('/source.nm',doc,{sha256:hash('a'),bytes:123});await store.versionFromFile('/source.nm',doc,{sha256:hash('a'),bytes:123});assert.equal((await store.versions(doc.id)).length,1);assert.equal(store.versionPending.size,0);});
 
+test('actual before-save ingestion, raw draft and recovered history preserve paired editable assets',async t=>{
+ const {store,doc}=await fixture(t),format=require('../src/notepad-format.cjs'),markdown=require('../src/markdown-files.cjs'),{sourceFileRevision}=require('../src/source-file-revision.cjs'),owner=require('node:crypto').randomUUID(),file=path.join(store.root,'original.nm'),preview=Buffer.from('preview'),ink=Buffer.from('editable sidecar'),original={...doc,text:'![Ink](image.png)',assets:{'image.png':preview.toString('base64'),'image.png.json':ink.toString('base64')}};
+ const originalBytes=format.encode(markdown.canonical(original));await fs.writeFile(file,originalBytes);const revision=await sourceFileRevision(file),lease=await codec.preflightRawAssets([],{owner});
+ try{await lease.run(async()=>{
+  const rawPreview=await codec.importRawAssetFile(file,{name:'assets/source.nm',root:store.root});
+  const input={...doc,text:'[Source](source.nm)',assets:{'source.nm':rawPreview},dirty:true};
+  await store.draft(input);const probed=await store.recoveryState(doc.id);assert.equal(probed.dirty,true);assert.equal(probed.unknown,undefined);
+  await store.versionFromFile(file,doc,revision);await store.versionFromFile(file,doc,revision);assert.equal((await store.versions(doc.id)).length,1);
+  const restored=await store.versionDoc(doc.id,(await store.versions(doc.id))[0].id),expected=markdown.canonical(original);assert.equal(restored.text,expected.text);assert.deepEqual(Object.keys(restored.assets),Object.keys(expected.assets));for(const [key,value]of Object.entries(restored.assets))await codec.withRawAssetBytes(value,bytes=>assert.equal(bytes.toString('base64'),expected.assets[key]));
+  const recovered=await store.loadDraft(doc.id);assert.equal(recovered.text,'[Source]('+Object.keys(recovered.assets)[0]+')');await codec.withRawAssetBytes(Object.values(recovered.assets)[0],bytes=>assert.deepEqual(bytes,originalBytes));
+ });}
+ finally{await lease.release();await codec.releaseRawAssets(owner);}
+ await fs.writeFile(file,format.encode(markdown.canonical({...original,text:'Changed on disk'})));await assert.rejects(store.versionFromFile(file,doc,revision),/changed/);assert.equal((await store.versions(doc.id)).length,1);
+});
+
 test.after(()=>codec.dispose());
