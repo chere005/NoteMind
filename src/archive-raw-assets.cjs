@@ -55,7 +55,7 @@ class RawAssetStore{
  async importFile(file,options,context){
   const lease=this.context(context);let staged;
   try{
-   await require('./archive-version-source.cjs').readLinkedAsset(file,options,{allocate:bytes=>{staged=this.begin({owner:lease.owner,bytes,chars:4*Math.ceil(bytes/3)});return this.uploads.get(staged.upload).data;},onChunk:bytes=>{const state=this.uploads.get(staged.upload);state.hash.update(bytes);state.offset+=bytes.length;}});
+   const result=await require('./archive-version-source.cjs').readLinkedAsset(file,options,{allocate:bytes=>{staged=this.begin({owner:lease.owner,bytes,chars:4*Math.ceil(bytes/3)});return this.uploads.get(staged.upload).data;},onChunk:bytes=>{const state=this.uploads.get(staged.upload);state.hash.update(bytes);state.offset+=bytes.length;}});this.uploads.get(staged.upload).data=result.bytes;
    const descriptor=this.finish({...staged,owner:lease.owner},context);if(/^assets\/.*\.json$/i.test(options.name)&&require('./graphics-pane.js').isBinary(this.resolve(descriptor,context)))this.entries.get(descriptor.rawAssetToken).payload.graphicsValid=true;return descriptor;
   }catch(error){if(staged)this.cancel({...staged,owner:lease.owner});throw error;}
  }

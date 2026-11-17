@@ -1,0 +1,38 @@
+// Before-save history for linked Markdown: one asset buffer, immutable CAS refs only.
+const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
+const markdown=require('./markdown-files.cjs'),snapshots=require('./snapshot-store.cjs'),{readLinkedAsset,linkedAssetPath,assertLinkedAssetIdentity,identity}=require('./archive-version-source.cjs'),{ENTRY_BYTES,TOTAL_BYTES,maximumEntryBytes}=require('./archive-limits.cjs');
+const hash=bytes=>createHash('sha256').update(bytes).digest('hex'),cache=new Map(),CHUNK=256*1024;
+const changed=()=>Object.assign(Error('The Markdown document or a linked attachment changed while its history was being read.'),{code:'ARCHIVE_SOURCE_CHANGED'});
+const missing=error=>['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error.code);
+const same=(a,b)=>['dev','ino','size','mtimeNs','ctimeNs'].every(key=>a[key]===b[key]);
+async function legacyCollision(base,file,folder){const entries=await fs.opendir(base);try{for await(const entry of entries)if(entry.name!==path.basename(file)&&/\.md$/i.test(entry.name)&&markdown.legacyFolder(entry.name)===folder)return true;}finally{await entries.close().catch(()=>{});}return false;}
+async function publishMarkdownVersionFromFile(file,{root,id,noteId,titleFallback='',expectedRevision,previousHash=null,existingVersionId}={},hooks={}){
+ if(typeof file!=='string'||!path.isAbsolute(file)||typeof root!=='string'||!root||typeof id!=='string'||typeof noteId!=='string'||!expectedRevision||!/^[a-f0-9]{64}$/.test(expectedRevision.sha256)||!Number.isSafeInteger(expectedRevision.bytes))throw Error('Invalid Markdown version publication.');
+ const base=await fs.realpath(path.dirname(file)),primary=path.join(base,path.basename(file)),observations=new Map(),assetFiles=new Map(),refs={},assetHashes={};let metadata={},legacyOwner=null,total=0;
+ const observe=(target,sourceIdentity)=>observations.set(target,sourceIdentity);
+ const read=async(target,name,expected)=>{const result=await readLinkedAsset(target,{root:base,name},{expectedIdentity:expected});observe(target,result.sourceIdentity);return result;};
+ const original=await read(primary,'assets/source.md');if(original.bytes.length!==expectedRevision.bytes||hash(original.bytes)!==expectedRevision.sha256)throw changed();const text=original.bytes.toString('utf8');original.bytes=null;
+ for(const folder of [markdown.sidecarFolder(file),markdown.legacyFolder(file)]){
+  const target=path.join(base,folder,'notemind.json');let result;
+  try{const stat=await fs.lstat(target,{bigint:true});if(stat.isSymbolicLink()||!stat.isFile())continue;observe(target,identity(stat));if(stat.size>BigInt(ENTRY_BYTES))continue;result=await read(target,'assets/metadata.json',identity(stat));}
+  catch(error){if(missing(error)){if(!observations.has(target))observe(target,null);continue;}throw error;}
+  let value;try{value=JSON.parse(result.bytes.toString('utf8'));}catch{continue;}if(!value||typeof value!=='object'||Array.isArray(value)||value.sourceName&&value.sourceName!==path.basename(file))continue;
+  if(folder===markdown.legacyFolder(file)&&!value.sourceName){if(await legacyCollision(base,file,folder))break;legacyOwner=folder;}metadata=value;break;
+ }
+ const links=markdown.references(text),urls=new Set([...links,...links.map(url=>url+'.json'),...Object.keys(metadata.meta?.attachments||{}),...Object.values(metadata.meta?.attachments||{}).map(value=>value?.thumbnail).filter(Boolean),...(metadata.extraAssets||[])]);
+ for(const url of urls){
+  if(typeof url!=='string'||/^(?:[a-z][a-z0-9+.-]*:|\/|\\)/i.test(url))continue;let decoded;try{decoded=decodeURIComponent(url);}catch{continue;}const requested=path.resolve(base,decoded),relative=path.relative(base,requested);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))continue;let target,stat;
+  try{const admitted=await linkedAssetPath(requested,{root:base});if(!admitted)continue;target=admitted.file;stat=await fs.lstat(target,{bigint:true});}
+  catch(error){if(missing(error)){observe(requested,null);continue;}throw error;}
+  const name='assets/linked'+path.extname(decoded).toLowerCase().replace(/[^.a-z0-9]/g,'');if(!stat.isFile()||stat.isSymbolicLink()||stat.size>BigInt(maximumEntryBytes(name))||total+Number(stat.size)>TOTAL_BYTES)continue;
+  const run=async()=>{const result=await read(target,name,identity(stat)),ref={hash:hash(result.bytes),bytes:result.bytes.length};if(total+ref.bytes>TOTAL_BYTES)throw Error('Version snapshot is too large.');await snapshots.publishObject(root,{hash:ref.hash,bytes:result.bytes},ref,cache);refs[url]=ref;assetFiles.set(url,{file:target,sourceIdentity:result.sourceIdentity});total+=ref.bytes;await hooks.afterAsset?.(url,ref);};
+  try{if(hooks.withEntry)await hooks.withEntry({name,original:Number(stat.size)},run);else await run();}catch(error){if(!['EACCES','EPERM'].includes(error.code))throw error;observe(target,identity(stat));}
+ }
+ async function hashPart(value,writer){const handle=await fs.open(value.file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));try{if(!same(identity(await handle.stat({bigint:true})),value.sourceIdentity))throw changed();const bytes=Buffer.allocUnsafeSlow(CHUNK),size=Number(value.sourceIdentity.size);for(let offset=0;offset<size;){const result=await handle.read(bytes,0,Math.min(CHUNK,size-offset),offset);if(!result.bytesRead)throw changed();writer.update(bytes.subarray(0,result.bytesRead));offset+=result.bytesRead;}if(!same(identity(await handle.stat({bigint:true})),value.sourceIdentity))throw changed();await assertLinkedAssetIdentity(value.file,{root:base},value.sourceIdentity);}finally{await handle.close();}}
+ for(const name of Object.keys(refs)){if(snapshots.validAsset(name))continue;const preview=name.endsWith('.json')&&name.slice(0,-5);if(preview&&Object.hasOwn(refs,preview))continue;const writer=createHash('sha256');await hashPart(assetFiles.get(name),writer);if(refs[name+'.json']){writer.update('\0');await hashPart(assetFiles.get(name+'.json'),writer);}assetHashes[name]=writer.digest('hex');}
+ const mapping=markdown.assetMapping(refs,name=>snapshots.validAsset(name)?name:'assets/'+assetHashes[name].slice(0,16)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,'')),assets={};for(const [name,ref]of Object.entries(refs))assets[mapping[name]]=ref;
+ const document={id:noteId,title:metadata.title||titleFallback||'',created:metadata.created,text:require('./markdown-reference-rewrite.js')(require('./document-renderer.cjs').md,text,mapping),meta:markdown.remapMeta(metadata.meta||{},mapping)},prepared=snapshots.prepareReferences(document,assets,{previousHash});
+ const stable=async()=>{if(await fs.realpath(path.dirname(file))!==base)throw changed();for(const [target,captured]of observations){if(captured)await assertLinkedAssetIdentity(target,{root:base},captured);else{try{await fs.lstat(target);throw changed();}catch(error){if(!missing(error))throw error;}}}if(legacyOwner&&await legacyCollision(base,file,legacyOwner))throw changed();};
+ await hooks.beforeManifest?.();await stable();if(prepared.unchanged){if(existingVersionId)await snapshots.readSnapshot(root,existingVersionId,{referencesOnly:true,expectedHash:previousHash});await stable();}else await snapshots.publishSnapshot(root,id,prepared,cache,{beforePublish:stable});const hashes=[...new Set(Object.values(assets).map(value=>value.hash))];return {unchanged:prepared.unchanged,contentHash:prepared.contentHash,legacyHash:null,documentMetadata:{id:document.id,title:document.title,created:document.created},objectHashes:prepared.unchanged?[]:hashes,objectCount:hashes.length,sourceRevision:{...expectedRevision}};
+}
+module.exports={publishMarkdownVersionFromFile};

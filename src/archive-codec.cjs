@@ -58,7 +58,7 @@ function inputBytes(op,args,limit){
  if(op==='encodeDrawingOwned'){const value=args[0];if(!value||typeof value!=='object')throw TypeError('Invalid owned drawing assets.');bytes=(value.graphics?.byteLength||0)+(value.image?.byteLength||0)+256;}
  else if(binaryOps.has(op)){const value=args[0];bytes=typeof value==='string'?value.length*2:value?.byteLength;if(!Number.isSafeInteger(bytes)||bytes<0)throw TypeError('Expected archive bytes.');}
  else if(rawOps.has(op)){const value=args[0];bytes=op==='rawAppend'?nestedBytes({...value,data:undefined},limit)+(value.data?.byteLength||0):nestedBytes(value,limit);}
- else if(op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='readRecoveryState'||op==='importRawAssetFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
+ else if(op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='publishMarkdownVersionFromFile'||op==='readRecoveryState'||op==='importRawAssetFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
  else bytes=documentBytes(args[0],limit);
  for(let i=1;i<args.length&&bytes<=limit;i++)bytes+=nestedBytes(args[i],limit-bytes);
  return bytes;
@@ -116,6 +116,7 @@ class ArchiveCodec{
  prepareSnapshot(doc,options){return this.run('prepareSnapshot',doc,options);}
  readRecoveryState(file){return this.run('readRecoveryState',file);}
  publishVersionFromFile(file,options){return this.run('publishVersionFromFile',file,options);}
+ publishMarkdownVersionFromFile(file,options){return this.run('publishMarkdownVersionFromFile',file,options);}
  publishVersion(doc,options){return this.run('publishVersion',doc,options);}
  readSnapshot(root,version,options){return this.run('readSnapshot',root,version,options);}
  readCommitted(file,revision){return this.run('readCommitted',file,revision);}

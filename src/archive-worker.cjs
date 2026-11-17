@@ -57,6 +57,7 @@ parentPort.on('message',async packet=>{
     if(op==='readRecoveryState')return require('./archive-version-source.cjs').readRecoveryState(...args);
     if(op==='importRawAssetFile')return raw.importFile(args[0],args[1],rawContext);
     if(op==='publishVersionFromFile')return require('./archive-version-source.cjs').publishVersionFromFile(...args,{withEntry:(entry,run)=>entry.name.startsWith('assets/')?raw.withWorking(entry.original,run):run()});
+    if(op==='publishMarkdownVersionFromFile')return require('./markdown-version-source.cjs').publishMarkdownVersionFromFile(...args,{withEntry:(entry,run)=>raw.withWorking(entry.original,run)});
     if(op==='readSnapshot'){const doc=await snapshots.readSnapshot(args[0],args[1],{...args[2],assetResolver:(bytes,info)=>rawContext?raw.decoded(bytes,info,rawContext):assets.resolve(bytes,info)}),packed=packOutput(doc,known,rawContext);output=packed.wire;return packed.document;}
     if(op==='readCommitted'){const doc=await require('./recovery-commit.cjs').readCommitted(...args,{asset:(_name,bytes,info)=>rawContext?raw.decoded(bytes,info,rawContext):assets.resolve(bytes,info)}),packed=packOutput(doc,known,rawContext);output=packed.wire;return packed.document;}
     if(op==='parseJson')return JSON.parse(view(args[0]).toString('utf8'));

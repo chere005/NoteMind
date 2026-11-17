@@ -67,13 +67,19 @@ async function readLinkedAsset(file,{name,root}={},hooks={}){
  if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Linked asset is outside its Notepad directory.');
  let handle;
  try{
-  const realRoot=await fs.realpath(directory),expectedFile=path.join(realRoot,relative);
+  const realRoot=await fs.realpath(directory);
   handle=await fs.open(resolved,require('node:fs').constants.O_RDONLY|(require('node:fs').constants.O_NOFOLLOW||0));
-  const stat=await handle.stat({bigint:true}),captured=identity(stat);if(!stat.isFile()||stat.size>BigInt(maximumEntryBytes(name)))throw Error('Linked asset is too large or is not a regular file.');
-  const stable=async()=>{const [current,named,realFile,currentRoot]=await Promise.all([handle.stat({bigint:true}),fs.lstat(resolved,{bigint:true}),fs.realpath(resolved),fs.realpath(directory)]);if(!current.isFile()||!named.isFile()||named.isSymbolicLink()||realFile!==expectedFile||currentRoot!==realRoot||!same(identity(current),captured)||!same(identity(named),captured))throw changed();};
-  await stable();const length=Number(stat.size),bytes=hooks.allocate?hooks.allocate(length):Buffer.allocUnsafeSlow(length);if(!Buffer.isBuffer(bytes)||bytes.length!==length)throw Error('Invalid linked asset destination.');
+  const stat=await handle.stat({bigint:true}),captured=identity(stat);if(!stat.isFile()||stat.size>BigInt(maximumEntryBytes(name)))throw Error('Linked asset is too large or is not a regular file.');if(hooks.expectedIdentity&&!same(captured,hooks.expectedIdentity))throw changed();
+  const stable=async()=>{const [current,named,currentRoot]=await Promise.all([handle.stat({bigint:true}),linkedAssetPath(resolved,{root:directory}),fs.realpath(directory)]);if(!current.isFile()||!named||currentRoot!==realRoot||!same(identity(current),captured)||!same(named.sourceIdentity,captured))throw changed();};
+  await stable();const length=Number(stat.size);let bytes=hooks.allocate?hooks.allocate(length):Buffer.allocUnsafeSlow(length);if(!Buffer.isBuffer(bytes)||bytes.length!==length)throw Error('Invalid linked asset destination.');
   for(let at=0;at<length;){const read=await handle.read(bytes,at,Math.min(CHUNK,length-at),at);if(!read.bytesRead)throw changed();hooks.onChunk?.(bytes.subarray(at,at+read.bytesRead));at+=read.bytesRead;}
-  validateEntry(name,bytes);await hooks.beforeIssue?.();await stable();return {bytes,sourceIdentity:captured};
- }finally{await handle?.close();}
+  bytes=await require('./archive-entry-validation.cjs').validateOwnedEntry(name,bytes);await hooks.beforeIssue?.();await stable();return {bytes,sourceIdentity:captured};
+ }catch(error){if(handle&&['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error.code)||hooks.expectedIdentity&&['ENOENT','ENOTDIR'].includes(error.code))throw changed();throw error;}finally{await handle?.close();}
 }
-module.exports={ArchiveSource,publishVersionFromFile,readRecoveryState,readLinkedAsset,crc32};
+async function linkedAssetPath(file,{root}){
+ const directory=path.resolve(root),resolved=path.resolve(file),relative=path.relative(directory,resolved);if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))return null;
+ const realRoot=await fs.realpath(directory),parts=relative.split(path.sep);let stat;for(let at=0;at<parts.length;at++){stat=await fs.lstat(path.join(directory,...parts.slice(0,at+1)),{bigint:true});if(stat.isSymbolicLink()||at<parts.length-1&&!stat.isDirectory())return null;}
+ const realFile=await fs.realpath(resolved),inside=path.relative(realRoot,realFile);if(!stat.isFile()||inside==='..'||inside.startsWith('..'+path.sep)||path.isAbsolute(inside))return null;return {file:resolved,sourceIdentity:identity(stat),bytes:Number(stat.size)};
+}
+async function assertLinkedAssetIdentity(file,{root},captured){try{const value=await linkedAssetPath(file,{root});if(!value||!same(value.sourceIdentity,captured))throw changed();}catch(error){if(['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error.code))throw changed();throw error;}}
+module.exports={ArchiveSource,publishVersionFromFile,readRecoveryState,readLinkedAsset,linkedAssetPath,assertLinkedAssetIdentity,identity,crc32};

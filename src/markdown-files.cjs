@@ -66,3 +66,6 @@ async function restore(saved,target){
  await fs.cp(saved,target,{recursive:true,force:false,errorOnExist:true});
 }
 module.exports={read,prepare,writeMetadata,canonical,references,rewrite,sidecarFolder,copy,capture,restore};
+module.exports.legacyFolder=legacyFolder;
+module.exports.remapMeta=remapMeta;
+module.exports.assetMapping=assetMapping;
