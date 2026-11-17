@@ -1,0 +1,6 @@
+.precision-controls{position:absolute;right:8px;top:8px;z-index:6;display:flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--wm-rule,#777);border-radius:6px;background:var(--wm-chrome,#eee);color:var(--wm-text,#222);box-shadow:0 1px 5px #0002}
+.precision-controls button{height:26px;min-width:26px;padding:3px 6px;border:0;border-radius:4px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center;font-size:12px}
+.precision-controls button:hover:not(:disabled),.precision-controls button:focus-visible,.precision-controls button[aria-pressed=true]{background:var(--bar-fill,#8883)}
+.precision-controls>span{height:17px;border-left:1px solid var(--wm-rule,#777);margin:0 3px}
+.precision-controls select{height:26px;max-width:64px;background:transparent;color:inherit;border:1px solid var(--wm-rule,#777);border-radius:4px;font-size:11px}
+.tablet-host .tablet canvas.line-preview{position:absolute;inset:0;z-index:3;pointer-events:none}

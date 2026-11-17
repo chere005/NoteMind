@@ -9,3 +9,9 @@ test('invalid pressure, coordinates, width and output limits reject without touc
 test('prepared straight geometry primes shared bounds before any future atomic page replacement',async()=>{const next=await lineStroke(stroke()),box=require('../src/stroke-bounds.js').knownStrokeBox(next);assert.ok(box);assert.equal(box.count,3);assert.equal(box.right,1);assert.equal(box.bottom,.5);});
 
 test('a changed page aspect invalidates a source-bound physical-angle plan even when ink identity is unchanged',()=>{const owner={aspect:1,strokes:[stroke()]},plan=capture(owner,0);owner.aspect=2;assert.equal(plan.valid(owner),false);});
+
+test('a snapped line stops at its captured drawing-region frame without changing pressure',async()=>{
+ const original={...stroke(),points:[{x:.7,y:.7},{x:.8,y:.5}],pressures:[.123456789,.987654321]},frame={x:.2,y:.2,width:.6,height:.6},next=await lineStroke(original,{stepDegrees:15,frame});assert.ok(next.points.every(point=>point.x>=.2&&point.x<=.8&&point.y>=.2&&point.y<=.8));assert.equal(next.pressures,original.pressures);assert.equal(next.points[0],original.points[0]);await assert.rejects(lineStroke(original,{frame:{x:0,y:0,width:.1,height:.1}}),/frame/);
+});
+
+test('region clipping retains signed zero on a constant constrained axis',()=>{const{constrainedEnd}=require('../src/ink-constraints.cjs'),target=constrainedEnd({x:-0,y:0},{x:0,y:2},{angleDegrees:90,frame:{x:0,y:0,width:1,height:1}});assert.ok(Object.is(target.x,-0));assert.equal(target.y,1);assert.throws(()=>constrainedEnd({x:NaN,y:0},{x:1,y:1}),/point/)});
