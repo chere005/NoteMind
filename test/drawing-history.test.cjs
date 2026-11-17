@@ -49,3 +49,9 @@ test('a source edit during a yielding ownership acquisition releases the capture
 test('a preparation error after pinning releases every temporary root',async()=>{
  const budget=new DrawingHistoryBudget(),original=Array.from({length:5000},()=>stroke(1)),history=new DrawingHistory(original,{budget}),next=original.map(s=>({...s,colorHex:'#abcdef'}));let failed=false;await assert.rejects(history.change(next,()=>{throw Error('must not commit');},{yieldControl:async()=>{if(budget.pendingPreparations&&!failed){failed=true;throw Error('pause failed');}}}),/pause failed/);assert.equal(failed,true);assert.equal(history.current,original);assert.equal(budget.pendingPreparations,0);history.dispose();assert.equal(budget.stats().resourceBytes,0);
 });
+test('async disposal cannot release a newly rehydrated owner of the same immutable geometry',async()=>{
+ const budget=new DrawingHistoryBudget(),original=Array.from({length:12000},()=>stroke(1)),history=new DrawingHistory(original,{budget});append(history,stroke(1));const released=history.disposeAsync();assert.equal(history.current.length,0);history.setCurrent(original);await released;assert.equal(history.current,original);assert.equal(history.canUndo,false);assert.ok(budget.stats().resourceBytes>0);await history.disposeAsync();assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.pendingPreparations,0);
+});
+test('dead-owner pruning queues bounded releases instead of walking scenes in the caller',async()=>{
+ const budget=new DrawingHistoryBudget(),owners=Array.from({length:3},()=>new DrawingHistory(Array.from({length:5000},()=>stroke(1)),{budget}));for(const owner of owners)owner.record.owner={deref:()=>undefined};const visits=budget.visits;budget.prune();assert.equal(budget.visits,visits);await budget.releasing;assert.equal(budget.stats().owners,0);assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.pendingPreparations,0);for(const owner of owners)owner.dispose();
+});

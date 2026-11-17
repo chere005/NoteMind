@@ -418,7 +418,7 @@ export class TabletPage {
       if (released) return
       released = true
       this.geometryLeases--
-      if (!this.geometryLeases && this.disposeRequested) this.dispose()
+      if (!this.geometryLeases && this.disposeRequested) void this.disposeAsync()
     }
   }
 
@@ -432,7 +432,13 @@ export class TabletPage {
     return true
   }
   async unloadGeometryAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
-    return this.history.change([], () => this.unloadGeometry(), {...options, valid: () => !this.geometryRetained && (options.valid?.() ?? true)})
+    if (this.geometryRetained || options.signal?.aborted || options.valid?.() === false) return false
+    const released = this.history.disposeAsync()
+    this.backdrop = null
+    this.target = null
+    this.emit(null)
+    await released
+    return true
   }
 
   /** An unloaded page must never retain geometry through its undo history. */
@@ -444,6 +450,17 @@ export class TabletPage {
     this.changeListeners.clear()
     this.backdrop = null
     this.target = null
+  }
+  async disposeAsync(): Promise<boolean> {
+    if (this.geometryRetained) { this.disposeRequested = true; return false }
+    this.disposeRequested = false
+    const released = this.history.disposeAsync()
+    this.opListeners.clear()
+    this.changeListeners.clear()
+    this.backdrop = null
+    this.target = null
+    await released
+    return true
   }
 }
 

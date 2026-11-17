@@ -10,7 +10,8 @@ const yieldTask = () => new Promise(resolve => {
     const channel = new MessageChannel();
     channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
     channel.port2.postMessage(null);
-  } else setTimeout(resolve, 0);
+  } else if (typeof setTimeout === 'function') setTimeout(resolve, 0);
+  else Promise.resolve().then(resolve);
 });
 class DrawingHistoryBudget {
   constructor({ maxBytes = 128 * 1024 * 1024, maxStates = 100 } = {}) {
@@ -26,7 +27,8 @@ class DrawingHistoryBudget {
     this.states = /* @__PURE__ */ new WeakMap();
     this.visits = 0;
     this.pendingPreparations = 0;
-    this.finalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((record) => this.release(record)) : null;
+    this.releaseQueue = [];
+    this.finalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((record) => this.scheduleRelease(record)) : null;
   }
   resource(key, bytes) {
     let value = this.resources.get(key);
@@ -253,8 +255,33 @@ class DrawingHistoryBudget {
     this.owners.delete(record);
     this.finalizer?.unregister(record);
   }
+  async releaseAsync(record, pause = yieldTask) {
+    if (!record || record.released) return;
+    record.released = true;
+    const entries = [...record.past, ...record.future], current = record.current;
+    record.past = []; record.future = []; record.pastView = null; record.futureView = null; record.current = null;
+    this.owners.delete(record); this.finalizer?.unregister(record);
+    for (const entry of entries) { this.entries.delete(entry); this.entryBytes -= ENTRY_BYTES; }
+    this.pendingPreparations++;
+    try {
+      for (const entry of entries) await this.holdAsync(entry.state, 'history', -1, pause);
+      if (current) { await this.holdAsync(current, 'current', -1, pause); await this.holdAsync(current, 'history', -1, pause); }
+    } finally {
+      this.pendingPreparations--;
+      await this.trimAsync(pause);
+    }
+  }
+  scheduleRelease(record) {
+    if (record.released || record.releaseScheduled) return;
+    record.releaseScheduled = true; this.releaseQueue.push(record);
+    if (this.releasing) return;
+    this.releasing = (async () => {
+      await yieldTask();
+      while (this.releaseQueue.length) { await this.releaseAsync(this.releaseQueue.shift()); await yieldTask(); }
+    })().finally(() => { this.releasing = null; });
+  }
   prune() {
-    for (const record of this.owners) if (!record.owner.deref()) this.release(record);
+    for (const record of this.owners) if (!record.owner.deref()) this.scheduleRelease(record);
   }
   stats() {
     this.prune();
@@ -372,6 +399,12 @@ class DrawingHistory {
     this.budget.release(this.record);
     this.record = null;
     this.array = [];
+  }
+  async disposeAsync() {
+    this.revision++;
+    const record = this.record;
+    this.record = null; this.array = [];
+    await this.budget.releaseAsync(record);
   }
 }
 globalThis.NoteMindDrawingHistory = { primeStroke: (stroke) => sharedBudget.prime(stroke) };
