@@ -16,16 +16,16 @@
     const bytes = decode(entry.data);
     try { return makeBlob(bytes, entry.type); } finally { if (!options.decode && !options.makeBlob) discard(bytes); }
   }
-  const maxBytes = options.maxBytes ?? 32 * 1024 * 1024, maxEntries = options.maxEntries ?? 2048;
-  let clock = 0, serial = 0, blobBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null;
+  const maxBytes = options.maxBytes ?? 32 * 1024 * 1024, maxDecodedBytes = options.maxDecodedBytes ?? 32 * 1024 * 1024, maxEntries = options.maxEntries ?? 2048;
+  let clock = 0, serial = 0, blobBytes = 0, decodedBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null;
   const entries = () => Array.from(cache.values()).flatMap(types => Array.from(types.values()));
-  function revoke(entry) { if (!entry.url) return; urls.revokeObjectURL(entry.url); blobBytes -= entry.bytes; entry.url = null; }
+  function revoke(entry) { if (!entry.url) return; urls.revokeObjectURL(entry.url); blobBytes -= entry.bytes; decodedBytes -= entry.decodedBytes; entry.url = null; }
   function forget(entry) { revoke(entry); placeholders.delete(entry.placeholder); const types = cache.get(entry.key); types?.delete(entry.type); if (!types?.size) cache.delete(entry.key); }
   function trim() {
     const attached = new Set(bound.values());
     for (const entry of entries()) if (retained && !retained.has(entry.key) && !entry.active && !attached.has(entry)) forget(entry);
     const values = entries().sort((a, b) => a.used - b.used);
-    for (const entry of values) if (blobBytes > maxBytes && !entry.active) revoke(entry);
+    for (const entry of values) if ((blobBytes > maxBytes || decodedBytes > maxDecodedBytes) && !entry.active) revoke(entry);
     let count = values.length;
     for (const entry of values) if (count > maxEntries && !entry.active && !attached.has(entry)) { forget(entry); count--; }
   }
@@ -37,13 +37,21 @@
       // Unusual JPEG metadata or SVG prologs can put the dimensions after the first header block.
       if (!size && prefix.length !== data.length) size = measure(data);
       const placeholder = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (size?.width || 1) + '" height="' + (size?.height || 1) + '"/>') + '#notemind-preview-' + (++serial);
-      entry = {key,data,chunks,type,size,placeholder,bytes:Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0), url: null, active: 0, used: ++clock };
+      const pixels=size?.width*size?.height*4, decodedEstimate=Number.isFinite(pixels)&&pixels>0?pixels:Math.max(1,maxDecodedBytes);
+      entry = {key,data,chunks,type,size,placeholder,decodedBytes:decodedEstimate,bytes:Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0), url: null, active: 0, used: ++clock };
       if (!types) cache.set(key, types = new Map()); types.set(type, entry); placeholders.set(placeholder, entry);
     }
     entry.used = ++clock; return entry;
   }
   function materialize(entry) {
-    if (!entry.url) { entry.url = urls.createObjectURL(blob(entry)); blobBytes += entry.bytes; }
+    if (!entry.url) {
+      // Reclaim inactive native image resources before a new decode can overlap them.
+      for (const prior of entries().filter(value=>value!==entry&&value.url&&!value.active).sort((a,b)=>a.used-b.used)) {
+        if (blobBytes+entry.bytes<=maxBytes&&decodedBytes+entry.decodedBytes<=maxDecodedBytes) break;
+        revoke(prior);
+      }
+      entry.url = urls.createObjectURL(blob(entry)); blobBytes += entry.bytes; decodedBytes += entry.decodedBytes;
+    }
     entry.used = ++clock; return entry.url;
   }
   function url(name, data, type) { const entry = get(name, data, type); return options.lazy ? entry.placeholder : materialize(entry); }
@@ -107,6 +115,6 @@
   }
   function retain(assets) { retainMany([assets]); }
   function clear() { unmount(); for (const entry of entries()) forget(entry); }
-  function stats() { return { entries: entries().length, blobBytes, active: entries().filter(entry => entry.active).length }; }
+  function stats() { return { entries: entries().length, blobBytes, estimatedDecodedBytes:decodedBytes, active: entries().filter(entry => entry.active).length }; }
   return { url, size, apply, retain, retainMany, clear, mount, refresh, pin, ensure, withImage, lease, stats };
 });
