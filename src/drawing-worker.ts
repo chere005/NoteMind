@@ -36,7 +36,7 @@ async function pumpInk(){
  }
 }
 function acceptInk(job:any){if(pendingInk)self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=job;if(activeInk)activeInk.cancelled=true;void pumpInk()}
-const background=new Map<number,AbortController>();let queue=Promise.resolve()
+const background=new Map<number,AbortController>(),queuedExports=new Map<number,any>();let queue=Promise.resolve(),queuedBytes=0
 const sidecarAcks=new Map<number,{index:number;resolve:()=>void;reject:(error:Error)=>void}>()
 async function sidecarChunk(job:any,index:number,text:string,signal:AbortSignal){let abort:any;try{await new Promise<void>((resolve,reject)=>{sidecarAcks.set(job.id,{index,resolve,reject});abort=()=>{sidecarAcks.delete(job.id);reject(Error('Drawing export cancelled.'))};signal.addEventListener('abort',abort,{once:true});if(signal.aborted){abort();return}self.postMessage({id:job.id,index,sidecarChunk:text})});}finally{signal.removeEventListener('abort',abort);sidecarAcks.delete(job.id)}}
 async function runJob(job:any){
@@ -81,8 +81,8 @@ self.onmessage=event=>{
  const job=event.data
  if(job?.sidecarAck){const held=sidecarAcks.get(job.sidecarAck);if(held?.index===job.index){sidecarAcks.delete(job.sidecarAck);held.resolve()}return}
  if(job?.inkCancel){if(activeInk?.job.ink.session===job.inkCancel)activeInk.cancelled=true;if(pendingInk?.ink.session===job.inkCancel){self.postMessage({id:pendingInk.id,cancelled:true,accepted:false});pendingInk=null}return}
- if(job?.cancelExport){background.get(job.cancelExport)?.abort();return}
+ if(job?.cancelExport){const held=queuedExports.get(job.cancelExport);if(held){queuedExports.delete(job.cancelExport);queuedBytes-=held.cost;held.job.bitmap?.close();held.job.bytes=null;held.job.bitmap=null;self.postMessage({id:job.cancelExport,error:'Drawing export cancelled.'})}else background.get(job.cancelExport)?.abort();return}
  if(job?.ink){acceptInk(job);return}
  if(job?.transform||job?.fingerprint){void runJob(job);return}
- queue=queue.catch(()=>{}).then(()=>runJob(job))
+ const id=job?.id,cost=job?.bytes?.byteLength;if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(cost)||cost<0||background.has(id)||queuedExports.has(id)||queuedExports.size>=4||queuedBytes+cost>256*1024*1024){job?.bitmap?.close();self.postMessage({id,error:'Drawing exports are busy or invalid.'});return}queuedExports.set(id,{job,cost});queuedBytes+=cost;queue=queue.catch(()=>{}).then(()=>{const held=queuedExports.get(id);if(!held)return;queuedExports.delete(id);queuedBytes-=held.cost;return runJob(held.job)})
 }
