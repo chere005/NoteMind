@@ -32,3 +32,7 @@ test('non-affine safe IDs preserve their exact fallback and shared or offset inp
   for(let i=0;i<4;i++){const stroke=make(page,i);assert.equal(api.ownedStoredId(stroke,'mixed-store'),ids[i]);assert.equal(api.knownOwnedFingerprint(stroke),(i+1).toString(16).padStart(8,'0')+'fedcba98')}assert.equal(backing.byteLength,96);
  }
 });
+test('unknown fingerprint pages allocate only when first primed and then reuse their bounded backing',()=>{
+ const size=api.MAX_OWNED_INK_PAGE,page=api.createOwnedInkMetadataPage(size),first=make(page,0),last=make(page,size-1),bits=2*Math.ceil(size/8),out=new DataView(new ArrayBuffer(8));out.setUint32(0,123,true);assert.equal(page.storageBytes,bits);assert.equal(api.knownOwnedFingerprint(first),null);assert.equal(api.writeOwnedFingerprintWords(last,out),false);assert.equal(out.getUint32(0,true),123);assert.equal(page.storageBytes,bits);
+ api.primeOwnedFingerprintWords(first,0,0);assert.equal(page.storageBytes,bits+size*8);assert.equal(api.knownOwnedFingerprint(first),'0000000000000000');assert.equal(api.knownOwnedFingerprint(last),null);api.primeOwnedFingerprintWords(last,0xffffffff,0x80000000);assert.equal(page.storageBytes,bits+size*8);assert.equal(api.writeOwnedFingerprintWords(last,out),true);assert.equal(out.getUint32(0,true),0xffffffff);assert.equal(out.getUint32(4,true),0x80000000);assert.ok(api.ownedInkId(last)>api.ownedInkId(first));
+});

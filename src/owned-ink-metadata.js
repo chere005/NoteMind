@@ -39,19 +39,19 @@ class MetadataPage {
    if (affine) { storedFirst = first; storedStep = step; }
   }
   const stride = identityBytes && storedFirst === null ? 16 : 8;
-  const bytes = identityBytes && storedFirst === null ? snapshot : new Uint8Array(count * stride);
+  const bytes = !input ? null : identityBytes && storedFirst === null ? snapshot : new Uint8Array(count * stride);
   if (identityBytes && storedFirst !== null) {
    const output = new DataView(bytes.buffer);
    for (let index = 0; index < count; index++) { output.setUint32(index * 8, source.getUint32(index * 16 + 8, true), true); output.setUint32(index * 8 + 4, source.getUint32(index * 16 + 12, true), true); }
    snapshot.buffer.transfer?.(0);
   } else if (input && !identityBytes) bytes.set(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
-  this.#view = new DataView(bytes.buffer); this.#stride = stride; this.#count = count; this.#namespace = identityBytes ? namespace : null;
+  this.#view = bytes ? new DataView(bytes.buffer) : null; this.#stride = stride; this.#count = count; this.#namespace = identityBytes ? namespace : null;
   this.#storedFirst = storedFirst; this.#storedStep = storedStep;
   this.#known = new Uint8Array(Math.ceil(count / 8)); if (input) this.#known.fill(255);
   this.#used = new Uint8Array(Math.ceil(count / 8)); this.#first = rasterRange ? MetadataRange.claim(rasterRange, rasterOffset, count) : reserveIds(count); Object.freeze(this);
  }
  get count() { return this.#count; }
- get storageBytes() { return this.#view.byteLength + this.#known.byteLength + this.#used.byteLength; }
+ get storageBytes() { return (this.#view?.byteLength || 0) + this.#known.byteLength + this.#used.byteLength; }
  static claim(page, index) {
   if (!page || typeof page !== 'object' || !(#count in page) || !Number.isInteger(index) || index < 0 || index >= page.#count) throw TypeError('Invalid owned ink ordinal.');
   const mask = 1 << (index & 7), byte = index >>> 3;
@@ -70,6 +70,7 @@ class MetadataPage {
  }
  static prime(page, index, high, low) {
   if (!isWord(high) || !isWord(low)) throw TypeError('Invalid owned ink fingerprint.');
+  page.#view ||= new DataView(new ArrayBuffer(page.#count * page.#stride));
   const at = index * page.#stride + (page.#stride === 16 ? 8 : 0);
   page.#view.setUint32(at, high, true); page.#view.setUint32(at + 4, low, true); page.#known[index >>> 3] |= 1 << (index & 7);
  }
