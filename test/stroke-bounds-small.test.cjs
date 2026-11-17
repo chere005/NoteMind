@@ -24,3 +24,7 @@ test('multi-point caching, legacy count invalidation and asynchronous cancellati
  const signal=new AbortController();signal.abort();await assert.rejects(bounds.strokeBoxAsync({points:[{x:1,y:2}]},{signal:signal.signal}),/cancelled/);
  const dense={points:Array.from({length:8193},(_,i)=>({x:i,y:-i}))};await assert.rejects(bounds.strokeBoxAsync(dense,{signal:signal.signal}),/cancelled/);assert.equal(bounds.knownStrokeBox(dense),null);
 });
+test('aggregate bounds of raw imported ink prepare cooperatively without publishing a cancelled partial cache',async()=>{
+ const {bounds,caches}=fixture(),strokes=Array.from({length:15000},(_,i)=>({points:[{x:i/1000,y:-i/1000},{x:i/1000+.1,y:.5}]}));let pauses=0;const actual=await bounds.inkBoxAsync(strokes,{yieldControl:async()=>{pauses++}});assert.ok(pauses>0);assert.deepEqual(plain(actual),plain(bounds.inkBox(strokes)));const cached=caches[1].sets;assert.equal(await bounds.inkBoxAsync(strokes,{yieldControl:()=>assert.fail('cached aggregate yielded')}),actual);assert.equal(caches[1].sets,cached);
+ const next=strokes.slice(),controller=new AbortController();await assert.rejects(bounds.inkBoxAsync(next,{signal:controller.signal,yieldControl:async()=>controller.abort()}),{name:'AbortError'});assert.equal(caches[1].has(next),false);
+});

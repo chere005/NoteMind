@@ -19,7 +19,7 @@ import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 import { recordStrokeAppend } from '../../stroke-signature.js'
-import { strokeBox,strokeBoxAsync,knownStrokeBox } from '../../stroke-bounds.js'
+import { strokeBox,strokeBoxAsync,knownStrokeBox,inkBoxAsync } from '../../stroke-bounds.js'
 import { DrawingHistory } from '../../drawing-history.js'
 import { yieldTask } from '../../graphics-pane.js'
 
@@ -280,11 +280,13 @@ export class TabletPage {
   private changeListeners = new Set<(op: SheetOp | null) => void>()
   private applying = false
   private signaturePreparer:((next:InkStroke[],options:any)=>Promise<any>)|null=null
+  private metadataIntents=new Map<string,object>()
 
   constructor(aspect = 16 / 9) {
     this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
     Object.defineProperty(this, 'history', { enumerable: false })
     Object.defineProperty(this, 'signaturePreparer', { enumerable: false })
+    Object.defineProperty(this, 'metadataIntents', { enumerable: false })
     Object.defineProperty(this, 'strokes', {
       enumerable: true,
       get: () => this.history.current,
@@ -293,8 +295,14 @@ export class TabletPage {
   }
 
   setSignaturePreparer(prepare:(next:InkStroke[],options:any)=>Promise<any>):void{this.signaturePreparer=prepare}
-  private changePrepared(next:InkStroke[],action:()=>void,options:GeometryChangeOptions={},signatureMetadata:any={}){const beforeCommit=this.signaturePreparer?()=>this.signaturePreparer!(next,{...options,signatureMetadata}):undefined;return this.history.change(next,action,{...options,beforeCommit})}
-  private async metadataChange(changes:any,apply:()=>void,options:GeometryChangeOptions={}):Promise<boolean>{const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);for(;;){if(!current())return false;const prepared=await this.signaturePreparer?.(original,{...options,valid:current,signatureMetadata:changes});if(!current())return false;if(prepared?.valid&&!prepared.valid())continue;apply();prepared?.commit?.();this.emit(null);return true}}
+  private changePrepared(next:InkStroke[],action:()=>void,options:GeometryChangeOptions={},signatureMetadata:any=options.signatureMetadata||{}){const beforeCommit=this.signaturePreparer?()=>this.signaturePreparer!(next,{...options,signatureMetadata}):undefined;return this.history.change(next,action,{...options,beforeCommit})}
+  private async metadataChange(changes:any,apply:()=>void,options:GeometryChangeOptions={}):Promise<boolean>{
+    const keys=Object.keys(changes),intent={};for(const key of keys)this.metadataIntents.set(key,intent);const active=()=>!options.signal?.aborted&&keys.every(key=>this.metadataIntents.get(key)===intent)&&(options.valid?.()??true);
+    for(;;){if(!active())return false;const original=this.strokes,current=()=>active()&&this.strokes===original;let prepared;
+      try{prepared=await this.signaturePreparer?.(original,{...options,valid:current,signatureMetadata:changes});}catch(error){if(!active())return false;if(this.strokes!==original)continue;throw error;}
+      if(!active())return false;if(this.strokes!==original||prepared?.valid&&!prepared.valid())continue;apply();prepared?.commit?.();this.emit(null);return true;
+    }
+  }
   async setAspectAsync(aspect:number,options:GeometryChangeOptions={}):Promise<boolean>{const next=Number.isFinite(aspect)&&aspect>=.1&&aspect<=10?aspect:16/9;return this.metadataChange({aspect:next},()=>{this.aspect=next},options)}
   async setBackdropAsync(backdrop:string|null,options:GeometryChangeOptions={}):Promise<boolean>{return this.metadataChange({backdrop},()=>{this.backdrop=backdrop},options)}
 
@@ -327,6 +335,7 @@ export class TabletPage {
   }
 
   setAspect(aspect: number): void {
+    this.metadataIntents.set('aspect',{})
     const next = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
     if (Math.abs(next - this.aspect) < 1e-9) return
     this.aspect = next
@@ -374,11 +383,13 @@ export class TabletPage {
   }
   /** Prepare a large replacement in yielding tasks, then announce one atomic edit. */
   async replaceAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
-    return this.changePrepared(next, () => this.replace(next), options,{extent:includeInk(this.extent,next)})
+    const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);try{await inkBoxAsync(next,{...options,valid:current});}catch(error){if(!current())return false;throw error;}if(!current())return false;
+    return this.changePrepared(next, () => this.replace(next), {...options,valid:current},{extent:includeInk(this.extent,next)})
   }
   /** Hydration is not an edit and must not create an Undo frame. */
   async loadGeometryAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
-    return this.changePrepared(next, () => { this.strokes = next; this.emit(null) }, options)
+    const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);try{await inkBoxAsync(next,{...options,valid:current});}catch(error){if(!current())return false;throw error;}if(!current())return false;
+    return this.changePrepared(next, () => { this.strokes = next; this.emit(null) }, {...options,valid:current})
   }
   clear(): void { if (this.strokes.length > 0) this.replace([]) }
   /** Remove one stroke WITHOUT marking: an erase gesture marks once, at its first hit. */

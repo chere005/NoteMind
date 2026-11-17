@@ -1,4 +1,4 @@
-const {test}=require('node:test'),assert=require('node:assert/strict'),{hashJsonAsync,hashTextAsync}=require('../src/sheet-signature-work.cjs'),{fingerprint,hashText}=require('../src/stroke-signature.js');
+const {test}=require('node:test'),assert=require('node:assert/strict'),{hashJsonAsync,hashTextAsync,equalsJsonAsync}=require('../src/sheet-signature-work.cjs'),{fingerprint,hashText}=require('../src/stroke-signature.js');
 test('streamed JSON hashing matches native JSON semantics without normalizing imported field ordering',async()=>{
  const values=[null,true,false,0,-0,NaN,Infinity,'頁😀\ud800',[,undefined,()=>{},Symbol('x'),NaN],{b:2,a:1,missing:undefined,s:Symbol()},new Number(2),new String('x'),new Boolean(false),new Date('2026-01-01T00:00:00Z'),{toJSON(key){return{key,b:2,a:1}}},Object.assign(Object.create({ignored:1}),{'20':'twenty','3':'three',a:[{y:-0,x:.2}]})];
  for(const value of values)assert.equal(await hashJsonAsync(value),hashText(JSON.stringify(value)));
@@ -11,4 +11,8 @@ test('large exact hashes yield, honor cancellation after a yield and propagate s
  await assert.rejects(hashJsonAsync(value,{signal:controller.signal,yieldControl:async()=>controller.abort()}),{name:'AbortError'});
  await assert.rejects(hashJsonAsync(value,{yieldControl:async()=>{throw Error('scheduler failed')}}),/scheduler failed/);
  const text='x😀\ud800'.repeat(50000);pauses=0;assert.equal(await hashTextAsync(text,{yieldControl:async()=>{pauses++}}),hashText(text));assert.ok(pauses>1);
+});
+
+test('large imported string values and keys escape in bounded chunks with exact surrogate pairing',async()=>{
+ const boundary='x'.repeat(8191)+'😀'+'\ud800\n\t\\"'.repeat(40000),value={[boundary]:boundary,points:[{y:-0,x:.2}]};let pauses=0;const options={yieldControl:async()=>{pauses++}};assert.equal(await hashJsonAsync(value,options),fingerprint(value));assert.ok(pauses>2);const text=JSON.stringify(value);assert.equal(await equalsJsonAsync(value,text,options),true);assert.equal(await equalsJsonAsync(value,text+' '),false);assert.equal(await equalsJsonAsync(value,text.replace('points','pointS')),false);
 });

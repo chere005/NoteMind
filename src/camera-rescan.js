@@ -3,7 +3,8 @@ async function applyCameraRescan(target,picture,{getMode,getSheets,ensure,onAppl
  if(!valid())return false;
  await ensure(target.page);
  if(!valid())return false;
- target.page.backdrop=picture;
+ if(target.page.setBackdropAsync){if(!await target.page.setBackdropAsync(picture,{valid}))return false;}else target.page.backdrop=picture;
+ if(!valid())return false;
  const mode=getMode();onApplied(target.page,{focus:mode.source==='camera'&&!mode.documentId&&mode.showing});
  return true;
 }

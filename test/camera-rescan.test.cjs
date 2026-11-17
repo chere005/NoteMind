@@ -9,3 +9,7 @@ test('closed/replaced rescan owner cannot receive a late picture',async()=>{
  assert.equal(await applyCameraRescan(target,'late',options),false);assert.equal(page.backdrop,undefined);
  mode.rescan=target;options.ensure=async()=>{sheets=[]};assert.equal(await applyCameraRescan(target,'late',options),false);assert.equal(page.backdrop,undefined);
 });
+
+test('rescan waits for the owned background signature gate and preserves its cancellation',async()=>{
+ const page={},target={page},mode={rescan:target,source:'camera',showing:true},sheets=[{page}];let resolve,applied=0;page.setBackdropAsync=async(value,{valid})=>{await new Promise(done=>resolve=done);if(!valid())return false;page.backdrop=value;return true};const options={getMode:()=>mode,getSheets:()=>sheets,ensure:async()=>{},onApplied:()=>applied++};const pending=applyCameraRescan(target,'captured',options);await Promise.resolve();assert.equal(page.backdrop,undefined);mode.rescan=null;resolve();assert.equal(await pending,false);assert.equal(page.backdrop,undefined);assert.equal(applied,0);
+});

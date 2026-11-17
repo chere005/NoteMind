@@ -58,3 +58,14 @@ test('a dense accepted append copies cooperatively and publishes one undo with i
  const page=new TabletPage(1),sheet={name:'Ink',page,paper:{}},old=Array.from({length:6000},(_,i)=>stroke(i));page.strokes=old;bindSheetSignaturePage(page,()=>sheet);await prepareSheetSignature(sheet);let pauses=0,events=0;page.onChange(op=>{if(op?.op==='add'){events++;assert.equal(sheetSignature(sheet),reference(sheet));}});
  const added=stroke(7000);assert.equal(await page.addAsync(added,{yieldControl:async()=>{pauses++}}),true);assert.ok(pauses>0);assert.equal(events,1);assert.equal(page.strokes.at(-1),added);assert.equal(page.undo(),true);assert.equal(page.strokes,old);assert.equal(page.undo(),false);page.dispose();
 });
+
+test('a remounted provider replaces the prior signature owner without installing a second preparation callback',async()=>{
+ const page=new TabletPage(1),old={name:'Old app',page,paper:{}},next={name:'New app',page,paper:{kind:'blank'}};let installed=0;const set=page.setSignaturePreparer.bind(page);page.setSignaturePreparer=value=>{installed++;set(value)};bindSheetSignaturePage(page,()=>old);bindSheetSignaturePage(page,()=>next);assert.equal(installed,1);const ink=Array.from({length:5000},(_,i)=>stroke(i));await page.loadGeometryAsync(ink,{yieldControl:async()=>{}});const expected=reference(next);for(let i=0;i<ink.length;i++)Object.defineProperty(ink,i,{get(){throw Error('new provider signature was not primed')},configurable:true});assert.equal(sheetSignature(next),expected);page.dispose();
+});
+
+test('later metadata intent wins reversed preparation completion and unrelated fields remain composable',async()=>{
+ const page=new TabletPage(1),waits=[];page.setSignaturePreparer(async(_ink,options)=>{await new Promise(resolve=>waits.push({resolve,changes:options.signatureMetadata}));return{valid:()=>true}});
+ const first=page.setAspectAsync(2),second=page.setAspectAsync(3);waits[1].resolve();assert.equal(await second,true);waits[0].resolve();assert.equal(await first,false);assert.equal(page.aspect,3);
+ const background=page.setBackdropAsync('new'),aspect=page.setAspectAsync(4);waits[3].resolve();assert.equal(await aspect,true);waits[2].resolve();assert.equal(await background,true);assert.equal(page.aspect,4);assert.equal(page.backdrop,'new');
+ const pending=page.setAspectAsync(5);page.setAspect(6);waits[4].resolve();assert.equal(await pending,false);assert.equal(page.aspect,6);page.dispose();
+});

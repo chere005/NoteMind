@@ -1,6 +1,7 @@
 import { fingerprint, hashText, removeSuffix, strokeFingerprint, strokeAppend, primeStrokeFingerprints, decodedSheet, hashWriter, knownStrokeFingerprint, primeStrokeFingerprint } from '../../stroke-signature.js'
-import {scheduler,hashJsonAsync,hashTextAsync} from '../../sheet-signature-work.cjs'
+import {scheduler,hashJsonAsync,hashTextAsync,equalsJsonAsync} from '../../sheet-signature-work.cjs'
 export { primeStrokeFingerprints }
+export async function primeStrokeFingerprintsAsync(ink:any[],hashes:any[],options:any={}){if(!Array.isArray(hashes)||hashes.length!==ink.length)throw Error('Invalid drawing fingerprints.');const pace=scheduler(options);for(let i=0;i<hashes.length;i++){if(typeof hashes[i]!=='string'||!/^[a-f0-9]{16}$/.test(hashes[i]))throw Error('Invalid drawing fingerprints.');const pending=pace.step();if(pending)await pending;}pace.check();for(let i=0;i<ink.length;i++){primeStrokeFingerprint(ink[i],hashes[i]);const pending=pace.step();if(pending)await pending;}pace.check();}
 // Cache by immutable stroke-array identity, so Undo also reuses previous hashes.
 type Cached = { name: string; aspect: number; extent: string; backdrop: string | null; backdropHash: string | null; paper: string; suffix: string; signature: string }
 const arrays = new WeakMap<object, Cached>()
@@ -48,8 +49,13 @@ export function savedSignature(saved, sheet, fallbackPaper = {}) {
   const legacy = JSON.stringify({ name: sheet.name, aspect: sheet.page.aspect, strokes: sheet.page.strokes, backdrop: sheet.page.backdrop || null, paper: sheet.paper || fallbackPaper })
   return saved === legacy ? sheetSignature(sheet, fallbackPaper) : null
 }
+export async function savedSignatureAsync(saved:any,sheet:any,options:any={},fallbackPaper:any={}){
+ if(typeof saved!=='string')return null;if(saved.startsWith('nm2:'))return saved;
+ const page=sheet.page,legacy={name:sheet.name,aspect:page.aspect,strokes:page.strokes,backdrop:page.backdrop||null,paper:sheet.paper||fallbackPaper};
+ return await equalsJsonAsync(legacy,saved,options)?(await prepareSheetSignature(sheet,options,fallbackPaper)).signature:null;
+}
 
-export function bindSheetSignaturePage(page:any,getSheet:()=>any){if(!bindings.has(page)){bindings.set(page,getSheet);page.setSignaturePreparer?.((next:any[],options:any)=>preparePage(page,next,options));}}
+export function bindSheetSignaturePage(page:any,getSheet:()=>any){const existed=bindings.has(page);bindings.set(page,getSheet);if(!existed)page.setSignaturePreparer?.((next:any[],options:any)=>preparePage(page,next,options));}
 function frame(sheet:any,fallbackPaper:any={}){const page=sheet.page,extent=page.extent&&(page.extent.x!==0||page.extent.y!==0||page.extent.width!==1||page.extent.height!==1)?JSON.stringify(page.extent):'';return{name:sheet.name,aspect:page.aspect,extent,paper:JSON.stringify(sheet.paper||fallbackPaper),backdrop:page.backdrop||null,strokes:page.strokes,page};}
 export async function prepareSheetSignature(sheet:any,options:any={},fallbackPaper:any={}){
  const value=frame(sheet,fallbackPaper),pace=scheduler(options);pace.check();let prefix=prefixes.get(value.strokes)?.get(prefixKey(value.name,value.aspect));
