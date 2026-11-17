@@ -1,13 +1,13 @@
 const {app,BrowserWindow,ipcMain,dialog,shell}=require('electron');
 const path=require('node:path'),fs=require('node:fs/promises'),crypto=require('node:crypto');
 const {TextReader,available}=require('./ocr.cjs');
-const {importWord,exportWord,printHtml}=require('./documents.cjs');
+const {importWord,printHtml}=require('./documents.cjs');
 const {mime,render,imageDimensions}=require('./document-renderer.cjs');
 const {executeBytes,withInput,base64}=require('./document-worker-bytes.cjs');
 const {isRawAsset}=require('./document-asset-sessions.cjs');
 const codec=require('./archive-codec.cjs');
 const printLeases=new(require('./print-file-leases.cjs').PrintFileLeases)();
-const reader=new TextReader();let helper=null,pendingHelper=null,disposed=false;const conversions=new Map();let helperQueue=Promise.resolve();
+const reader=new TextReader();let helper=null,pendingHelper=null,disposed=false;const conversions=new Map(),exportsActive=new Set();let helperQueue=Promise.resolve();
 const abortError=()=>Object.assign(Error('Conversion cancelled.'),{name:'AbortError'});
 const checkAbort=signal=>{if(signal?.aborted)throw abortError();};
 const expression=(name,args)=>'window.documentTools['+JSON.stringify(name)+']('+args.map(value=>JSON.stringify(value)??'undefined').join(',')+')';
@@ -33,9 +33,9 @@ async function importPDF(bytes,{mode='both',password,language='auto',signal,onPr
 async function importFile(file,options={}){checkAbort(options.signal);const bytes=await require('./read-limited.cjs').readLimited(file,150*1024*1024,'Import files up to 150 MB.',{signal:options.signal});checkAbort(options.signal);const ext=path.extname(file).toLowerCase();let result;if(ext==='.docx')result=await importWord(bytes,{signal:options.signal});else if(ext==='.pdf')result=await importPDF(bytes,options);else throw Error('Choose a Word .docx or PDF document.');checkAbort(options.signal);return {...result,title:path.basename(file,ext),imported:true,sourcePath:file};}
 async function exportFile(doc,file,options={}){
  const ext=path.extname(file).toLowerCase();let bytes;
+ if(ext==='.docx'){const receipt=await require('./word-export-media.cjs').exportWordWithMedia(doc,file,options,{storage:codec,convertImageFile,tempRoot:app.getPath?.('temp')||require('node:os').tmpdir()});if(receipt.warnings?.length&&typeof options.onWarning==='function')await options.onWarning(receipt);return receipt.file;}
  doc=await require('./print-images.cjs').preparePrint(doc,options.clean,(...args)=>call('image',...args));
- if(ext==='.docx'){const images={};for(const[name,data]of Object.entries(doc.assets||{}))if(mime(name))images[name]=await call('image',data,mime(name));bytes=await exportWord(doc,images,options);}
- else if(ext==='.pdf'){bytes=await renderPDF(doc,require('./pdf-options.cjs').printOptions(options));}
+ if(ext==='.pdf'){bytes=await renderPDF(doc,require('./pdf-options.cjs').printOptions(options));}
  else throw Error('Choose .docx or .pdf.');const temp=file+'.'+crypto.randomUUID()+'.tmp';try{await fs.writeFile(temp,bytes,{flag:'wx'});await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{})}return file;
 }
 async function previewFile(file,password){
@@ -49,7 +49,7 @@ async function renderPDF(doc,options){return require('./print-asset-files.cjs').
 let documentWindow=()=>null;
 async function previewDimensions(doc){const sizes=new Map();for(const[name,data]of Object.entries(doc.assets||{}))if(mime(name)&&isRawAsset(data)){const header=data.bytes?await codec.readRawAsset(data,{length:Math.min(data.bytes,65536)}):new Uint8Array();const dimensions=imageDimensions(header)||await call('dimensions',data,mime(name));sizes.set(name,dimensions)}return sizes}
 async function printDocument(doc,options={},owner){if(!doc||typeof doc.text!=='string')throw Error('Invalid document');if(options.preview)return require('./print-preview.cjs').html(doc,{dimensions:await previewDimensions(doc)});const prepared=await require('./print-images.cjs').preparePrint({...doc,assets:doc.assets||{},meta:doc.meta||{}},options.clean,(...args)=>call('image',...args));if(!Object.values(prepared.assets).some(value=>isRawAsset(value)||ArrayBuffer.isView(value)))return printHtml(prepared);const lease=await printLeases.open(owner,prepared);try{return printHtml(prepared,{files:true,imageUrl:lease.url}).replace('<meta charset=', '<meta name="notemind-print-assets" content="'+lease.token+'"><meta charset=')}catch(error){await printLeases.release(owner,lease.token);throw error}}
-async function exportDocument(doc,format,options={}){if(!['docx','pdf'].includes(format))throw Error('Unsupported export');const choice=await dialog.showSaveDialog(documentWindow(),{title:format==='docx'?'Export Word document':'Export PDF',defaultPath:(doc.path?doc.path.replace(/\.[^.]+$/, ''):doc.title||'Untitled')+'.'+format,filters:[{name:format==='docx'?'Word document':'PDF document',extensions:[format]}]});if(choice.canceled)return null;const exported=await exportFile(doc,choice.filePath,options);if(options.open)shell.openPath(exported).catch(()=>{});return exported;}
+async function exportDocument(doc,format,options={},owner){if(!['docx','pdf'].includes(format))throw Error('Unsupported export');const snapshot={...structuredClone({...doc,assets:undefined}),assets:{...doc.assets}},controller=new AbortController(),stop=()=>controller.abort();exportsActive.add(controller);owner?.once?.('destroyed',stop);options.signal?.addEventListener('abort',stop,{once:true});try{if(owner?.isDestroyed?.()||options.signal?.aborted)stop();checkAbort(controller.signal);const choice=await dialog.showSaveDialog(documentWindow(),{title:format==='docx'?'Export Word document':'Export PDF',defaultPath:(snapshot.path?snapshot.path.replace(/\.[^.]+$/, ''):snapshot.title||'Untitled')+'.'+format,filters:[{name:format==='docx'?'Word document':'PDF document',extensions:[format]}]});checkAbort(controller.signal);if(choice.canceled)return null;const exported=await exportFile(snapshot,choice.filePath,{...options,signal:controller.signal,onWarning:async receipt=>{if(!controller.signal.aborted)await dialog.showMessageBox?.(documentWindow(),{type:'warning',message:'The Word document was saved',detail:receipt.warnings.join('\n')})}});if(options.open&&!controller.signal.aborted)shell.openPath(exported).catch(()=>{});return exported;}finally{exportsActive.delete(controller);owner?.removeListener?.('destroyed',stop);options.signal?.removeEventListener('abort',stop);}}
 function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc){
  documentWindow=getWin;
  ipcMain.handle('document-preview-capture',async(e,rect,fromPad=false)=>{const r={};for(const key of ['x','y','width','height']){if(!Number.isFinite(rect[key]))throw Error('Invalid selection');r[key]=Math.max(0,Math.round(rect[key]));}if(!r.width||!r.height)throw Error('Select a visible part of the page.');if(fromPad&&e.sender!==getWin()?.webContents)throw Error('Invalid display request');const target=fromPad?getPad():e.sender;if(!target||target.isDestroyed())throw Error('The display is no longer available.');return (await target.capturePage(r)).toPNG().toString('base64')});
@@ -64,8 +64,8 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc){
  ipcMain.handle('document-print-html',(event,doc,options)=>printDocument(doc,options,event.sender));
  ipcMain.handle('document-print-release',(event,token)=>printLeases.release(event.sender,token));
  ipcMain.handle('pdf-geometry',(_,options)=>require('./pdf-options.cjs').geometry(options));
- ipcMain.handle('document-export',(_,doc,format,options)=>exportDocument(doc,format,options));
+ ipcMain.handle('document-export',(event,doc,format,options)=>exportDocument(doc,format,options,event.sender));
  app.on('will-quit',dispose);
 }
-function dispose(){disposed=true;void printLeases.dispose();for(const controller of conversions.values())controller.abort();conversions.clear();reader.dispose();if(helper&&!helper.isDestroyed())helper.destroy();helper=null;pendingHelper?.then(w=>{if(!w.isDestroyed())w.destroy();}).catch(()=>{});}
+function dispose(){disposed=true;void printLeases.dispose();for(const controller of conversions.values())controller.abort();conversions.clear();for(const controller of exportsActive)controller.abort();exportsActive.clear();reader.dispose();if(helper&&!helper.isDestroyed())helper.destroy();helper=null;pendingHelper?.then(w=>{if(!w.isDestroyed())w.destroy();}).catch(()=>{});}
 module.exports={register,printDocument,previewImages:(doc,options)=>require('./print-preview.cjs').images(doc,options,(...args)=>call('image',...args)),exportDocument,previewFile,importFile,importPDF,exportFile,reader,call,convertImage,convertImageFile,dispose};

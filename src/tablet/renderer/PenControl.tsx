@@ -4,8 +4,9 @@ import { DrawingLocation } from './DrawingLocation';
 import { MenuButton } from './MenuButton';
 import { PEN_SWATCHES, PEN_WIDTHS, sameInk } from './penLook';
 import { setPenTool, useSheetTools, setSheetEraser, setSheetSelect } from './penSettings';
+import { ToolPresetControl } from './ToolPresetControl';
 
-export function PenControl({ colour, width, onColour, onWidth }) {
+export function PenControl({ colour, width, onColour, onWidth, presets, presetsEnabled, onError }) {
   const picker = useRef<HTMLInputElement>(null), tools = useSheetTools();
   const pen = () => { setPenTool('pen'); setSheetEraser(false); setSheetSelect(false); };
   const eraser = () => { setPenTool('eraser'); setSheetSelect(false); setSheetEraser(true); };
@@ -25,6 +26,7 @@ export function PenControl({ colour, width, onColour, onWidth }) {
     <select className="pen-width-select" aria-label="Pen width" value={width} onChange={e => onWidth(Number(e.target.value))}>
       {[...new Set([...PEN_WIDTHS, width])].sort((a, b) => a - b).map(w => <option key={w} value={w}>{w} px</option>)}
     </select>
+    {presets&&<ToolPresetControl controller={presets.controller} state={presets.state} enabled={presetsEnabled} onError={onError}/>}
     <DrawingLocation />
   </>;
 }

@@ -45,7 +45,8 @@ export function PadMirror({frame,viewport}:{frame:string,viewport:Viewport|null}
   if(forwardPadMirrorPointer(packet))event.preventDefault()
   if(type==='pointerup'||type==='pointercancel'){held.current=null;try{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)}catch{}}
  }
- const key=(event:React.KeyboardEvent)=>{if(event.ctrlKey||event.metaKey||event.nativeEvent.isComposing||event.keyCode===229)return;if(forwardPadMirrorKey({type:event.type as 'keydown'|'keyup',key:event.key,code:event.code,repeat:event.repeat,ctrlKey:event.ctrlKey,altKey:event.altKey,shiftKey:event.shiftKey,metaKey:event.metaKey})){event.preventDefault();event.stopPropagation()}}
+ const key=(event:React.KeyboardEvent)=>{if(event.ctrlKey||event.metaKey||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;if(forwardPadMirrorKey({type:event.type as 'keydown'|'keyup',key:event.key,code:event.code,repeat:event.repeat,ctrlKey:event.ctrlKey,altKey:event.altKey,shiftKey:event.shiftKey,metaKey:event.metaKey,isComposing:event.nativeEvent.isComposing,keyCode:event.nativeEvent.keyCode})){event.preventDefault();event.stopPropagation()}}
+
  const wheel=(event:React.WheelEvent<HTMLDivElement>)=>{if(!viewport||!scale)return;const point=at(event);(window as any).notemind.pad.input({type:'mouseWheel',...point,deltaX:event.deltaX,deltaY:event.deltaY});event.preventDefault()}
  const unturn=q===1?`translate(0,${h*scale}px) rotate(-90deg)`:q===2?`translate(${w*scale}px,${h*scale}px) rotate(180deg)`:q===3?`translate(${w*scale}px,0) rotate(90deg)`:'none'
  return <div className="pad-mirror" ref={stage} aria-label="Wacom page mirror">

@@ -16132,18 +16132,22 @@ class PDFPageProxy {
         if (this._transport.destroyed) {
           return;
         }
+        // NoteMind: fail before notifying lastChunk, which otherwise resolves a
+        // partial/empty page when a bounded image or corrupt operator is rejected.
+        intentState.displayReadyCapability?.reject(reason);
+        intentState.opListReadCapability?.reject(reason);
         if (intentState.operatorList) {
           intentState.operatorList.lastChunk = true;
-          for (const internalRenderTask of intentState.renderTasks) {
-            internalRenderTask.operatorListChanged();
+          for (const internalRenderTask of [...intentState.renderTasks]) {
+            if (internalRenderTask.cancel) {
+              internalRenderTask.cancel(reason);
+            } else {
+              intentState.renderTasks.delete(internalRenderTask);
+            }
           }
           this.#tryCleanup();
         }
-        if (intentState.displayReadyCapability) {
-          intentState.displayReadyCapability.reject(reason);
-        } else if (intentState.opListReadCapability) {
-          intentState.opListReadCapability.reject(reason);
-        } else {
+        if (!intentState.displayReadyCapability && !intentState.opListReadCapability) {
           throw reason;
         }
       });

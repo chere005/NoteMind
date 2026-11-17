@@ -2,8 +2,8 @@
 // to the converter; upload verified bytes through its existing bounded session.
 const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
 const LIMIT=50*1024*1024,CHUNK=196608,identity=stat=>['dev','ino','size','mtimeNs','ctimeNs'].map(key=>String(stat[key])).join(':'),check=signal=>{if(signal?.aborted)throw Object.assign(Error('Conversion cancelled.'),{name:'AbortError'})};
-async function withVerifiedFileInput(file,{root,bytes,sha256,signal}={},run){
- if(typeof file!=='string'||!path.isAbsolute(file)||typeof root!=='string'||!path.isAbsolute(root)||!Number.isSafeInteger(bytes)||bytes<1||bytes>LIMIT||!/^[a-f0-9]{64}$/.test(sha256))throw Error('Invalid private image conversion source.');check(signal);
+async function withVerifiedSource(file,{root,bytes,sha256,signal}={},run,limit){
+ if(typeof file!=='string'||!path.isAbsolute(file)||typeof root!=='string'||!path.isAbsolute(root)||!Number.isSafeInteger(bytes)||bytes<1||bytes>limit||!/^[a-f0-9]{64}$/.test(sha256))throw Error('Invalid private image conversion source.');check(signal);
  const relative=path.relative(path.resolve(root),path.resolve(file));if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('Image conversion source is outside its private folder.');const realRoot=await fs.realpath(root),resolved=path.join(realRoot,relative);let current=realRoot;for(const part of relative.split(path.sep)){current=path.join(current,part);if((await fs.lstat(current)).isSymbolicLink())throw Error('Image conversion sources cannot contain symbolic links.');}if(await fs.realpath(file)!==resolved)throw Error('Image conversion source changed.');
  const handle=await fs.open(resolved,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));
  try{const before=await handle.stat({bigint:true});if(!before.isFile()||before.size!==BigInt(bytes))throw Error('Image conversion source changed.');const stamp=identity(before),assert=async()=>{check(signal);const [stat,named,nowRoot,nowFile]=await Promise.all([handle.stat({bigint:true}),fs.lstat(resolved,{bigint:true}),fs.realpath(root),fs.realpath(file)]);if(!stat.isFile()||!named.isFile()||named.isSymbolicLink()||identity(stat)!==stamp||identity(named)!==stamp||nowRoot!==realRoot||nowFile!==resolved)throw Error('Image conversion source changed.');};let consumed=false;
@@ -11,4 +11,5 @@ async function withVerifiedFileInput(file,{root,bytes,sha256,signal}={},run){
   return await run(input);
  }finally{await handle.close()}
 }
-module.exports={withVerifiedFileInput};
+const withVerifiedFileInput=(file,options,run)=>withVerifiedSource(file,options,run,LIMIT),withVerifiedPDFFileInput=(file,options,run)=>withVerifiedSource(file,options,run,150*1024*1024);
+module.exports={withVerifiedFileInput,withVerifiedPDFFileInput};

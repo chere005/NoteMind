@@ -20,3 +20,11 @@ test('unprofiled CMYK emits an explicit subtractive tint function while ICC CMYK
 test('PDF loading task keeps input ownership and supplies local ICC/font/cmap resources',async()=>{
  const {openPDF}=await import('../src/pdf-loading-task.mjs'),bytes=new Uint8Array([1,2,3]);let options;const task={promise:Promise.resolve()};assert.equal(openPDF({getDocument(value){options=value;return task}},bytes,'secret'),task);assert.equal(options.data,bytes);assert.equal(options.password,'secret');assert.equal(options.useWorkerFetch,true);assert.equal(options.isEvalSupported,false);for(const key of['cMapUrl','standardFontDataUrl','wasmUrl'])assert.ok(options[key].startsWith('file:'));assert.ok(options.wasmUrl.endsWith('/src/vendor/pdfjs/wasm/'));
 });
+
+test('chromaticities without a transfer curve keep untagged sample interpretation',async()=>{
+ const doc=await PDFDocument.create(),chrm=Buffer.alloc(32);[.3127,.329,.68,.32,.265,.69,.15,.06].forEach((v,i)=>chrm.writeUInt32BE(Math.round(v*100000),i*4));
+ const bytes=png(1,1,[0,16,32,48,255],{extras:[chunk('cHRM',chrm)]}),image=await decodeScanPNG(bytes);
+ assert.deepEqual([...image.rgbChannel],[16,32,48]);assert.equal(pdfColorSpace(doc,image.color,new Map()),null);assert.deepEqual(pngColorChunks(image.color).map(item=>item.type),['cHRM']);
+ const gamma=Buffer.alloc(4);gamma.writeUInt32BE(45455);const explicit=readPngColor(png(1,1,[0,16,32,48,255],{extras:[chunk('cHRM',chrm),chunk('gAMA',gamma)]}));
+ assert.equal(pdfColorSpace(doc,explicit,new Map()).get(0),PDFName.of('CalRGB'));
+});

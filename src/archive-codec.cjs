@@ -2,7 +2,7 @@ const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=requ
 const {TextEncoder}=require('node:util'),{randomUUID}=require('node:crypto');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
 const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawAcquireWorking','rawReleaseWorking','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
-const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord','exportWordFile']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
+const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord','exportWordFile','wordImageNames','pdfInk']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
  const pending=[value],seen=new Set();let bytes=0;
@@ -113,6 +113,7 @@ class ArchiveCodec{
  encode(doc,options){return this.run('encode',doc,options);}
  encodeWithDigest(doc,options){return this.run('encodeWithDigest',doc,options);}
  exportWord(doc,images,options){return this.run('exportWord',doc,images,options);}
+ wordImageNames(doc){return this.run('wordImageNames',doc);}
  async exportWordFile(doc,images,options,target){
   const {signal,...destination}=target||{},tempId=randomUUID(),cancel=new SharedArrayBuffer(4),flag=new Int32Array(cancel),abort=()=>Atomics.store(flag,0,1);if(signal?.aborted)throw Object.assign(Error('Word export cancelled.'),{name:'AbortError'});signal?.addEventListener('abort',abort,{once:true});
   try{return await this.run('exportWordFile',doc,images,options,{...destination,cancel,tempId});}

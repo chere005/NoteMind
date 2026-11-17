@@ -22,6 +22,9 @@ function calibration(color){
 function pdfColorSpace(doc,color,cache){
  if(!color||color.srgb!==null&&color.srgb!==undefined)return null;
  if(color.icc){const hash=createHash('sha256').update(color.icc).digest('hex');let ref=cache.get(hash);if(!ref){ref=doc.context.register(doc.context.flateStream(color.icc,{N:color.components,Alternate:color.components===1?'DeviceGray':color.components===4?'DeviceCMYK':'DeviceRGB'}));cache.set(hash,ref);}return doc.context.obj(['ICCBased',ref]);}
+ // Chromaticities alone do not define a transfer curve. Chromium leaves these
+ // samples untagged; inventing gamma2.2 changes dark scans and their previews.
+ if(color.gamma===null||color.gamma===undefined)return null;
  return doc.context.obj(calibration(color));
 }
 function pngColorChunks(color){

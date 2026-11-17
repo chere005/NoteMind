@@ -1,13 +1,14 @@
 import graphics from '../../graphics-pane.js'
 import {renderInk,cancelInk,holdDrawingWorker} from '../../drawing-export.js'
 import {createInkSceneJournal} from '../../ink-scene-deltas.js'
+import {NumericInkSet} from '../../numeric-ink-set.js'
 
 type Scene={page:object;strokes:any[];aspect:number;config:any;forceFull?:boolean;selection?:any;previewBase?:boolean;extraDirty?:any[];session?:string;generation?:number}
 const closeFrame=(frame:any)=>{for(const tile of [...(frame?.tiles||[]),...(frame?.preview?.fixed||[]),...(frame?.preview?.ink?[frame.preview.ink]:[])])tile.bitmap?.close()}
 
 /** One in-flight scene and one latest replacement; source points are never cloned or mutated. */
 export class InkRenderer{
- ids=new WeakMap<object,number>();nextId=1;known=new Set<number>();duplicates=new Map<number,number>();acceptedSource:any[]|null=null;acceptedRevision=0;journal:any=null;session='';page:object|null=null;generation=0;ack=0;full=true;pending:any=null;active:any=null;running=false;disposed=false;waiters:(()=>void)[]=[];life=new AbortController();release:()=>void
+ ids=new WeakMap<object,number>();nextId=1;known=new NumericInkSet();duplicates=new Map<number,number>();acceptedSource:any[]|null=null;acceptedRevision=0;journal:any=null;session='';page:object|null=null;generation=0;ack=0;full=true;pending:any=null;active:any=null;running=false;disposed=false;waiters:(()=>void)[]=[];life=new AbortController();release:()=>void
  constructor(private options:{render?:typeof renderInk;cancel?:typeof cancelInk;hold?:typeof holdDrawingWorker;pack?:typeof graphics.encodeBytesAsync;id?:()=>string}={}){this.release=(options.hold||holdDrawingWorker)()}
  private freshId(){return (this.options.id||(()=>crypto.randomUUID()))()}
  request(source:Scene,onFrame:(frame:any,scene:Scene)=>boolean,onError?:(error:any,scene:Scene,current:()=>boolean)=>any,onDispose?:()=>void){
@@ -29,16 +30,20 @@ export class InkRenderer{
  }
  private async build(scene:Scene,signal:AbortSignal){
   const delta=await this.incremental(scene,signal);if(signal.aborted||!this.current(scene))return null;if(delta)return delta;
-  const order=new Float64Array(scene.strokes.length),added:any[]=[],addIds:number[]=[],used=new Set<number>(),duplicates=new Map<number,number>(),full=this.full
+  const order=new Float64Array(scene.strokes.length),used=new NumericInkSet(),duplicates=new Map<number,number>(),full=this.full;let added:any[]|null=null,addIds:number[]|null=null
   for(let i=0;i<scene.strokes.length;i++){
    if(signal.aborted||!this.current(scene))return null
    const stroke=scene.strokes[i]!;let id=this.ids.get(stroke);if(!id){id=this.nextId++;this.ids.set(stroke,id)}order[i]=id
-   if(used.has(id))duplicates.set(id,(duplicates.get(id)||1)+1);if(!used.has(id)&&(full||!this.known.has(id))){added.push(stroke);addIds.push(id)}used.add(id)
+   const seen=used.has(id),include=!seen&&(full||!this.known.has(id));if(seen)duplicates.set(id,(duplicates.get(id)||1)+1)
+   // Until the first cached/duplicate occurrence, every source item is needed
+   // exactly once. Keep that immutable source instead of copying two big arrays.
+   if(added===null&&!include){added=[];addIds=[];for(let at=0;at<i;at++){added.push(scene.strokes[at]);addIds.push(order[at]!);if((at+1)%8192===0){await graphics.yieldTask();if(signal.aborted||!this.current(scene))return null}}}
+   if(added!==null&&include){added.push(stroke);addIds!.push(id)}used.add(id)
    if((i+1)%8192===0)await graphics.yieldTask()
   }
-  const additions=added.length?await (this.options.pack||graphics.encodeBytesAsync)({name:'Ink',aspect:scene.aspect,strokes:added,paper:scene.config.paper,backdrop:null},{signal}):null
+  const selected=added??scene.strokes,additions=selected.length?await (this.options.pack||graphics.encodeBytesAsync)({name:'Ink',aspect:scene.aspect,strokes:selected,paper:scene.config.paper,backdrop:null},{signal}):null
   if(signal.aborted||!this.current(scene))return null
-  return{used,duplicates,request:{session:scene.session,full,revision:this.acceptedRevision+1,ack:this.ack,order,additions,addIds:Float64Array.from(addIds),config:scene.config,forceFull:!!scene.forceFull,selection:scene.selection,previewBase:scene.previewBase,extraDirty:scene.extraDirty}}
+  return{used,duplicates,request:{session:scene.session,full,revision:this.acceptedRevision+1,ack:this.ack,order,additions,addIds:added===null?order:Float64Array.from(addIds!),config:scene.config,forceFull:!!scene.forceFull,selection:scene.selection,previewBase:scene.previewBase,extraDirty:scene.extraDirty}}
  }
  private async pump(){
   while(this.pending&&!this.disposed){const item=this.pending;this.pending=null;const active=this.active={item,controller:new AbortController(),posted:false};let built:any

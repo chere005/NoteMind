@@ -1,0 +1,10 @@
+.ink-selection-actions{position:absolute;z-index:7;display:flex;align-items:center;gap:3px;padding:4px;border:1px solid var(--wm-rule,#777);border-radius:7px;background:var(--wm-chrome,#eee);color:var(--wm-text,#222);box-shadow:0 2px 8px #0002;max-width:calc(100% - 12px)}
+.ink-selection-actions button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:4px;border:0;border-radius:4px;background:transparent;color:inherit}
+.ink-selection-actions button:hover:not(:disabled),.ink-selection-actions button:focus-visible{background:var(--bar-fill,#8883)}
+.ink-selection-count{font-size:11px;min-width:18px;text-align:center;font-variant-numeric:tabular-nums}
+.ink-selection-actions{flex-wrap:wrap}
+.ink-selection-colour{width:26px;height:26px;padding:0;border:0;background:transparent}
+.ink-selection-colour[data-mixed]{outline:1px dashed currentColor;outline-offset:1px}
+.ink-selection-width{width:54px;min-width:38px;height:26px;border:1px solid var(--wm-rule,#777);border-radius:4px;background:transparent;color:inherit;text-align:center;font-size:11px}
+.ink-selection-outline{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;overflow:visible}
+.ink-selection-outline path,.ink-selection-outline rect{fill:#408cff12;stroke:#388cff;stroke-width:1.5;stroke-dasharray:5 4;vector-effect:non-scaling-stroke}

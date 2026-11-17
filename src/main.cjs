@@ -17,9 +17,10 @@ const fileActions=require('./file-actions.cjs')(path.join(app.getPath('userData'
 let win, padController;
 const projectHome=process.env.NOTEMIND_HOME||app.getPath('userData'),projectService=require('./projects.cjs')(projectHome,process.env.NOTEMIND_WORKSPACES||path.join(projectHome,'workspaces'),path.join(process.env.NOTEMIND_DATA&&!process.env.NOTEMIND_HOME?projectHome:app.getPath('documents'),'NoteMind Projects'));
 const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
+const pdfReferences=require('./pdf-reference-service.cjs').register();
 const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc));
 const notepadFormat=require('./notepad-format.cjs');
-const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO});
+const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO,pdfReferences});
 
 require('./features.cjs')(() => win, projectService);
 
@@ -140,7 +141,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   win.webContents.on('did-finish-load', () => { if (pendingDocument) { win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(pendingDocument)); pendingDocument = null; } else if(guidePending){guidePending=false;win.show();win.focus();win.webContents.send('menu:command','welcomeNote');} else if(showWelcomeAtStart)welcome.show(); });
 
-  win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();welcome.dispose();app.quit();});
+  win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();void pdfReferences.dispose();welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
 
   pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>{const request=inputMonitoring.onStatus(status);if(request)void request.then(result=>{if(result.access==='granted')pen?.displayRetry?.();});}, displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
@@ -354,7 +355,7 @@ async function saveDocument(doc,saveAs=false,automatic=false){
   if(archive)expected=await require('./source-file-revision.cjs').sourceFileRevision(file);
   else{try{previous=await fs.readFile(file);}catch(error){if(error.code!=='ENOENT')throw error;}expected=previous?{sha256:digest(previous),bytes:previous.length}:null;}
   if(!saveAs&&doc.revision&&(!expected||expected.sha256!==doc.revision))throw Error('The file changed outside this window. Your draft is safe. Use Save As to keep both, or reopen the file.');
-  const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId)delete doc.recoveryId;
+  const originalId=doc.id;doc=await notesStore.register({...doc,path:file},{meta:doc.meta});if(originalId&&doc.id!==originalId){delete doc.recoveryId;doc=require('./pdf-reference-reconcile.cjs').remapOwner(doc,originalId);}
   if(expected){if(archive||ext==='.md')await notesStore.versionFromFile(file,doc,expected,'Before save');else await notesStore.version({text:previous.toString('utf8'),assets:{},id:doc.id,title:doc.title},'Before save');}previous=null;
   if(ext==='.md')doc=await require('./markdown-files.cjs').prepare(doc,file,{metadata:false});
   if(['.nm','.wm'].includes(ext))doc=await require('./markdown-files.cjs').canonicalAsync(doc);
