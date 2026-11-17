@@ -2,7 +2,7 @@
  const api=window.NoteMindDocumentSync?.api(window.notemind.notes)||window.notemind.notes;
  let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),closingDrafts=new Map(),startupRun=null;
  const automaticTitle=text=>text.split(/\r?\n/).map(s=>s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim()).find(Boolean)?.slice(0,100)||'Untitled';
- const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
+ const serial=fn=>{const next=queue.then(fn);queue=next.then(()=>{},()=>{});return next;};
  function adoptDraft(tab,saved){for(const key of ['id','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];}
  function adoptCommitted(tab,error){const receipt=error?.committed;if(!receipt)return false;for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(receipt,key))tab.doc[key]=receipt[key];tab.dirty=true;if(tab===activeTab)dirty=true;tab.draftStamp=null;tab.saveError=error.message;updateTitle();return true}
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:window.NoteMindDocumentSync?.copyAssets(tab.doc.assets)||{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
