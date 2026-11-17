@@ -125,15 +125,15 @@ async function run(){
  await evaluate('fixtureSetPad(true)');await until('!!document.querySelector(".pad-placeholder")');assert.equal(await evaluate('fixtureOverview.coordinator===fixtureOverviewCoordinator'),true);
  await evaluate('fixtureSetPad(false)');await until('!!document.querySelector(".page-overview")&&!document.querySelector(".pad-placeholder")');
  await evaluate("fixturePenCommand('clearSheet');fixturePenCommand('sendWriting');fixturePenCommand('deleteSelection')");assert.equal(await evaluate('fixtureOverviewCamera.strokes.length'),1);
- await evaluate(`document.querySelector('[aria-label="Close page overview"]').click()`);await until('!document.querySelector(".page-overview")');
- results.push({phase,thumbnails:2,keptSelectedOwner:true,portalCoordinatorRetained:true,suspendedInkCommands:true});
+ await evaluate(`document.querySelector('[aria-label="Close page overview"]').click()`);await until('!document.querySelector(".page-overview")');await until('document.activeElement?.hasAttribute("data-page-overview-toggle")');
+ results.push({phase,keyboardFocusRestored:true,thumbnails:2,keptSelectedOwner:true,portalCoordinatorRetained:true,suspendedInkCommands:true});
  phase='virtual-drawing-overview';
  await evaluate(`window.fixtureOriginalSheets=fixtureOwners.sheets.current;fixtureOwners.sheets.update(Array.from({length:3000},(_,index)=>({pageId:'overview-'+index,name:'Drawing '+index,page:fixtureNewPage()})));fixtureSetSource('tablet')`);
  await until(`!!document.querySelector('[data-tablet="surface"]')`);await evaluate(`document.querySelector('[aria-label="Page overview"]').click()`);await until(`!!document.querySelector('.page-overview')&&document.querySelectorAll('.page-overview-preview img').length>0`);
  const virtual=await evaluate(`({mounted:document.querySelectorAll('.page-overview-page').length,pages:fixtureOverview.pages.length})`);assert.equal(virtual.pages,3000);assert.ok(virtual.mounted>0&&virtual.mounted<64);
  await evaluate(`document.querySelector('.page-overview-page[tabindex="0"]').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))`);await until(`!!document.querySelector('[data-overview-page-id="overview-2999"] .page-overview-page')`);
  await evaluate(`document.querySelector('[data-overview-page-id="overview-2999"] .page-overview-page').click()`);await until(`!document.querySelector('.page-overview')&&document.querySelector('.sheet-tab.on')?.textContent.includes('Drawing 2999')`);
- assert.equal(await evaluate('fixtureOwners.sheets.current.length'),3000);results.push({phase,pages:3000,mounted:virtual.mounted,lastPageSelected:true});
+ await until('document.activeElement?.hasAttribute("data-page-overview-toggle")');assert.equal(await evaluate('fixtureOwners.sheets.current.length'),3000);results.push({phase,keyboardFocusRestored:true,pages:3000,mounted:virtual.mounted,lastPageSelected:true});
  await evaluate(`fixtureOwners.sheets.update(fixtureOriginalSheets);fixtureSetSource('camera')`);await until('!!document.querySelector(".camera-workspace")');
  phase='previews-and-portal';
  await evaluate(`for(const [name,previewToken]of [['A','token-A'],['B','token-B']])dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:'/fixture/'+name+'.png',name,previewToken}}))`);
