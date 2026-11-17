@@ -16,7 +16,7 @@ function captureOverviewPage(row) {
     return null;
   }
   if (typeof row.pageId !== "string" || !row.pageId || row.pageId.length > 128) throw Error("Invalid overview page identity.");
-  const metadata = thumbnailMetadata({ aspect: page.aspect, paper: row.paper ?? page.paper ?? row.metadata?.paper, extent: page.extent ?? row.metadata?.extent });
+  const metadata = thumbnailMetadata({ aspect: page.aspect, paper: row.paper ?? page.paper ?? row.metadata?.paper, extent: page.extent ?? row.metadata?.extent, camera:row.metadata?.camera });
   graphics.validate({ ...metadata, strokes: [] });
   const sheet = Object.freeze({ name: String(row.name ?? row.metadata?.name ?? "Drawing").slice(0, 256), ...metadata, strokes: page.strokes, backdrop: null });
   return Object.freeze({ sheet, backdrop: page.backdrop ?? null, metadata: Object.freeze({ ...metadata, pageId: row.pageId, geometryRevision: row.geometryRevision, revision: row.revision, signature: row.signature }) });
@@ -37,7 +37,7 @@ async function backdropBytes(data, limit, { signal, yieldControl }) {
   check(signal);
   return bytes;
 }
-function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeBytesAsync, yieldControl = graphics.yieldTask, maxBytes = MAX_BYTES }) {
+function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeBytesAsync, project=(_page,strokes)=>strokes, yieldControl = graphics.yieldTask, maxBytes = MAX_BYTES }) {
   if (typeof getPage !== "function" || typeof loadSaved !== "function" || typeof encode !== "function" || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES) throw Error("Invalid overview source adapter.");
   return async (pageId, { signal } = {}) => {
     check(signal);
@@ -45,16 +45,16 @@ function createOverviewLoader({ getPage, loadSaved, encode = graphics.encodeByte
     if (row && row.pageId !== pageId) throw Error("Overview page ownership changed.");
     const captured = captureOverviewPage(row);
     if (!captured) {
-      const saved = await loadSaved(pageId, { signal, background: true });
+      const metadata=row?thumbnailMetadata({...row.metadata,aspect:row.page?.aspect??row.metadata?.aspect,paper:row.paper??row.metadata?.paper,extent:row.page?.extent??row.metadata?.extent}):null;const saved = await loadSaved(pageId, { signal, background: true });
       check(signal);
-      return saved;
+      return metadata&&Object.keys(metadata).length?{...saved,metadata:{...saved.metadata,...metadata,pageId,...(row.geometryRevision===undefined?{}:{geometryRevision:row.geometryRevision}),...(row.revision===undefined?{}:{revision:row.revision})}}:saved;
     }
-    const bytes = await encode(captured.sheet, { signal, yieldControl });
+    const release=row.page.retainGeometry?.()||(()=>{});try{let strokes=project(row.page,captured.sheet.strokes);if(strokes&&typeof strokes.then==='function')strokes=await strokes;check(signal);const bytes = await encode({...captured.sheet,strokes}, { signal, yieldControl });
     check(signal);
     if (!ArrayBuffer.isView(bytes) || bytes.byteLength > maxBytes) throw Error("Overview source exceeds its byte budget.");
     const background = await backdropBytes(captured.backdrop, maxBytes - bytes.byteLength, { signal, yieldControl });
     check(signal);
-    return { metadata: captured.metadata, bytes, ...background ? { backdropBytes: background } : {}, owned: true };
+    return { metadata: captured.metadata, bytes, ...background ? { backdropBytes: background } : {}, owned: true };}finally{release();}
   };
 }
 module.exports = { captureOverviewPage, createOverviewLoader };

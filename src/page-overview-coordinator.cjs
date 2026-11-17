@@ -138,7 +138,7 @@ class OverviewCoordinator {
     for (const revision of revisions) if (revision !== null && (typeof revision !== "string" && typeof revision !== "number" || typeof revision === "number" && !Number.isFinite(revision) || String(revision).length > 256)) throw Error("Invalid overview revision.");
     const meta = thumbnailMetadata(page.metadata || page), paper = meta.paper || {}, extent = meta.extent || {}, backdrop = page.backdropHash ?? page.backdropId ?? null;
     if (backdrop !== null && (typeof backdrop !== "string" || backdrop.length > 256)) throw Error("Invalid overview background identity.");
-    return JSON.stringify([page.pageId, revisions, backdrop, meta.aspect ?? 1, paper.kind, paper.spacing, paper.colour, extent.x, extent.y, extent.width, extent.height]);
+    return JSON.stringify([page.pageId, revisions, backdrop, meta.aspect ?? 1, paper.kind, paper.spacing, paper.colour, extent.x, extent.y, extent.width, extent.height,meta.camera??null]);
   }
   setPages(pages) {
     validPages(pages);

@@ -16,6 +16,7 @@ function thumbnailMetadata(source) {
     if (!extent || !["x", "y", "width", "height"].every((key) => typeof extent[key] === "number" && Number.isFinite(extent[key]))) throw Error("Invalid overview extent.");
     out.extent = { x: extent.x, y: extent.y, width: extent.width, height: extent.height };
   }
+  if(source?.camera!==undefined){const camera=require('./camera-schema.cjs').cameraMetadata({...source.camera,name:'Overview'}).camera;out.camera={rotation:camera.rotation,aspect:camera.aspect,inkRotation:camera.inkRotation,inkAspect:camera.inkAspect};}
   return out;
 }
 class OverviewThumbnailClient {
