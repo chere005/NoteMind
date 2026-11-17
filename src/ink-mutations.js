@@ -36,7 +36,7 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
   return {release:()=>releaseReservation(record),check(){const size=geometrySize(owner),reserved=capacityReservations.get(owner);if(!record.active||record.points!==stroke.points.length||size.points+(reserved?.points||0)>INK_LIMIT||size.strokes+(reserved?.strokes||0)>INK_LIMIT)throw capacityError();}};
  }
  function appendInkStroke(owner,stroke,{nativeCanonical=false,commit=value=>owner.add(value),retain=()=>owner.retainGeometry?.()||(()=>{}),onCommit=()=>{},finalize,before,reservation,prepare,signal,valid=()=>true}={}){
-  const admitted=adoptReservation(owner,stroke,reservation),prior=before===undefined?flushInkMutations(owner):before;let release,hash,geometry=null,candidate=stroke;const preparing=prepare!==undefined;
+  const admitted=adoptReservation(owner,stroke,reservation),prior=before===undefined?flushInkMutations(owner):before;let release,hash,geometry=null,candidate=stroke,appendIndex=-1;const preparing=prepare!==undefined;
   const check=()=>{if(signal?.aborted||!valid())throw aborted()};
   try{const held=retain();release=()=>{admitted.release();held()}}catch(error){admitted.release();throw error}
   const finalizeGeometry=value=>{
@@ -55,11 +55,11 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
     });
    }else{
     const prepared=finalizeGeometry(stroke);hash=prepared.fingerprint;geometry=prepared.box;
-    if(typeof hash==='string'&&!prior&&!geometry){admitted.check();commit(stroke);onCommit(stroke);release();return null}
+    if(typeof hash==='string'&&!prior&&!geometry){admitted.check();appendIndex=owner.strokes.length;const accepted=commit(stroke);if(!accepted||typeof accepted.then!=='function'){if(accepted===false)throw aborted();onCommit(stroke);release();return null;}const done=Promise.resolve(accepted).then(did=>{if(did===false)throw aborted();onCommit(stroke)}).finally(release),projection=done.then(()=>({append:stroke}));projection.catch(()=>{});registerInkProjection(owner,projection,done,{capture:()=>{const captured=owner.strokes;return projection.then(plan=>captured[appendIndex]===stroke?{identity:true}:plan)}});return done;}
    }
   }catch(error){release();throw error}
-  const ready=Promise.allSettled([preparing?null:Promise.resolve(hash).then(value=>{check();signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(results=>{const failed=results.find(item=>item.status==='rejected');if(failed)throw failed.reason;check();return{append:candidate}}),done=ready.then(()=>{check();admitted.check();commit(candidate);onCommit(candidate)}).finally(release);
-  ready.catch(()=>{});done.catch(()=>{});registerInkProjection(owner,ready,done);return done;
+  const ready=Promise.allSettled([preparing?null:Promise.resolve(hash).then(value=>{check();signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(results=>{const failed=results.find(item=>item.status==='rejected');if(failed)throw failed.reason;check();return{append:candidate}}),done=ready.then(async()=>{check();admitted.check();appendIndex=owner.strokes.length;const accepted=commit(candidate),did=accepted&&typeof accepted.then==='function'?await accepted:accepted;if(did===false)throw aborted();onCommit(candidate)}).finally(release);
+  ready.catch(()=>{});done.catch(()=>{});const projection=done.then(()=>({append:candidate}));projection.catch(()=>{});registerInkProjection(owner,projection,done,{capture:()=>{const captured=owner.strokes;return projection.then(plan=>captured[appendIndex]===candidate?{identity:true}:plan)}});return done;
  }
  function createInkActionController(owner,adapters={}){
   let handlers={onEdited:adapters.onEdited,repaint:adapters.repaint,onError:adapters.onError};const jobs=new Set(),get=adapters.getStrokes||(()=>owner.strokes),retain=adapters.retain||(()=>owner.retainGeometry?.()||(()=>{})),changed=()=>{handlers?.repaint?.();handlers?.onEdited?.()}

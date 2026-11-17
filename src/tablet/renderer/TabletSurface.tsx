@@ -315,12 +315,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   const commitStrokeNow=(g:Extract<Gesture,{kind:'draw'}>)=>{
     if(!knownStrokeBox(g.stroke))primeStrokeBox(g.stroke,g.bounds)
-    const before=g.page.strokes
-    committingStroke.current=true
-    try{g.page.add(g.stroke)}finally{committingStroke.current=false}
-    const held=paintedInk.current
-    if(g.page===latest.current.page&&g.drawn===g.stroke.points.length&&held?.page===g.page&&held.strokes===before&&held.key===rasterKey())paintedInk.current={...held,strokes:g.page.strokes}
-    if(g.page===latest.current.page&&denseInk(g.page.strokes))schedule(true)
+    const before=g.page.strokes,finished=()=>{const held=paintedInk.current,after=g.page.strokes;if(g.page===latest.current.page&&after.length===before.length+1&&after.at(-1)===g.stroke&&g.drawn===g.stroke.points.length&&held?.page===g.page&&held.strokes===before&&held.key===rasterKey())paintedInk.current={...held,strokes:after};if(g.page===latest.current.page&&denseInk(after))schedule(true)}
+    if(before.length>=50000&&g.page.addAsync)return g.page.addAsync(g.stroke).then(did=>{if(did)finished();return did})
+    committingStroke.current=true;try{g.page.add(g.stroke)}finally{committingStroke.current=false}finished()
   }
 
   const commitStroke=(g:Extract<Gesture,{kind:'draw'}>)=>{
@@ -328,7 +325,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const owned={...g},source=g.stroke,owner=g.page;let pending=false
     if(g.constraint?.enabled)pendingLines.current.set(source,{page:owner,preview:linePreview(g)})
     const completed=()=>{const held=pendingStrokes.current.get(owner);held?.delete(source);pendingLines.current.delete(source);if(held&&!held.size)pendingStrokes.current.delete(owner);if(pending){if(owner===latest.current.page)schedule(true);latest.current.onEdited(owner)}}
-    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,prepare:g.constraint?.enabled?(stroke,options)=>prepareFreshStroke(stroke,value=>lineStroke(value,{...options,stepDegrees:g.constraint!.stepDegrees,metric:g.constraint!.metric,frame:g.constraint!.frame})):undefined,commit:candidate=>{owned.stroke=candidate;if(g.constraint?.enabled){owned.drawn=0;commitStrokeNow(owned);if(owner===latest.current.page)schedule(true)}else commitStrokeNow(owned)},onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){pendingLines.current.delete(source);if(owner===latest.current.page)schedule(true);reportError(error)}
+    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,prepare:g.constraint?.enabled?(stroke,options)=>prepareFreshStroke(stroke,value=>lineStroke(value,{...options,stepDegrees:g.constraint!.stepDegrees,metric:g.constraint!.metric,frame:g.constraint!.frame})):undefined,commit:candidate=>{owned.stroke=candidate;if(g.constraint?.enabled)owned.drawn=0;return commitStrokeNow(owned)},onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){pendingLines.current.delete(source);if(owner===latest.current.page)schedule(true);reportError(error)}
   }
 
   const controllerFor=(owner:TabletPage)=>{
@@ -362,8 +359,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     }
     measure()
     // The sheet's shape follows the tablet's orientation.
-    const unlisten = latest.current.page.onChange(() => {
-      if (committingStroke.current) return
+    const unlisten = latest.current.page.onChange(op => {
+      if (committingStroke.current||op?.op==='add'&&pendingStrokes.current.get(latest.current.page)?.has(op.stroke)) return
       const current=gesture.current
       if(current?.kind==='box'&&current.page===latest.current.page&&current.page.strokes!==current.strokes){gesture.current=null;paintVersion.current++;restorePreview(current);releasePreview(current);setBoxing(false);latest.current.onBox(current.origin)}
       measure()

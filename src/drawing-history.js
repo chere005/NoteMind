@@ -502,7 +502,7 @@ class DrawingHistory {
     return this.array;
   }
   peek(redo = false) { return this.record?.[redo ? 'future' : 'past'].at(-1)?.state.array || null; }
-  async change(array, action, {signal, valid = () => true, yieldControl = yieldTask, sparse} = {}) {
+  async change(array, action, {signal, valid = () => true, yieldControl = yieldTask, sparse, beforeCommit} = {}) {
     const record = this.ensure(), original = this.array, previous = record.current, revision = this.revision;
     let pauseError = null;
     const pause = async () => { try { await yieldControl(); } catch (error) { pauseError = error; await yieldTask(); } };
@@ -527,6 +527,7 @@ class DrawingHistory {
       await budget.holdAsync(state, 'history', 1, pause); pins.push([state, 'history']);
       if (pauseError) throw pauseError;
       if (!current()) return false;
+      if(typeof beforeCommit==='function')for(;;){let prepared;try{prepared=await beforeCommit();}catch(error){if(!current())return false;throw error;}if(!current())return false;if(prepared?.valid&&!prepared.valid())continue;prepared?.commit?.();break;}
       action();
       return true;
     } finally {

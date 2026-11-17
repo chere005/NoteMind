@@ -243,7 +243,7 @@ export function landStrokes(strokes: InkStroke[], options: {
  * replaying the same operations in the same order.
  */
 export interface SheetState { strokes: InkStroke[]; past: InkStroke[][]; future: InkStroke[][]; extent?: Rect }
-export interface GeometryChangeOptions { signal?: AbortSignal; valid?: () => boolean; yieldControl?: () => Promise<void> }
+export interface GeometryChangeOptions { signal?: AbortSignal; valid?: () => boolean; yieldControl?: () => Promise<void>; signatureMetadata?:any }
 
 export type SheetOp =
   | { op: "mark" }
@@ -279,16 +279,24 @@ export class TabletPage {
   private opListeners = new Set<(op: SheetOp) => void>()
   private changeListeners = new Set<(op: SheetOp | null) => void>()
   private applying = false
+  private signaturePreparer:((next:InkStroke[],options:any)=>Promise<any>)|null=null
 
   constructor(aspect = 16 / 9) {
     this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
     Object.defineProperty(this, 'history', { enumerable: false })
+    Object.defineProperty(this, 'signaturePreparer', { enumerable: false })
     Object.defineProperty(this, 'strokes', {
       enumerable: true,
       get: () => this.history.current,
       set: (strokes: InkStroke[]) => this.history.setCurrent(strokes),
     })
   }
+
+  setSignaturePreparer(prepare:(next:InkStroke[],options:any)=>Promise<any>):void{this.signaturePreparer=prepare}
+  private changePrepared(next:InkStroke[],action:()=>void,options:GeometryChangeOptions={},signatureMetadata:any={}){const beforeCommit=this.signaturePreparer?()=>this.signaturePreparer!(next,{...options,signatureMetadata}):undefined;return this.history.change(next,action,{...options,beforeCommit})}
+  private async metadataChange(changes:any,apply:()=>void,options:GeometryChangeOptions={}):Promise<boolean>{const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);for(;;){if(!current())return false;const prepared=await this.signaturePreparer?.(original,{...options,valid:current,signatureMetadata:changes});if(!current())return false;if(prepared?.valid&&!prepared.valid())continue;apply();prepared?.commit?.();this.emit(null);return true}}
+  async setAspectAsync(aspect:number,options:GeometryChangeOptions={}):Promise<boolean>{const next=Number.isFinite(aspect)&&aspect>=.1&&aspect<=10?aspect:16/9;return this.metadataChange({aspect:next},()=>{this.aspect=next},options)}
+  async setBackdropAsync(backdrop:string|null,options:GeometryChangeOptions={}):Promise<boolean>{return this.metadataChange({backdrop},()=>{this.backdrop=backdrop},options)}
 
   restoreExtent(extent?: Rect): void {
     this.extent = includeInk(validExtent(extent) ? { ...extent } : { ...UNIT_SHEET }, this.strokes)
@@ -352,6 +360,11 @@ export class TabletPage {
     this.strokes = next
     this.emit({ op: "add", stroke })
   }
+  async addAsync(stroke:InkStroke,options:GeometryChangeOptions={}):Promise<boolean>{
+    const original=this.strokes,current=()=>!options.signal?.aborted&&this.strokes===original&&(options.valid?.()??true);if(!current())return false;
+    const next:InkStroke[]=new Array(original.length+1);for(let i=0;i<original.length;i++){next[i]=original[i]!;if((i+1)%4096===0){await(options.yieldControl||yieldTask)();if(!current())return false;}}next[original.length]=stroke;recordStrokeAppend(original,next,stroke);
+    const extent=includeInk(this.extent,[stroke]);return this.changePrepared(next,()=>{this.silently(()=>this.mark());this.extent=extent;this.strokes=next;this.emit({op:'add',stroke})},{...options,valid:current},{extent});
+  }
   /** Replace the strokes as ONE undo (a clear, a capture's removal). */
   replace(next: InkStroke[]): void {
     this.silently(() => this.mark())
@@ -361,11 +374,11 @@ export class TabletPage {
   }
   /** Prepare a large replacement in yielding tasks, then announce one atomic edit. */
   async replaceAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
-    return this.history.change(next, () => this.replace(next), options)
+    return this.changePrepared(next, () => this.replace(next), options,{extent:includeInk(this.extent,next)})
   }
   /** Hydration is not an edit and must not create an Undo frame. */
   async loadGeometryAsync(next: InkStroke[], options: GeometryChangeOptions = {}): Promise<boolean> {
-    return this.history.change(next, () => { this.strokes = next; this.emit(null) }, options)
+    return this.changePrepared(next, () => { this.strokes = next; this.emit(null) }, options)
   }
   clear(): void { if (this.strokes.length > 0) this.replace([]) }
   /** Remove one stroke WITHOUT marking: an erase gesture marks once, at its first hit. */
@@ -391,7 +404,7 @@ export class TabletPage {
       }
     }
     this.history.prepareRemoval(next, index)
-    return this.history.change(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})
+    return this.changePrepared(next, () => { this.strokes = next; this.emit({op:'removeAt',index}) }, {...options, valid:current})
   }
 
   undo(): boolean {
@@ -409,11 +422,11 @@ export class TabletPage {
   }
   async undoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
     const next = this.history.peek()
-    return next ? this.history.change(next, () => this.undo(), options) : false
+    return next ? this.changePrepared(next, () => this.undo(), options) : false
   }
   async redoAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
     const next = this.history.peek(true)
-    return next ? this.history.change(next, () => this.redo(), options) : false
+    return next ? this.changePrepared(next, () => this.redo(), options) : false
   }
   /** Immutable history target, captured before an asynchronous action yields. */
   peekUndo(redo = false): InkStroke[] | null { return this.history.peek(redo) }
