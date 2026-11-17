@@ -7,6 +7,11 @@ test('page-local writer keeps exact order/source pixels and clears every PNG emb
 test('all EXIF orientations preserve bounded centered page placement',()=>{
  const expected={1:[1,0,0,1],2:[-1,0,0,1],3:[-1,0,0,-1],4:[1,0,0,-1],5:[0,-1,-1,0],6:[0,-1,1,0],7:[0,1,1,0],8:[0,1,-1,0]};for(let orientation=1;orientation<=8;orientation++){const m=imagePlacement(400,200,orientation),sign=m.slice(0,4).map(n=>Math.sign(n));assert.deepEqual(sign,expected[orientation]);const corners=[[0,0],[1,0],[0,1],[1,1]].map(([x,y])=>[m[0]*x+m[2]*y+m[4],m[1]*x+m[3]*y+m[5]]);for(const [x,y]of corners){assert.ok(x>=0&&x<=210/25.4*72+1e-9);assert.ok(y>=0&&y<=297/25.4*72+1e-9);}}
 });
+test('quarter-turn scan rotations compose after EXIF without changing the source image scale',()=>{
+ const compose=(a,b)=>[a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3]],turns={0:[1,0,0,1],90:[0,-1,1,0],180:[-1,0,0,-1],270:[0,1,-1,0]};
+ for(let exif=1;exif<=8;exif++)for(const rotation of[0,90,180,270]){const base=imagePlacement(400,200,exif).slice(0,4).map(Math.sign),matrix=imagePlacement(400,200,exif,rotation),actual=matrix.slice(0,4).map(value=>value===0?0:Math.sign(value)),expected=compose(turns[rotation],base).map(value=>value===0?0:value);assert.deepEqual(actual,expected);const a=Math.hypot(matrix[0],matrix[1]),b=Math.hypot(matrix[2],matrix[3]);assert.ok(Math.abs(a/b-2)<1e-12);}
+ for(const rotation of[-90,1,360,NaN,'90'])assert.throws(()=>imagePlacement(1,1,1,rotation),/rotation/);
+});
 test('worker cancellation rejects before later page reads or final output publication',async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-scan-cancel-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));const file=path.join(directory,'one.png'),output=path.join(directory,'scan.pdf');await fs.writeFile(file,png(1,1,[0,1,2,3,255]));let stopped=false;await assert.rejects(writeScanPDF({pages:[{file,mime:'image/png'},{file:path.join(directory,'must-not-read'),mime:'image/png'}],output},{check(){if(stopped)throw Object.assign(Error('Cancelled'),{name:'AbortError'})},onPage(){stopped=true}}),{name:'AbortError'});await assert.rejects(fs.stat(output),{code:'ENOENT'});
 });

@@ -8,12 +8,12 @@ async function decodeScanPNG(bytes,{check=()=>{}}={}){
  const info=await limits.validateBytes(bytes,{signal:{get aborted(){check();return false}}});if(info.mime!=='image/png')throw Error('Expected a scan PNG.');check();
  const {width,height}=info,depth=bytes[24],colour=bytes[25],interlace=bytes[28],channels=({0:1,2:3,3:1,4:2,6:4})[colour];
  if(!channels||!(colour===0?[1,2,4,8,16]:colour===3?[1,2,4,8]:[8,16]).includes(depth)||bytes[26]||bytes[27]||interlace>1)throw Error('Unsupported scan PNG encoding.');
- let palette=null,transparent=null,hasData=false,dataEnded=false,dataStart=-1,dataEnd=-1;
+ let palette=null,transparent=null,hasData=false,dataEnded=false,dataStart=-1,dataEnd=-1,compressedBytes=0;
  for(let at=8;at+12<=bytes.length;){check();const length=bytes.readUInt32BE(at),kind=bytes.toString('ascii',at+4,at+8),body=bytes.subarray(at+8,at+8+length);if(crc(bytes.subarray(at+4,at+8+length))!==bytes.readUInt32BE(at+8+length))throw Error('Corrupt scan PNG chunk.');
   if(kind==='acTL'||kind==='fcTL'||kind==='fdAT')throw Error('Animated scan PNG images are not supported.');
   if(kind==='PLTE'){if(colour===0||colour===4||hasData||palette||!length||length%3||length>768)throw Error('Invalid scan PNG palette.');palette=body;}
   else if(kind==='tRNS'){if(hasData||transparent||colour===3&&!palette||!(colour===0&&length===2||colour===2&&length===6||colour===3&&length>0&&length<=256))throw Error('Invalid scan PNG transparency.');transparent=body;}
-  else if(kind==='IDAT'){if(dataEnded)throw Error('Noncontiguous scan PNG image data.');hasData=true;if(dataStart<0)dataStart=at;dataEnd=at+12+length;}
+  else if(kind==='IDAT'){if(dataEnded)throw Error('Noncontiguous scan PNG image data.');hasData=true;compressedBytes+=length;if(dataStart<0)dataStart=at;dataEnd=at+12+length;}
   else if(kind!=='IHDR'&&kind!=='IEND'&&kind.charCodeAt(0)<97)throw Error('Unsupported critical scan PNG chunk.');
   if(hasData&&kind!=='IDAT')dataEnded=true;at+=12+length;
  }
@@ -37,7 +37,7 @@ async function decodeScanPNG(bytes,{check=()=>{}}={}){
  }
  function* chunks(){for(let at=dataStart;at<dataEnd;){const length=bytes.readUInt32BE(at);for(let offset=0;offset<length;offset+=65536){check();yield bytes.subarray(at+8+offset,at+8+Math.min(length,offset+65536));}at+=12+length;}}
  const input=Readable.from(chunks(),{objectMode:false,highWaterMark:65536}),decoder=zlib.createInflate({chunkSize:65536});input.on('error',error=>decoder.destroy(error));input.pipe(decoder);
- try{for await(const chunk of decoder){check();decoded+=chunk.length;if(decoded>expected)throw Error('Scan PNG pixels exceed its declared dimensions.');for(let at=0;at<chunk.length;){if(!filtered)throw Error('Scan PNG has extra pixels.');const take=Math.min(chunk.length-at,filtered.length-rowOffset);filtered.set(chunk.subarray(at,at+take),rowOffset);at+=take;rowOffset+=take;if(rowOffset===filtered.length)placeRow();}}if(decoded!==expected||passIndex!==passes.length||rowOffset)throw Error('Scan PNG pixels do not match its declared dimensions.');}finally{input.destroy();decoder.destroy();}
+ try{for await(const chunk of decoder){check();decoded+=chunk.length;if(decoded>expected)throw Error('Scan PNG pixels exceed its declared dimensions.');for(let at=0;at<chunk.length;){if(!filtered)throw Error('Scan PNG has extra pixels.');const take=Math.min(chunk.length-at,filtered.length-rowOffset);filtered.set(chunk.subarray(at,at+take),rowOffset);at+=take;rowOffset+=take;if(rowOffset===filtered.length)placeRow();}}if(decoder.bytesWritten!==compressedBytes)throw Error('Scan PNG has trailing compressed data.');if(decoded!==expected||passIndex!==passes.length||rowOffset)throw Error('Scan PNG pixels do not match its declared dimensions.');}finally{input.destroy();decoder.destroy();}
  return {width,height,bitsPerComponent:8,rgbChannel,alphaChannel:hasAlpha?alphaChannel:undefined};
 }
 module.exports={decodeScanPNG,crc};
