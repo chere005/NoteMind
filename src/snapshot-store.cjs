@@ -144,7 +144,7 @@ async function publishSnapshotObjects(root,prepared,cache=new Map()){
  for(const object of prepared.objects||[]){if(!validHash(object?.hash)||objects.has(object.hash))throw Error('Invalid prepared version objects.');objects.set(object.hash,object);}
  const refs=new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref]));
  for(const hash of objects.keys())if(!refs.has(hash))throw Error('Unreferenced prepared version asset.');
- const publish=async ref=>{if(objects.has(ref.hash))await publishObject(root,objects.get(ref.hash),ref,cache);else{await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(objectFile(root,ref.hash)));}};if([...objects.values()].some(object=>typeof object.source==='function'))for(const ref of refs.values())await publish(ref);else await mapLimit([...refs.values()],8,publish);
+ const publish=async ref=>{if(objects.has(ref.hash))await publishObject(root,objects.get(ref.hash),ref,cache);else{const file=objectFile(root,ref.hash),verified=await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});}};if([...objects.values()].some(object=>typeof object.source==='function'))for(const ref of refs.values())await publish(ref);else await mapLimit([...refs.values()],8,publish);
 }
 async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}={}){
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
