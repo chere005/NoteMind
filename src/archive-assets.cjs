@@ -17,6 +17,7 @@ class AssetCache{
 }
 class ArchiveAssetClient extends AssetCache{
  constructor(options){super(options);this.uploads=0;}
+ remember(token,data,epoch){const previous=this.byData.get(data),entry=super.remember(token,data,epoch);if(previous&&previous!==token)this.remove(previous);return entry;}
  packet(doc,epoch){
   const {assets={},...document}=doc,refs=Object.create(null),added={},source=new Map(),local=new Map();
   for(const [name,data]of Object.entries(assets)){

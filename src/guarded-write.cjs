@@ -29,14 +29,21 @@ async function withPortableFileLock(file,run){
 async function readExisting(file){try{return await fs.readFile(file);}catch(error){if(error.code==='ENOENT')return null;throw error;}}
 const sameBytes=(a,b)=>a===null?b===null:b!==null&&(Buffer.isBuffer(a)?a:Buffer.from(a)).equals(b);
 async function matchesExisting(file,expected){
- if(!expected||Buffer.isBuffer(expected)||ArrayBuffer.isView(expected)||expected instanceof ArrayBuffer)return sameBytes(expected,await readExisting(file));
+ if(expected===null){try{await fs.lstat(file);return false;}catch(error){if(error.code==='ENOENT')return true;throw error;}}
+ if(Buffer.isBuffer(expected)||ArrayBuffer.isView(expected)||expected instanceof ArrayBuffer)return sameBytes(expected,await readExisting(file));
+ if(!expected||typeof expected!=='object')throw Error('Invalid expected file revision.');
  if(!Number.isSafeInteger(expected.bytes)||expected.bytes<0||typeof expected.sha256!=='string'||!/^[a-f0-9]{64}$/.test(expected.sha256))throw Error('Invalid expected file revision.');
- let handle;try{handle=await fs.open(file,'r');}catch(error){if(error.code==='ENOENT')return false;throw error;}
+ const current=await fingerprintFile(file);return current!==null&&current.bytes===expected.bytes&&current.sha256===expected.sha256;
+}
+async function fingerprintFile(file){
+ let handle;try{handle=await fs.open(file,'r');}catch(error){if(error.code==='ENOENT')return null;throw error;}
  try{
-  const before=await handle.stat();if(!before.isFile()||before.size!==expected.bytes)return false;
+  const before=await handle.stat();if(!before.isFile())throw Error('This file is not a regular document.');
   const hash=createHash('sha256'),chunk=Buffer.allocUnsafe(128*1024);let total=0;
-  for(;;){const {bytesRead}=await handle.read(chunk,0,chunk.length,null);if(!bytesRead)break;hash.update(chunk.subarray(0,bytesRead));total+=bytesRead;if(total>expected.bytes)return false;}
-  const after=await handle.stat(),named=await fs.stat(file).catch(error=>{if(error.code==='ENOENT')return null;throw error;});return named&&named.dev===after.dev&&named.ino===after.ino&&total===expected.bytes&&before.size===after.size&&before.mtimeMs===after.mtimeMs&&before.ctimeMs===after.ctimeMs&&hash.digest('hex')===expected.sha256;
+  for(;;){const {bytesRead}=await handle.read(chunk,0,chunk.length,null);if(!bytesRead)break;hash.update(chunk.subarray(0,bytesRead));total+=bytesRead;}
+  const after=await handle.stat(),named=await fs.stat(file).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+  if(!named||named.dev!==after.dev||named.ino!==after.ino||total!==before.size||before.size!==after.size||before.mtimeMs!==after.mtimeMs||before.ctimeMs!==after.ctimeMs)throw Error('The file changed while it was being saved. Your draft is safe. Reopen it or use Save As to keep both.');
+  return {bytes:total,sha256:hash.digest('hex')};
  }finally{await handle.close();}
 }
 
@@ -55,4 +62,4 @@ async function replaceIfUnchanged(file,bytes,expected,{afterCommit}={}){
  }finally{await fs.unlink(temp).catch(()=>{});}
 }
 
-module.exports={withFileLock,replaceIfUnchanged,readExisting};
+module.exports={withFileLock,replaceIfUnchanged,readExisting,fingerprintFile};

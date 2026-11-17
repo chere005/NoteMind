@@ -17,6 +17,15 @@ test('deferred image pastes stay ordered in their initiating inactive Notepad',a
 test('closing the original Notepad rejects a late insertion without touching another file',()=>{
  const h=fixture(),target=h.notes.captureInsertion();h.c.activateTab(h.b);h.c.tabs=[h.b];assert.throws(()=>h.notes.insertAssetFor(target,'assets/paste.png','AAAA'),/no longer open/);assert.equal(h.b.doc.text,'Other note');assert.equal(Object.keys(h.b.doc.assets).length,0);
 });
+test('dense drawing sidecars insert into their initiating inactive Notepad without geometry decoding or re-encoding',()=>{
+ const h=fixture(),target=h.notes.captureInsertion(),sidecar=Buffer.from(require('../src/graphics-pane.js').encodeBytes({name:'Dense drawing',aspect:1,strokes:[]})).toString('base64');
+ h.c.activateTab(h.b);assert.equal(h.notes.insertAssetFor(target,'assets/dense.svg','PREVIEW',null,sidecar),true);
+ assert.equal(h.a.doc.assets['assets/dense.svg.json'],sidecar);assert.ok(h.a.doc.text.includes('![Drawing](assets/dense.svg)'));assert.equal(h.c.activeTab,h.b);assert.equal(h.b.doc.text,'Other note');assert.equal(Object.keys(h.b.doc.assets).length,0);
+});
+test('active drawing insertion forwards its encoded sidecar unchanged',()=>{
+ const h=fixture(),target=h.notes.captureInsertion(),calls=[];h.c.insertAsset=(...args)=>{calls.push(args);return true;};
+ h.notes.insertAssetFor(target,'assets/dense.svg','PREVIEW',null,'ENCODED');assert.deepEqual(calls,[['assets/dense.svg','PREVIEW',null,'ENCODED']]);
+});
 test('recognized text can return to an inactive plain-text file without changing the current tab',()=>{
  const h=fixture();h.a.doc.path='/fixture/A.txt';const target=h.notes.captureInsertion();h.c.activateTab(h.b);h.notes.insertTextFor(target,'recognized');assert.equal(h.a.doc.text,'leftrecognizedRIGHT');assert.equal(h.c.activeTab,h.b);assert.equal(h.b.doc.text,'Other note');assert.equal(Object.keys(h.a.doc.assets).length,0);
  h.c.tabs=[h.b];assert.throws(()=>h.notes.insertTextFor(target,'late'),/no longer open/);assert.equal(h.b.doc.text,'Other note');

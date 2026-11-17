@@ -114,13 +114,23 @@ document.querySelectorAll('[data-command]').forEach(button=>button.onclick=()=>f
 // The text style picker is installed by notes-styles.js.
 
 function graphicsSheet(name) { const data=doc.assets[name+'.json'];return data?NoteMindGraphics.decodeBase64(data):null; }
-function editGraphics(img) { window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url:assetUrl(img.dataset.asset),sheet:graphicsSheet(img.dataset.asset),target:{tabId:activeTab.id,assetName:img.dataset.asset,expectedData:doc.assets[img.dataset.asset]}}}));if($('pane').hidden)$('paneToggle').click(); }
-function insertAsset(name, data, sheet=null) {
+let graphicsEditRun=0,graphicsEditAbort=null;
+async function editGraphics(img) {
+ const run=++graphicsEditRun;graphicsEditAbort?.abort();const controller=new AbortController();graphicsEditAbort=controller;
+ const tab=activeTab,name=img.dataset.asset,expectedData=tab.doc.assets[name],sidecar=tab.doc.assets[name+'.json'],url=assetUrl(name);
+ try{
+  const sheet=sidecar?await NoteMindGraphics.decodeBase64Async(sidecar,{signal:controller.signal}):null;
+  if(controller.signal.aborted||run!==graphicsEditRun||!tabs.includes(tab))return false;
+  if(tab.doc.assets[name]!==expectedData||tab.doc.assets[name+'.json']!==sidecar)throw Error('The original image changed while the drawing was loading. Open it again to edit the current image.');
+  window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url,sheet,target:{tabId:tab.id,assetName:name,expectedData}}}));if($('pane').hidden)$('paneToggle').click();return true;
+ }catch(error){if(controller.signal.aborted)return false;throw error;}finally{if(graphicsEditAbort===controller)graphicsEditAbort=null;}
+}
+function insertAsset(name, data, sheet=null, sidecar=null) {
  if(doc.path&&!/\.(nm|wm|md)$/i.test(doc.path)){alert('Save as a .nm or .md Notepad before adding graphics.');return false;}
  if(visual&&rich.contentEditable!=='true')return false;
  doc.assets[name]=data;doc.meta ||= {};doc.meta.graphicsPanes ||= {};doc.meta.graphicsPanes[name]={version:1};
- if(sheet)doc.assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);
- const text='\n\n!['+(sheet?'Drawing':'Image')+']('+name+')\n\n';
+ if(sidecar)doc.assets[name+'.json']=sidecar;else if(sheet)doc.assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);
+ const text='\n\n!['+(sheet||sidecar?'Drawing':'Image')+']('+name+')\n\n';
  if(visual){restoreCaret();const selection=getSelection(),range=selection.getRangeAt(0);const node=range.endContainer.nodeType===1?range.endContainer:range.endContainer.parentElement;const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol');if(block&&rich.contains(block)){range.setStartAfter(block);range.collapse(true);}else range.collapse(false);const fragment=range.createContextualFragment(render(text)+'<p><br></p>'),last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range);}richChanged=true;}
  else source.setRangeText(text,source.selectionStart,source.selectionEnd,'end');
  markDirty();return true;
@@ -132,7 +142,7 @@ $('run').onclick = () => action(async () => { const target = activeTab; if (!tar
 
 $('closeOutput').onclick = () => $('output').hidden = true; $('paneToggle').onclick = () => { $('pane').hidden = !$('pane').hidden; window.dispatchEvent(new CustomEvent('tablet-visibility', { detail: !$('pane').hidden })); };
 
-window.addEventListener('tablet-insert', e => {try{const ok=e.detail.insertion?window.NoteMindNotes.insertAssetFor(e.detail.insertion,e.detail.name,e.detail.data,e.detail.sheet):insertAsset(e.detail.name,e.detail.data,e.detail.sheet);if(ok===false)e.preventDefault();}catch(error){e.preventDefault();alert(error.message);}});
+window.addEventListener('tablet-insert', e => {try{const ok=e.detail.insertion?window.NoteMindNotes.insertAssetFor(e.detail.insertion,e.detail.name,e.detail.data,e.detail.sheet,e.detail.sidecar):insertAsset(e.detail.name,e.detail.data,e.detail.sheet,e.detail.sidecar);if(ok===false)e.preventDefault();}catch(error){e.preventDefault();alert(error.message);}});
 
 window.addEventListener('notemind-open-path', e => action(async () => { const found = tabs.find(tab => tab.doc.path && notePathKey(tab.doc.path) === notePathKey(e.detail)); if (found) activateTab(found); else { const next = await window.notemind.openPath(e.detail); if (next?.workspace) await window.notemind.workspaceWindow(next.workspace); else { addTab(next); window.notemind.remember?.(String(e.detail)).catch(() => {}); } } }));
 
@@ -172,13 +182,13 @@ document.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey))return;if(e.k
 
 function moveTab(tab,by){const i=tabs.indexOf(tab),j=i+by;if(j>=0&&j<tabs.length){[tabs[i],tabs[j]]=[tabs[j],tabs[i]];updateTitle();}}
 
-rich.addEventListener('contextmenu',e=>{const img=e.target.closest('img[data-asset]');if(!img)return;e.preventDefault();window.notemindMenu([{label:'Resize, Rotate or Crop…',run:()=>window.NoteMindPicture.edit(img)},{label:'Edit with Tablet',run:()=>{editGraphics(img);}},{label:'Read Text',run:()=>action(()=>NoteMindImagePreviews.withImage(img,async image=>{const insertion=window.NoteMindNotes?.captureInsertion(),c=document.createElement('canvas');c.width=image.naturalWidth;c.height=image.naturalHeight;c.getContext('2d').drawImage(image,0,0);await readImage(c.toDataURL('image/png').split(',')[1],undefined,insertion);}))},{label:'Copy Image',run:()=>action(()=>NoteMindImagePreviews.withImage(img,async image=>{const c=document.createElement('canvas');c.width=image.naturalWidth;c.height=image.naturalHeight;c.getContext('2d').drawImage(image,0,0);await window.notemind.copyPng(c.toDataURL('image/png').split(',')[1]);}))}],e.clientX,e.clientY);});
+rich.addEventListener('contextmenu',e=>{const img=e.target.closest('img[data-asset]');if(!img)return;e.preventDefault();window.notemindMenu([{label:'Resize, Rotate or Crop…',run:()=>window.NoteMindPicture.edit(img)},{label:'Edit with Tablet',run:()=>action(()=>editGraphics(img))},{label:'Read Text',run:()=>action(()=>NoteMindImagePreviews.withImage(img,async image=>{const insertion=window.NoteMindNotes?.captureInsertion(),c=document.createElement('canvas');c.width=image.naturalWidth;c.height=image.naturalHeight;c.getContext('2d').drawImage(image,0,0);await readImage(c.toDataURL('image/png').split(',')[1],undefined,insertion);}))},{label:'Copy Image',run:()=>action(()=>NoteMindImagePreviews.withImage(img,async image=>{const c=document.createElement('canvas');c.width=image.naturalWidth;c.height=image.naturalHeight;c.getContext('2d').drawImage(image,0,0);await window.notemind.copyPng(c.toDataURL('image/png').split(',')[1]);}))}],e.clientX,e.clientY);});
 
-window.addEventListener('tablet-replace',e=>{const {target,data,name}=e.detail;const tab=tabs.find(t=>t.id===target.tabId);rememberCurrent();const used=tab&&NoteMindDocument.md.parse(tab.doc.text,{}).some(token=>(token.children||[]).some(child=>child.type==='image'&&child.attrGet('src')===NoteMindDocument.md.normalizeLink(target.assetName)));if(!tab||!Object.hasOwn(tab.doc.assets,target.assetName)||!used||(target.expectedData!==undefined&&tab.doc.assets[target.assetName]!==target.expectedData)){e.preventDefault();alert('The original image has changed or is no longer open. Insert as a new image instead.');return;}tab.doc.text=NoteMindReferenceRewrite(NoteMindDocument.md,tab.doc.text,{[target.assetName]:name});tab.doc.assets[name]=data;if(e.detail.sheet)tab.doc.assets[name+'.json']=NoteMindGraphics.encodeBase64(e.detail.sheet);tab.doc.meta ||= {};tab.doc.meta.graphicsPanes ||= {};delete tab.doc.meta.graphicsPanes[target.assetName];tab.doc.meta.graphicsPanes[name]={version:1};target.assetName=name;target.expectedData=data;tab.dirty=true;if(tab===activeTab){dirty=true;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);}updateTitle();window.NoteMindNotes?.changed(tab);});
+window.addEventListener('tablet-replace',e=>{const {target,data,name}=e.detail;const tab=tabs.find(t=>t.id===target.tabId);rememberCurrent();const used=tab&&NoteMindDocument.md.parse(tab.doc.text,{}).some(token=>(token.children||[]).some(child=>child.type==='image'&&child.attrGet('src')===NoteMindDocument.md.normalizeLink(target.assetName)));if(!tab||!Object.hasOwn(tab.doc.assets,target.assetName)||!used||(target.expectedData!==undefined&&tab.doc.assets[target.assetName]!==target.expectedData)){e.preventDefault();alert('The original image has changed or is no longer open. Insert as a new image instead.');return;}tab.doc.text=NoteMindReferenceRewrite(NoteMindDocument.md,tab.doc.text,{[target.assetName]:name});tab.doc.assets[name]=data;if(e.detail.sidecar)tab.doc.assets[name+'.json']=e.detail.sidecar;else if(e.detail.sheet)tab.doc.assets[name+'.json']=NoteMindGraphics.encodeBase64(e.detail.sheet);tab.doc.meta ||= {};tab.doc.meta.graphicsPanes ||= {};delete tab.doc.meta.graphicsPanes[target.assetName];tab.doc.meta.graphicsPanes[name]={version:1};target.assetName=name;target.expectedData=data;tab.dirty=true;if(tab===activeTab){dirty=true;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);}updateTitle();window.NoteMindNotes?.changed(tab);});
 
 
 
-window.addEventListener('notemind-keep-drawing',e=>{try{const target=e.detail.insertion,owner=target?.tab?.doc||doc;if(owner.path&&!/\.(nm|wm)$/i.test(owner.path))throw Error('Save as a .nm Notepad before keeping a drawing.');const name='assets/drawing-'+Date.now()+'.svg';if(target)window.NoteMindNotes.insertAssetFor(target,name,e.detail.svg,e.detail.sheet);else{insertAsset(name,e.detail.svg,e.detail.sheet);markDirty();}}catch(error){e.preventDefault();alert(error.message)}});
+window.addEventListener('notemind-keep-drawing',e=>{try{const target=e.detail.insertion,owner=target?.tab?.doc||doc;if(owner.path&&!/\.(nm|wm)$/i.test(owner.path))throw Error('Save as a .nm Notepad before keeping a drawing.');const name='assets/drawing-'+Date.now()+'.svg';if(target)window.NoteMindNotes.insertAssetFor(target,name,e.detail.svg,e.detail.sheet,e.detail.sidecar);else{insertAsset(name,e.detail.svg,e.detail.sheet,e.detail.sidecar);markDirty();}}catch(error){e.preventDefault();alert(error.message)}});
 
 window.notemind.onPythonOutput(text=>{if($('outputText').textContent==='Running…')$('outputText').textContent='';$('outputText').textContent=($('outputText').textContent+text).slice(-1000000);$('output').scrollTop=$('output').scrollHeight;});$('stopPython').onclick=()=>window.notemind.stopPython();
 

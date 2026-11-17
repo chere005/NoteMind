@@ -9,7 +9,7 @@
   const inside = (p, b) => p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height;
   const bounds = new WeakMap();
   const selected = (s, b) => {
-    let box = bounds.get(s);
+    let box = globalThis.NoteMindStrokeBounds?.strokeBox(s)||bounds.get(s);
     if (!box || box.count !== s.points.length) { box = {count:s.points.length,x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};for(const p of s.points){box.x=Math.min(box.x,p.x);box.y=Math.min(box.y,p.y);box.right=Math.max(box.right,p.x);box.bottom=Math.max(box.bottom,p.y);}bounds.set(s,box); }
     return box.count>0 && box.x>=b.x && box.y>=b.y && box.right<=b.x+b.width && box.bottom<=b.y+b.height;
   };
@@ -48,6 +48,8 @@
     return validate({ name: data.name || 'Drawing', aspect: data.aspect, paper: data.paper, backdrop: data.backdrop || null, strokes, ...(data.extent ? { extent: data.extent } : {}) });
   }
   const BINARY_MAGIC = 'NMGFX2\r\n', MAX_BINARY_BYTES = 150*1024*1024, MAX_METADATA_BYTES = 70*1024*1024, MAX_POINTS = 2000000;
+  let yieldChannel;const yieldWaiters=[];
+  function yieldTask(){return new Promise(resolve=>{if(typeof setImmediate==='function'){setImmediate(resolve);return;}if(typeof MessageChannel==='function'){if(!yieldChannel){yieldChannel=new MessageChannel();yieldChannel.port1.onmessage=()=>yieldWaiters.shift()?.();}yieldWaiters.push(resolve);yieldChannel.port2.postMessage(0);}else setTimeout(resolve,0);});}
   const bytesOf = value => value instanceof ArrayBuffer ? new Uint8Array(value) : ArrayBuffer.isView(value) ? new Uint8Array(value.buffer,value.byteOffset,value.byteLength) : (()=>{throw Error('Invalid binary graphics data.');})();
   const utf8 = text => typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(text) : new Uint8Array(Buffer.from(text,'utf8'));
   const textOf = bytes => typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8',{fatal:true}).decode(bytes) : Buffer.from(bytes).toString('utf8');
@@ -74,7 +76,7 @@
       for(let i=0;i<stroke.points.length;i++){view.setFloat64(at,stroke.points[i].x,true);view.setFloat64(at+8,stroke.points[i].y,true);at+=16;if(stroke.pressures){view.setFloat64(at,stroke.pressures[i],true);at+=8;}}
     }return bytes;
   }
-  async function encodeBytesAsync(sheet,{yieldControl=()=>globalThis.scheduler?.yield?.()||new Promise(resolve=>setTimeout(resolve,0)),signal}={}) {
+  async function encodeBytesAsync(sheet,{yieldControl=yieldTask,signal}={}) {
     const pause=async()=>{if(signal?.aborted){const error=Error('Drawing export cancelled.');error.name='AbortError';throw error;}await yieldControl();if(signal?.aborted){const error=Error('Drawing export cancelled.');error.name='AbortError';throw error;}};
     await pause();
     if(!sheet||!Array.isArray(sheet.strokes)||sheet.strokes.length>MAX_POINTS)throw Error('Invalid graphics pane.');
@@ -127,6 +129,31 @@
     let bytes;if(typeof Uint8Array.fromBase64==='function')bytes=Uint8Array.fromBase64(data);else if(typeof Buffer!=='undefined')bytes=new Uint8Array(Buffer.from(data,'base64'));else{const raw=atob(data);bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));}
     return decode(bytes);
   }
+  const asyncPause = async options => {if(options.signal?.aborted){const error=Error('Drawing load cancelled.');error.name='AbortError';throw error;}await (options.yieldControl||yieldTask)();if(options.signal?.aborted){const error=Error('Drawing load cancelled.');error.name='AbortError';throw error;}};
+  async function decodeAsync(raw,options={}) {
+    await asyncPause(options);let bytes=typeof raw==='string'?utf8(raw):bytesOf(raw),extra=null,hashes=null;
+    const normalizer=options.normalize||globalThis.NoteMindDrawingExport?.normalize;
+    const header=isBinary(bytes)&&bytes.length>=24?new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength):null;
+    if((!header||header.getUint32(8,true)>65536||(!options.onStroke&&header.getUint32(16,true)>=50000))&&normalizer){const packet=await normalizer(bytes,{signal:options.signal,owned:options.owned===true});bytes=bytesOf(packet.bytes);extra=packet.metadata;hashes=packet;}
+    if(!isBinary(bytes))return decode(bytes);
+    if(bytes.length<24||bytes.length>MAX_BINARY_BYTES)throw Error('Invalid binary graphics data.');
+    const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength),metadataLength=view.getUint32(8,true),strokeCount=view.getUint32(12,true),pointCount=view.getUint32(16,true);
+    if(view.getUint32(20,true)!==bytes.length||metadataLength>MAX_METADATA_BYTES||metadataLength>bytes.length-24||strokeCount>MAX_POINTS||pointCount>MAX_POINTS)throw Error('Invalid binary graphics size.');
+    const metadata=JSON.parse(textOf(bytes.subarray(24,24+metadataLength)));if(!metadata||typeof metadata!=='object'||typeof metadata.name!=='string')throw Error('Invalid binary graphics metadata.');binaryMeta(metadata);
+    const strokes=[];let at=24+metadataLength,seen=0,work=0;
+    for(let index=0;index<strokeCount;index++){
+      if(at+16>bytes.length)throw Error('Truncated binary graphics stroke.');const flags=bytes[at+3],hasPressure=flags&1,width=view.getFloat64(at+4,true),count=view.getUint32(at+12,true),hex=[bytes[at],bytes[at+1],bytes[at+2]].map(v=>v.toString(16).padStart(2,'0')).join(''),colour='#'+[...hex].map((c,i)=>flags&(1<<(i+1))?c.toUpperCase():c).join('');at+=16;
+      if(flags>127||!coordinate(width)||width<=0||count>pointCount-seen||at+count*(hasPressure?24:16)>bytes.length)throw Error('Invalid binary graphics stroke.');seen+=count;const points=[],pressures=hasPressure?[]:null;
+      const box={x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity};for(let point=0;point<count;point++){const x=view.getFloat64(at,true),y=view.getFloat64(at+8,true);at+=16;if(!coordinate(x)||!coordinate(y))throw Error('Invalid binary graphics point.');points.push({x,y});box.x=Math.min(box.x,x);box.y=Math.min(box.y,y);box.right=Math.max(box.right,x);box.bottom=Math.max(box.bottom,y);if(hasPressure){const pressure=view.getFloat64(at,true);at+=8;if(!finite(pressure))throw Error('Invalid binary graphics pressure.');pressures.push(pressure);}if(++work%8192===0)await asyncPause(options);}
+      const stroke={colorHex:colour,width,points,...(pressures?{pressures}:{})};globalThis.NoteMindStrokeBounds?.primeStrokeBox(stroke,box);if(hashes?.strokeHashes)globalThis.NoteMindStrokeSignatures?.primeStrokeFingerprint(stroke,hashes.strokeHashes[index]);options.onStroke?.(stroke,index);strokes.push(stroke);if(++work%8192===0)await asyncPause(options);
+    }
+    if(seen!==pointCount||at!==bytes.length||hashes?.strokeHashes&&hashes.strokeHashes.length!==strokeCount)throw Error('Invalid binary graphics length.');await asyncPause(options);const sheet={...metadata,...extra,strokes};globalThis.NoteMindStrokeSignatures?.primeDecodedSheet(sheet,{validated:true,backdropHash:hashes?.backdropHash});return sheet;
+  }
+  async function decodeBase64Async(data,options={}) {
+    if(typeof data!=='string'||!data.length||data.length>Math.ceil(MAX_BINARY_BYTES/3)*4)throw Error('Invalid encoded graphics data.');const bytes=new Uint8Array(Math.floor(data.length/4)*3+3);let offset=0,carry='';
+    for(let at=0;at<data.length;at+=65536){const text=data.slice(at,at+65536);if(!/^[a-z0-9+/=\r\n]+$/i.test(text))throw Error('Invalid encoded graphics data.');carry+=text.replace(/[\r\n]/g,'');const length=at+65536<data.length?carry.length-carry.length%4:carry.length,piece=carry.slice(0,length);carry=carry.slice(length);if(piece){let chunk;if(typeof Uint8Array.fromBase64==='function')chunk=Uint8Array.fromBase64(piece);else if(typeof Buffer!=='undefined')chunk=Buffer.from(piece,'base64');else chunk=Uint8Array.from(atob(piece),c=>c.charCodeAt(0));bytes.set(chunk,offset);offset+=chunk.length;}await asyncPause(options);}
+    return decodeAsync(bytes.subarray(0,offset),{...options,owned:true});
+  }
   function transform(strokes, from, to) {
     if (!(from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0)) return strokes;
     const sx = to.width / from.width, sy = to.height / from.height;
@@ -164,5 +191,5 @@
     }
     return { ...sheet, aspect: sheet.aspect * box.width / box.height, backdrop: null, strokes };
   }
-  return { encode, decode, validate, transform, crop, selected, BINARY_MAGIC, MAX_BINARY_BYTES, isBinary, validateBinary, encodeBytes, encodeBytesAsync, bytesBase64, encodeBase64, decodeBase64 };
+  return { encode, decode, validate, transform, crop, selected, BINARY_MAGIC, MAX_BINARY_BYTES, isBinary, validateBinary, encodeBytes, encodeBytesAsync, bytesBase64, encodeBase64, decodeBase64, decodeAsync, decodeBase64Async, yieldTask };
 });

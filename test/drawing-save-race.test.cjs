@@ -17,7 +17,7 @@ function pendingSave(sheets) {
     latestSheets: { current: sheets.map(s => ({ name: s.name, aspect: s.page.aspect, strokes: s.page.strokes, paper: s.paper })) },
     drawingSvg: () => 'preview',drawingPreview: () => 'preview', refresh() {}, setSaveError(message) { throw Error(message); },
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
-    window: { notemind: { savePane(data) { context.savedData = data;return new Promise(resolve => { complete = resolve; }); } } },
+    window: { notemind: { savePane(data,svg,file,options) { context.savedData = data;context.saveTarget={file,options};return new Promise(resolve => { complete = resolve; }); } } },
   };
   vm.runInNewContext(implementation + ';globalThis.save = saveSheet;globalThis.closeDrawing=closeSheet;', context);
   return { context, complete: file => complete(file) };
@@ -60,6 +60,14 @@ test('a rejected asynchronous keep does not mark the drawing as kept', async () 
  const first=sheet('First');let complete;const events=[],context={sheets:[first],active:0,kept:[first],captureDrawing:()=>({frozen:true}),denseDrawing:()=>false,drawingPreview:()=>new Promise(resolve=>complete=resolve),editableSheet:()=>({name:'First'}),btoa:value=>value,refresh(){},setSheets:update=>{context.kept=update(context.kept)},window:{NoteMindNotes:{captureInsertion:()=>({tab:'original'})},dispatchEvent:event=>{events.push(event);return false}},CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options)}}};
  const start=source.indexOf('onKeep:async(to,on)=>{')+'onKeep:'.length,end=source.indexOf('} onHide=',start),text=source.slice(start,end).replace(/}}$/, '}');vm.runInNewContext('globalThis.keep='+text,context);
  const pending=context.keep('note',true);context.sheets=[sheet('Later')];complete('preview');await pending;assert.equal(events.length,1);assert.equal(events[0].cancelable,true);assert.equal(events[0].detail.insertion.tab,'original');assert.equal(context.kept[0].keptNote,undefined);
+});
+
+test('versioned save retains its initiating file revision and records the committed revision',async()=>{
+ const first=sheet('First');first.file='/tmp/first.nm';first.fileRevision={sha256:'a'.repeat(64),bytes:100};const {context,complete}=pendingSave([first]);let preview;context.drawingPreview=()=>new Promise(resolve=>preview=resolve);const saving=context.save();context.currentSheets=[{...first,fileRevision:{sha256:'b'.repeat(64),bytes:200}}];preview('frozen');await new Promise(setImmediate);assert.deepEqual(JSON.parse(JSON.stringify(context.saveTarget.options.expected)),first.fileRevision);assert.equal(context.saveTarget.options.versioned,true);const revision={sha256:'c'.repeat(64),bytes:300};complete({file:'/tmp/first.nm',revision});assert.equal(await saving,'/tmp/first.nm');assert.equal(context.currentSheets[0].fileRevision,revision);
+});
+
+test('dense save passes the encoded sidecar without re-reading newer geometry',async()=>{
+ const first=sheet('First'),{context,complete}=pendingSave([first]);let worker,seen;context.denseDrawing=()=>true;context.denseAssets=snapshot=>{seen=snapshot;return new Promise(resolve=>worker=resolve)};const saving=context.save();first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'Later',aspect:2,strokes:first.page.strokes,paper:first.paper}];assert.equal(seen.name,'First');assert.equal(seen.strokes.length,1);worker({sidecar:'exact binary',data:'preview'});await new Promise(setImmediate);assert.equal(context.savedData.encodedGraphics,'exact binary');assert.equal(context.savedData.strokes,undefined);complete('/tmp/first.nm');await saving;
 });
 
 test('a dense drawing save captures payload and signature before asynchronous preview encoding',async()=>{

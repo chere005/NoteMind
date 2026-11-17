@@ -76,6 +76,11 @@ test('worker memory rollover and idle stop reset epoch acknowledgements',async t
  const h=real({maxWorkerBytes:1});t.after(()=>h.codec.dispose());await h.codec.encode(doc());await h.codec.encode(doc());assert.equal(h.codec.assetStats().rollovers,2);assert.equal(h.codec.assetStats().epoch,2);assert.equal(h.sent[0].added.length,1);assert.equal(h.sent[1].added.length,1);
  const idle=real({idleMs:5});t.after(()=>idle.codec.dispose());await idle.codec.encode(doc());await new Promise(resolve=>setTimeout(resolve,20));await idle.codec.encode(doc());assert.equal(idle.codec.assetStats().epoch,2);assert.equal(idle.sent[1].added.length,1);
 });
+test('new epoch acknowledgements replace stale canonical aliases without double-accounting immutable data',()=>{
+ const cache=new ArchiveAssetClient(),first=randomUUID(),second=randomUUID();cache.remember(first,'QUFB',1);cache.remember(second,'QUFB',2);
+ assert.equal(cache.stats().entries,1);assert.equal(cache.stats().bytes,4);assert.equal(cache.entries.has(first),false);assert.equal(cache.byData.get('QUFB'),second);
+ const other=randomUUID();cache.remember(other,'QkJC',2);assert.throws(()=>cache.remember(second,'QkJC',2),/cannot be changed/);assert.equal(cache.entries.get(other).data,'QkJC');assert.equal(cache.entries.get(second).data,'QUFB');
+});
 
 test('failed worker termination never overlaps a replacement and releases queued ownership',async()=>{
  const workers=[];class StopWorker extends EventEmitter{constructor(){super();this.messages=[];this.threadId=7;workers.push(this);}postMessage(packet){this.messages.push(packet);}ref(){}unref(){}terminate(){return workers.indexOf(this)===0?Promise.reject(Error('Still alive')):Promise.resolve(0);}}

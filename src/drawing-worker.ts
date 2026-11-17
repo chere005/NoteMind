@@ -3,6 +3,7 @@ import {snapshotDrawing,rasterDrawing} from './tablet/renderer/drawingSnapshot'
 import {paintStrokes} from './tablet/renderer/tabletPage'
 import {paintPaper,inkOn} from './tablet/renderer/tabletPaper'
 import {paintBackdrop} from './tablet/renderer/tabletBackdrop'
+import {fingerprint} from './stroke-signature.js'
 
 async function pngOf(canvas: OffscreenCanvas): Promise<string> {
  const bytes=new Uint8Array(await (await canvas.convertToBlob({type:'image/png'})).arrayBuffer())
@@ -24,6 +25,7 @@ let queue=Promise.resolve()
 self.onmessage=event=>{const job=event.data;queue=queue.catch(()=>{}).then(async()=>{
  let canvas:OffscreenCanvas|null=null
  try{
+  if(job?.normalize){if(!Number.isSafeInteger(job.id)||!job.bytes)throw Error('Invalid drawing load request.');const source=graphics.decode(job.bytes),{strokes,...metadata}=source,bytes=graphics.encodeBytes({...source,backdrop:null}),strokeHashes=strokes.map(fingerprint),backdropHash=source.backdrop?fingerprint(source.backdrop):null;self.postMessage({id:job.id,bytes,metadata,strokeHashes,backdropHash},[bytes.buffer]);return}
   if(!job||!Number.isSafeInteger(job.id)||!job.bytes||!job.region||![job.region.x,job.region.y,job.region.width,job.region.height].every(Number.isFinite)||job.region.width<=0||job.region.height<=0)throw Error('Invalid drawing export request.')
   const source=graphics.decode(job.bytes),snapshot=snapshotDrawing({...source,viewport:job.region})
   const result:{id:number;png?:string;sidecar?:string}={id:job.id}

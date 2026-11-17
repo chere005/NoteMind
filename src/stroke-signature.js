@@ -1,5 +1,5 @@
 // Committed strokes are immutable. Weak references never keep an undo array alive.
-const strokes = new WeakMap(), appends = new WeakMap();
+const strokes = new WeakMap(), appends = new WeakMap(), decodedSheets = new WeakMap();
 const PRIME_A = 16777619, PRIME_B = 2246822519;
 function inverse(odd) { let value = odd;for (let i = 0; i < 5; i++) value = Math.imul(value, 2 - Math.imul(odd, value));return value; }
 const INVERSE_A = inverse(PRIME_A), INVERSE_B = inverse(PRIME_B);
@@ -19,6 +19,8 @@ function primeStrokeFingerprints(ink, hashes) {
  if (!Array.isArray(hashes) || hashes.length !== ink.length || !hashes.every(hash => typeof hash === 'string' && /^[a-f0-9]{16}$/.test(hash))) throw Error('Invalid drawing fingerprints.');
  ink.forEach((stroke, i) => strokes.set(stroke, hashes[i]));
 }
+function primeStrokeFingerprint(stroke,hash){if(typeof hash!=='string'||!/^[a-f0-9]{16}$/.test(hash))throw Error('Invalid drawing fingerprint.');strokes.set(stroke,hash);}
 function recordStrokeAppend(previous, next, stroke) { appends.set(next, { previous: new WeakRef(previous), stroke }); }
 function strokeAppend(next) { const link = appends.get(next), previous = link?.previous.deref();return previous && next.length === previous.length + 1 && next[next.length - 1] === link.stroke ? { previous, stroke: link.stroke } : null; }
-module.exports = { fingerprint, hashText, removeSuffix, strokeFingerprint, primeStrokeFingerprints, recordStrokeAppend, strokeAppend };
+const api = { fingerprint, hashText, removeSuffix, strokeFingerprint, primeStrokeFingerprints, primeStrokeFingerprint, recordStrokeAppend, strokeAppend, primeDecodedSheet:(sheet,hashes)=>decodedSheets.set(sheet,hashes), decodedSheet:sheet=>decodedSheets.get(sheet) };
+module.exports = globalThis.NoteMindStrokeSignatures ||= api;

@@ -2,7 +2,6 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {randomUUID, createHash} = require('node:crypto');
 const archiveCodec = require('./archive-codec.cjs');
-const snapshots = require('./snapshot-store.cjs');
 const {keyPath}=require('./path-key.cjs');
 const digest = data => createHash('sha256').update(data).digest('hex');
 const titleOf = text => String(text || '').split(/\r?\n/).map(s => s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`=]/g, '').trim()).find(Boolean)?.slice(0, 100) || 'Untitled';
@@ -100,24 +99,18 @@ class NotesStore {
     // This is an optimization hint only; publication still validates objects before committing a reference.
     try{const info=await archiveCodec.readSnapshot(this.root,last.id,{referencesOnly:true});for(const hash of info.knownHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}}catch{}
    }
-   let prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()],previousHash:last?.hash||null}),verifiedLegacyID=null;
+   const id=randomUUID(),publish=options=>archiveCodec.publishVersion(doc,{root:this.root,id,knownHashes:[...this.snapshotObjects.keys()],...options});let prepared=await publish({previousHash:last?.hash||null}),verifiedLegacyID=null;
    if(prepared.unchanged&&prepared.legacyHash&&!last.storage){
-    let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.manifest.document;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
-    if(sameMetadata)verifiedLegacyID=last.id;else prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()]});
+    let sameMetadata=false;try{const old=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',last.id+'.wm')),{files:false}),current=prepared.documentMetadata;sameMetadata=(old.title||'')===current.title&&(old.id??null)===(current.id??null)&&(old.created??null)===(current.created??null);}catch{}
+    if(sameMetadata)verifiedLegacyID=last.id;else prepared=await publish({});
    }
    const matches=entry=>entry&&(entry.hash===prepared.contentHash||(verifiedLegacyID===entry.id&&prepared.legacyHash&&entry.hash===prepared.legacyHash));
    if(prepared.unchanged){
     const needed=await this.transaction(index=>{const current=index.records[doc.id];return !!current&&!matches((current.versions||[]).at(-1));});
-    if(!needed)return;const legacyHash=prepared.legacyHash;prepared=await archiveCodec.prepareSnapshot(doc,{knownHashes:[...this.snapshotObjects.keys()]});prepared.legacyHash=legacyHash;
+    if(!needed)return;const legacyHash=prepared.legacyHash;prepared=await publish({});prepared.legacyHash=legacyHash;
    }
-   const id=randomUUID();
-   try{await snapshots.publishSnapshot(this.root,id,prepared,this.snapshotObjects);}catch(error){
-    if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;
-    // Hints can become stale after external cleanup. Rebuild missing objects from the current immutable document.
-    this.snapshotObjects.clear();const legacyHash=prepared.legacyHash;prepared=await archiveCodec.prepareSnapshot(doc,{});prepared.legacyHash=legacyHash;
-    await snapshots.publishSnapshot(this.root,id,prepared,this.snapshotObjects);
-   }
-   return this.transaction(index=>{const r=index.records[doc.id];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:new Set(Object.values(prepared.manifest.assets).map(ref=>ref.hash)).size});return id;});
+   for(const hash of prepared.objectHashes){this.snapshotObjects.set(hash,null);while(this.snapshotObjects.size>2048)this.snapshotObjects.delete(this.snapshotObjects.keys().next().value);}
+   return this.transaction(index=>{const r=index.records[doc.id];if(!r)return;const history=r.versions||[];if(matches(history.at(-1)))return;const created=new Date().toISOString();r.versions=history.concat({id,created,label,hash:prepared.contentHash,storage:'snapshot-v1',objectCount:prepared.objectCount});return id;});
   };
   const next=(this.versionPending.get(doc.id)||Promise.resolve()).catch(()=>{}).then(run);this.versionPending.set(doc.id,next);
   try{return await next;}finally{if(this.versionPending.get(doc.id)===next)this.versionPending.delete(doc.id);}

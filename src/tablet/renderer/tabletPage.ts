@@ -19,6 +19,7 @@ import { rotateSheetPoint } from "../shared/orientation"
 import { newID, noTransform, pressureScale, type CanvasItem, type Point, type Rect, type Size } from "@notemind/core"
 import { includeInk, sheetViewport, UNIT_SHEET, validExtent } from './sheetViewport'
 import { recordStrokeAppend } from '../../stroke-signature.js'
+import { strokeBox } from '../../stroke-bounds.js'
 
 /**
  * The sheet is resolution-independent. Points are fractions of the sheet and
@@ -36,17 +37,6 @@ export interface InkStroke {
   points: Point[]
   /** 0…1, one per point; absent for the mouse. */
   pressures?: number[]
-}
-
-const strokeBoxes = new WeakMap<InkStroke, { count: number; x: number; y: number; right: number; bottom: number }>()
-function strokeBox(stroke: InkStroke) {
-  let box = strokeBoxes.get(stroke)
-  if (!box || box.count !== stroke.points.length) {
-    box = { count: stroke.points.length, x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity }
-    for (const p of stroke.points) { box.x = Math.min(box.x, p.x); box.y = Math.min(box.y, p.y); box.right = Math.max(box.right, p.x); box.bottom = Math.max(box.bottom, p.y) }
-    strokeBoxes.set(stroke, box)
-  }
-  return box
 }
 
 /** Distance from a point to a segment. */

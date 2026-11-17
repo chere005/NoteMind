@@ -4,13 +4,15 @@
 - Approved later feature scope: all selection editing/duplication/recolor/width/delete, tool presets/quick switching, zoom/pan/precision, page overview/reordering, cancellable page-by-page large PDF/scan import and essential right-pane PDF reference with editable Wacom markup. Use isolated feature worktrees, integrate one feature at a time, then another bugs/UI-UX/performance panel and final fresh whole-app audits.
 
 - Active 0.37 work: remaining correctness fixes first, measured pipeline bottlenecks and performance fixes next; installed 0.35 stays untouched and 0.36 candidate remains available.
+- Foundation checkpoints are on perf/pipeline-top-three; close/reopen/reclose, recovery generations and external drawing revisions are covered. Archive owned buffers/tokens, worker-local immutable version publication and compact chunked drawing hydration are integrated; memory/latency runs remain preliminary until source freezes.
+- Active dependencies: chunked internal sheet storage replaces full JSON rewrites; dense tile repaint replaces synchronous pressure redraw; global history byte budgets; all findings require fixes and reruns before stability review. PDF reference/import and preset features are developing in isolated branches and are not merged.
 - Required completion gates: independent bugs/UI-UX/performance three-way review and fixes, then three fresh whole-app audits and fixes, then final full validation/build; no known actionable findings left unaddressed.
 - Final requested deliverable: a Claude handoff note in chat identifying exact commit/build, completed scope, before/after workloads/results, audit/test evidence and explicit remaining limitations for independent review.
 
 - 0.36.0 passes 297 Node tests and 43 packaged checks and is a separately validated candidate; do not replace the installed app as part of audit work. Findings, reproductions, performance evidence and remaining work are in `docs/BUG-AUDIT.md`.
 - Tablet paper fills both measured stage dimensions with a uniform canonical viewport; margin ink and backdrop alignment survive autosave, editable insertion and export without reshaping existing strokes.
 - Draft archives embed generation-matched recovery state; pending drawing saves, pen restarts, preferences, image indexes, filters, version previews and exports retain initiating-state ownership.
-- Archive preparation reuses a bounded compressed-byte cache and native CRC; cold compression remains synchronous and is a measured follow-up. PID lock ownership guards do not replace native kernel locking.
+- The 0.36 baseline used synchronous compression and PID ownership guards; the active 0.37 foundation adds bounded archive workers and stable native kernel locks, with independent review and final packaging still pending.
 
 - 0.35.0 removes persistent capture diagnostics and instructional footer prose from the drawing pane; manual access and retry remain in Pen settings.
 - Inserting after a selection spanning multiple images creates a separate page block; it never nests a new page inside an existing graphics pane.

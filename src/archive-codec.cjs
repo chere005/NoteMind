@@ -1,7 +1,7 @@
 const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=require('node:path');
 const {TextEncoder}=require('node:util');
 const {ArchiveAssetClient}=require('./archive-assets.cjs');
-const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned']);
+const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
  const pending=[value],seen=new Set();let bytes=0;
@@ -79,7 +79,9 @@ class ArchiveCodec{
  decode(bytes,options){return this.run('decode',bytes,options);}
  decodeOwned(bytes,options){return this.run('decodeOwned',bytes,options);}
  inspectOwned(bytes,options){return this.run('inspectOwned',bytes,options);}
+ inspectDrawingOwned(bytes){return this.run('inspectDrawingOwned',bytes);}
  prepareSnapshot(doc,options){return this.run('prepareSnapshot',doc,options);}
+ publishVersion(doc,options){return this.run('publishVersion',doc,options);}
  readSnapshot(root,version,options){return this.run('readSnapshot',root,version,options);}
  readCommitted(file,revision){return this.run('readCommitted',file,revision);}
  parseJson(bytes){return this.run('parseJson',bytes);}

@@ -11,7 +11,7 @@ class SheetPersistence{
  }
  request(kind,value){let worker;try{worker=this.start();}catch(error){return Promise.reject(error);}const id=++this.next;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(!this.pending.has(id))return;for(const [key,job]of this.pending)if(job.worker===worker){clearTimeout(job.timer);this.pending.delete(key);job.reject(Error('Drawing persistence timed out. Unsaved drawings remain open.'));}if(this.worker===worker)this.worker=null;void worker.terminate();},this.timeout);this.pending.set(id,{worker,resolve,reject,timer});worker.ref();try{worker.postMessage({id,kind,value});}catch(error){clearTimeout(timer);this.pending.delete(id);if(!this.pending.size)worker.unref();reject(error);}});}
  serial(run){const next=this.queue.catch(()=>{}).then(run);this.queue=next;return next;}
- load(){return this.serial(()=>this.request('load'));}loadState(){return this.serial(()=>this.request('loadState'));}
+ load(){return this.serial(()=>this.request('load'));}loadState(){return this.serial(()=>this.request('loadState'));}loadStateCompact(){return this.serial(()=>this.request('loadStateCompact'));}
  async prepared(kind,value){const pending=this.request(kind,value),worker=this.worker,result=await pending;if(!result.prepared)return result.done?result.answer:result;
   let revision;try{revision=await this.commit(this.file,result.bytes,result.expectedRevision);}catch(error){if(this.worker===worker)await this.request('abort',result.token).catch(()=>{});throw error;}
   // Only this serial main-process commit queue renames the authoritative file. A dead

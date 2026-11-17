@@ -21,7 +21,7 @@ function validateManifest(manifest,{verifyIntegrity=false}={}){
  if(verifyIntegrity&&(Buffer.byteLength(manifest.document.text)!==textBytes||Buffer.byteLength(JSON.stringify(metadataOf(manifest.document)))>ENTRY_LIMIT||manifestChecksum(manifest)!==manifest.checksum))throw Error('Version metadata is damaged.');return manifest;
 }
 // Called in the archive worker. Each asset is decoded/hashed once; known objects are not returned over IPC.
-function prepareSnapshot(doc,{knownHashes=[],previousHash=null}={}){
+function prepareSnapshot(doc,{knownHashes=[],previousHash=null,copyObjectBytes=true}={}){
  if(!doc||typeof doc.text!=='string')throw Error('Invalid version document.');
  const assets={},objects=new Map(),known=new Set(knownHashes),document={text:doc.text,id:doc.id,title:doc.title||'',meta:doc.meta||{},created:doc.created},textBytes=Buffer.byteLength(doc.text);let total=textBytes;
  if(total>ENTRY_LIMIT)throw Error('Version snapshot is too large.');
@@ -30,7 +30,7 @@ function prepareSnapshot(doc,{knownHashes=[],previousHash=null}={}){
  for(const [name,value]of entries){
   if(!validAsset(name)||typeof value!=='string')throw Error('Invalid version asset.');
   const bytes=Buffer.from(value,'base64');validateEntry(name,bytes);if((total+=bytes.length)>TOTAL_LIMIT)throw Error('Version snapshot is too large.');
-  const hash=sha(bytes);assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:Uint8Array.from(bytes)});
+  const hash=sha(bytes);assets[name]={hash,bytes:bytes.length};if(!known.has(hash)&&!objects.has(hash))objects.set(hash,{hash,bytes:copyObjectBytes?Uint8Array.from(bytes):bytes});
  }
  const manifest={format:'notemind-snapshot',version:1,document,assets,textBytes};manifest.checksum=manifestChecksum(manifest);
  // Fingerprint every persisted field, including explicit title/identity/created date.
@@ -61,13 +61,17 @@ async function publishObject(root,object,ref,cache){
   catch(error){if(error.code!=='EEXIST')throw error;await verifiedObject(root,ref,cache);}
  }finally{await fs.unlink(temp).catch(()=>{});}
 }
-async function publishSnapshot(root,id,prepared,cache=new Map()){
- const file=manifestFile(root,id),manifest=validateManifest(prepared?.manifest),objects=new Map();
- const manifestBytes=prepared.manifestBytes;if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
+async function publishSnapshotObjects(root,prepared,cache=new Map()){
+ const manifest=validateManifest(prepared?.manifest),objects=new Map();
  for(const object of prepared.objects||[]){if(!validHash(object?.hash)||objects.has(object.hash))throw Error('Invalid prepared version objects.');objects.set(object.hash,object);}
  const refs=new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref]));
  for(const hash of objects.keys())if(!refs.has(hash))throw Error('Unreferenced prepared version asset.');
  await mapLimit([...refs.values()],8,async ref=>objects.has(ref.hash)?publishObject(root,objects.get(ref.hash),ref,cache):verifiedObject(root,ref,cache));
+}
+async function publishSnapshot(root,id,prepared,cache=new Map()){
+ const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
+ if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
+ await publishSnapshotObjects(root,prepared,cache);
  const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
  // Both document hashing and JSON serialization have already completed in the trusted worker.
  try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
@@ -89,4 +93,4 @@ async function readSnapshot(root,id,{referencesOnly=false,assetResolver}={}){
  }
  const doc=manifest.document;return {text:doc.text,assets,id:doc.id,title:doc.title,meta:doc.meta||{},created:doc.created};
 }
-module.exports={prepareSnapshot,publishSnapshot,readSnapshot,validateManifest,objectFile,manifestFile};
+module.exports={prepareSnapshot,publishSnapshot,publishSnapshotObjects,readSnapshot,validateManifest,objectFile,manifestFile};
