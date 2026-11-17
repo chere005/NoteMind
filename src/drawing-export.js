@@ -87,8 +87,10 @@ function exporter(){if(!shared){shared=new DrawingExporter();globalThis.addEvent
 async function temporary(cost,run){if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');legacy ||= new DrawingExporter({idle:0});const owner=legacy;legacyCount++;legacyBytes+=cost;try{return await run(owner);}finally{legacyCount--;legacyBytes-=cost;if(!legacyCount){owner.dispose();if(legacy===owner)legacy=null;}}}
 function exportDrawingAssets(snapshot,options={}){if((snapshot.backdrop?.length||0)>65536){const geometry=snapshot.strokes.reduce((bytes,stroke)=>bytes+16+stroke.points.length*(stroke.pressures?24:16),24),pixels=options.png===false?0:Math.min(16*1024*1024,options.maxPixels||16*1024*1024),cost=(geometry+snapshot.backdrop.length)*2+Math.ceil(pixels*16/3);return temporary(cost,owner=>owner.run(snapshot,options));}return exporter().run(snapshot,options);}
 async function normalizeGraphicsBytes(bytes,options={}){
- if(graphics.isBinary(bytes)&&bytes.byteLength>=24&&new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(8,true)<=65536)return exporter().normalize(bytes,options);
- return temporary(bytes.byteLength*2,owner=>owner.normalize(bytes,options));
+ if(graphics.isBinary(bytes)&&bytes.byteLength>=24){const header=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);if(header.getUint32(8,true)<=65536&&header.getUint32(12,true)<50000&&header.getUint32(16,true)<50000)return exporter().normalize(bytes,options);}
+ // Retire transient normalization memory before the editable graph is hydrated.
+ // This owner never terminates an unrelated active drawing/export worker.
+ const cost=bytes.byteLength*2;if(legacyCount>=2||legacyBytes+cost>512*1024*1024)throw Error('Another large drawing is opening. Try again shortly.');const owner=new DrawingExporter({idle:0});legacyCount++;legacyBytes+=cost;try{return await owner.normalize(bytes,options)}finally{owner.dispose();legacyCount--;legacyBytes-=cost;}
 }
 async function transformDrawingInk(strokes,from,to,options={}){
  let result;const local=async()=>{const {transformInkBinary}=require('./transform-ink.js');return transformInkBinary(await graphics.encodeBytesAsync({name:'Ink',aspect:1,strokes,backdrop:null},options),from,to,options);};if(typeof Worker==='undefined')result=await local();else try{result=await exporter().transform(strokes,from,to,options);}catch(error){if(options.signal?.aborted)throw error;result=await local();}
