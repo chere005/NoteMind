@@ -95,17 +95,25 @@ async function writeSynced(file,bytes,created){const handle=await fs.open(file,'
 async function assertTemp(file,identity,{stable=false}={}){const named=await fs.lstat(file);if(!named.isFile()||named.isSymbolicLink()||named.dev!==identity.dev||named.ino!==identity.ino||stable&&!sameStat(identity,named))throw Error('Version temporary ownership changed.');return named;}
 async function unlinkTemp(file,identity,options){if(!identity)return;try{await assertTemp(file,identity,options);}catch(error){if(error.code==='ENOENT')return;throw error;}await fs.unlink(file);}
 async function digestHandle(handle,maxBytes){const hash=createHash('sha256'),chunk=Buffer.allocUnsafeSlow(Math.min(256*1024,maxBytes||1));let read=0;try{while(read<maxBytes){const result=await handle.read(chunk,0,Math.min(chunk.length,maxBytes-read),read);if(!result.bytesRead)throw Error('A version asset is damaged.');hash.update(chunk.subarray(0,result.bytesRead));read+=result.bytesRead;}return hash.digest('hex');}finally{discard(chunk);}}
+async function digestBytes(bytes){const hash=createHash('sha256');for(let at=0;at<bytes.length;at+=256*1024){hash.update(bytes.subarray(at,at+256*1024));if(at&&at%(4*1024*1024)===0)await new Promise(setImmediate);}return hash.digest('hex');}
+async function verifiedLinked(file,identity,hash){let handle;try{
+ handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));const stat=await handle.stat();
+ // A new hard link legitimately changes ctime. Its inode and completed payload
+ // stamp must still be ours; verify bytes before accepting the new ctime.
+ if(!stat.isFile()||!['dev','ino','size','mtimeMs'].every(key=>stat[key]===identity[key])||await digestHandle(handle,identity.size)!==hash)throw Error('Version publication ownership changed.');
+ const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('Version publication ownership changed.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);return stat;
+ }finally{await handle?.close();}}
 
 async function verifiedObject(root,ref,cache){
  const file=objectFile(root,ref.hash);let handle;try{
   try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));}catch(error){if(error.code==='ENOENT')throw Object.assign(Error('A version asset is missing.'),{code:'SNAPSHOT_OBJECT_MISSING',hash:ref.hash});throw error;}
   const stat=await handle.stat();if(!stat.isFile()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');if(!sameStat(cache.get(ref.hash),stat)&&await digestHandle(handle,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
-  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return file;
+  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return stat;
  }finally{await handle?.close();}
 }
 async function publishSourceObject(root,object,ref,cache){
  if(!object||object.hash!==ref.hash||object.bytes!==ref.bytes||typeof object.source!=='function')throw Error('Invalid prepared version asset.');
- const file=objectFile(root,ref.hash);try{await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(file));return;}catch(error){if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;}
+ const file=objectFile(root,ref.hash);try{const stat=await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(file));await assertTemp(file,stat,{stable:true});return;}catch(error){if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;}
  const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let handle,identity;
  try{
   handle=await fs.open(temp,'wx');identity=await handle.stat();const digest=createHash('sha256');let total=0;
@@ -114,8 +122,8 @@ async function publishSourceObject(root,object,ref,cache){
   }
   if(total!==ref.bytes||digest.digest('hex')!==ref.hash)throw Error('Version source digest changed.');await handle.sync();const written=await handle.stat();await handle.close();handle=null;
   const named=await fs.lstat(temp);if(!named.isFile()||named.isSymbolicLink()||!sameStat(written,named)||written.dev!==identity.dev||written.ino!==identity.ino||written.size!==ref.bytes)throw Error('Version object identity changed.');
-  try{await fs.link(temp,file);}catch(error){if(error.code!=='EEXIST')throw error;}await verifiedObject(root,ref,cache);
-  await syncHierarchy(root,path.dirname(file));
+  let linked=false;try{await fs.link(temp,file);linked=true;cache.delete(ref.hash);}catch(error){if(error.code!=='EEXIST')throw error;}const verified=linked?await verifiedLinked(file,written,ref.hash):await verifiedObject(root,ref,cache);
+  await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});remember(cache,ref.hash,verified);
  }finally{await handle?.close();await unlinkTemp(temp,identity);}
 }
 async function publishObject(root,object,ref,cache){
@@ -126,9 +134,9 @@ async function publishObject(root,object,ref,cache){
  const file=objectFile(root,ref.hash),temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let identity,complete=false,linked=false;
  try{
   identity=await writeSynced(temp,object.bytes,created=>identity=created);complete=true;await assertTemp(temp,identity,{stable:true});
-  try{await fs.link(temp,file);linked=true;remember(cache,ref.hash,await fs.lstat(file));}
-  catch(error){if(error.code!=='EEXIST')throw error;await verifiedObject(root,ref,cache);}
-  await syncHierarchy(root,path.dirname(file));
+  try{await fs.link(temp,file);linked=true;cache.delete(ref.hash);}
+  catch(error){if(error.code!=='EEXIST')throw error;}const verified=linked?await verifiedLinked(file,identity,ref.hash):await verifiedObject(root,ref,cache);
+  await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});remember(cache,ref.hash,verified);
  }finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
 }
 async function publishSnapshotObjects(root,prepared,cache=new Map()){
@@ -142,9 +150,9 @@ async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}=
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
  if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
  await publishSnapshotObjects(root,prepared,cache);
- const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let identity,complete=false,linked=false;
+ const temp=file+'.'+randomUUID()+'.tmp',expectedHash=await digestBytes(manifestBytes);await fs.mkdir(path.dirname(file),{recursive:true});let identity,complete=false,linked=false;
  // Both document hashing and JSON serialization have already completed in the trusted worker.
- try{identity=await writeSynced(temp,manifestBytes,created=>identity=created);complete=true;await beforePublish?.();await assertTemp(temp,identity,{stable:true});await fs.link(temp,file);linked=true;await syncHierarchy(root,path.dirname(file));}finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
+ try{identity=await writeSynced(temp,manifestBytes,created=>identity=created);complete=true;await beforePublish?.();await assertTemp(temp,identity,{stable:true});await fs.link(temp,file);linked=true;const verified=await verifiedLinked(file,identity,expectedHash);await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});}finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
 }
 async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expectedHash}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});
