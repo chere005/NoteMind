@@ -17,7 +17,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 import { isBoxDrag, type Point, type Rect, type Size } from "@notemind/core"
-import { holdBegins, inContact, penLifted, pressAction, resolvePress } from "./penButtons"
+import { holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, withNative } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
 import {
@@ -34,12 +34,15 @@ import { pagePixelSize, pointOnPage, pointOnView, rectOnView, UNIT_SHEET } from 
 import { canvasPng, type snapshotDrawing } from './drawingSnapshot'
 import graphics from "../../graphics-pane.js"
 import { InkRenderer } from './inkRenderer'
-import {primeStrokeBox} from '../../stroke-bounds.js'
+import {primeStrokeBox,knownStrokeBox} from '../../stroke-bounds.js'
 import {transformDrawingInk} from '../../drawing-export.js'
 import {beginInkMutation,pendingInkMutation,flushInkMutations,registerInkProjection,appendInkStroke,hasPendingInkMutations,createInkActionController,reserveInkStroke,capacityError} from '../../ink-mutations.js'
 import {useInkSelection} from "./useInkSelection"
 import {InkSelectionActions} from "./InkSelectionActions"
-import {certifyFreshStroke} from "../../drawing-history.js"
+import {certifyFreshStroke,prepareFreshStroke} from "../../drawing-history.js"
+import {lineStroke,constrainedEnd} from "../../ink-constraints.cjs"
+import {usePrecisionView} from "./usePrecisionView"
+import {PrecisionControls} from "./PrecisionControls"
 import "./tablet.css"
 
 export interface SurfaceHandle {
@@ -70,7 +73,7 @@ interface Props {
   /** The box changed (fractions of the sheet), or was taken away (null). */
   onBox(rect: Rect | null): void
   /** The page changed (a stroke, an erase, an undo): the buttons may need to update. */
-  onEdited(): void
+  onEdited(owner?: TabletPage): void
   /** A sheet bound to an ink region (regionSheets.ts): the region, in FRACTIONS of the sheet. The rest is shaded and a stroke stops at its edge. */
   frame?: Rect | null
   /** The row of buttons under the box (BoxActions.tsx): Erase, Bring in Writing, Bring in as Drawing Region, Copy Region. */
@@ -96,7 +99,7 @@ type Gesture = { pointerId: number } & (
   // A stroke and an erase belong to the sheet they began on (a key can open another tab while the pen is down).
   // `out`: on a sheet bound to a drawing region, the pen left the region: the stroke was made up to its edge, and a new one
   // begins where it comes back in (nothing is drawn outside the region, nothing is pinned to its border).
-  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;full?:boolean;out?: boolean;bounds:{x:number;y:number;right:number;bottom:number} }
+  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;constraint?:{enabled:boolean;stepDegrees?:number;metric:Point;frame?:Rect|null};full?:boolean;out?: boolean;bounds:{x:number;y:number;right:number;bottom:number} }
   | { kind: "erase"; marked: boolean; page: TabletPage }
   | {
     kind: "box"; mode: "new" | "move" | "resize"
@@ -118,6 +121,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const [backdropTick, setBackdropTick] = useState(0)
   const [dpr, setDpr] = useState(() => (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1))
   const canvas = useRef<HTMLCanvasElement | null>(null)
+  const lineCanvas = useRef<HTMLCanvasElement | null>(null)
+  const bindLineCanvas=useCallback((node:HTMLCanvasElement|null)=>{const old=lineCanvas.current;if(old&&old!==node)old.width=old.height=1;lineCanvas.current=node},[])
+  const pendingLines = useRef(new Map<InkStroke,{page:TabletPage;preview:InkStroke}>())
   const backdrop = useRef<HTMLCanvasElement | null>(null)
   // The visible sheet owns its image independently of the bounded shared LRU.
   const loadedBackdrop = useRef<{file:string;image:HTMLImageElement}|null>(null)
@@ -184,10 +190,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const transformSelection=(g:Extract<Gesture,{kind:'box'}>)=>{
     if(!g.next||!g.origin)return
     dirtyPreview(g);paintVersion.current++;paintedInk.current=null
-    if(!denseInk(g.strokes)){g.page.replace(graphics.transform(g.strokes,g.origin,g.next));latest.current.onEdited();return}
+    if(!denseInk(g.strokes)){g.page.replace(graphics.transform(g.strokes,g.origin,g.next));latest.current.onEdited(g.page);return}
     const from={...g.origin},to={...g.next},source=g.strokes
-    try{const operation=beginInkMutation(g.page,(_strokes:any,signal:AbortSignal)=>transformDrawingInk(source,from,to,{signal}),{onCommit:()=>{if(g.page===latest.current.page)schedule(true);latest.current.onEdited()}});void operation.done.catch((error:any)=>{if(g.page===latest.current.page){schedule(true);latest.current.onBox(g.origin)}reportError(error)})}catch(error){restorePreview(g);latest.current.onBox(g.origin);reportError(error)}
+    try{const operation=beginInkMutation(g.page,(_strokes:any,signal:AbortSignal)=>transformDrawingInk(source,from,to,{signal}),{onCommit:()=>{if(g.page===latest.current.page)schedule(true);latest.current.onEdited(g.page)}});void operation.done.catch((error:any)=>{if(g.page===latest.current.page){schedule(true);latest.current.onBox(g.origin)}reportError(error)})}catch(error){restorePreview(g);latest.current.onBox(g.origin);reportError(error)}
   }
+
+  const linePreview=(g:Extract<Gesture,{kind:'draw'}>):InkStroke=>{const stroke=g.stroke,first=stroke.points[0]!,last=stroke.points.at(-1)!,target=constrainedEnd(first,last,{stepDegrees:g.constraint?.stepDegrees,metric:g.constraint?.metric,frame:g.constraint?.frame});return{colorHex:stroke.colorHex,width:stroke.width,points:stroke.points.length===1?[first]:[first,target],...(stroke.pressures?{pressures:stroke.points.length===1?[stroke.pressures[0]!]:[stroke.pressures[0]!,stroke.pressures.at(-1)!]}:{})}}
 
   const paint = useCallback(() => {
     frame.current = null
@@ -203,6 +211,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if(retained){retained.width=retained.height=1}canvasView.current={page:currentPage,region:{...currentView}}
     context.current ??= element.getContext("2d", { desynchronized: true })
     const ctx = context.current
+    const previewLayer=lineCanvas.current,liveLine=gesture.current;let needsPreview=liveLine?.kind==='draw'&&liveLine.constraint?.enabled&&!liveLine.out;for(const item of pendingLines.current.values())if(item.page===latest.current.page){needsPreview=true;break}
+    if(previewLayer&&needsPreview){if(previewLayer.width!==w)previewLayer.width=w;if(previewLayer.height!==h)previewLayer.height=h;const previewContext=previewLayer.getContext('2d');if(previewContext){previewContext.setTransform(ratio,0,0,ratio,0,0);previewContext.clearRect(0,0,size.current.width,size.current.height);for(const item of pendingLines.current.values())if(item.page===latest.current.page)paintStrokes(previewContext,[item.preview],toPixel,unit(),undefined,0,tint);if(liveLine?.kind==='draw'&&liveLine.constraint?.enabled&&!liveLine.out)paintStrokes(previewContext,[linePreview(liveLine)],toPixel,unit(),undefined,0,tint)}}else if(previewLayer&&(previewLayer.width!==1||previewLayer.height!==1)){previewLayer.width=previewLayer.height=1}
     if (!ctx) return
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     const g = gesture.current
@@ -252,7 +262,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       return
     }
     if((pendingInkMutation(latest.current.page)||pendingStrokes.current.get(latest.current.page)?.size)&&everything.current){
-      if(g?.kind==='draw'&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
+      if(g?.kind==='draw'&&!g.constraint?.enabled&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
       return
     }
     if (everything.current) {
@@ -273,7 +283,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           const complete=await paintStrokesYielding(ctx,scene.strokes,toPixel,unit(),undefined,0,tint,{cancelled:()=>!valid(),yieldControl:graphics.yieldTask})
           if(complete&&valid()){paintedInk.current={page:current,strokes:scene.strokes,key};rasterPending.current=false;extraDirty.current.splice(0,dirtyCount)}
         })
-        if(g?.kind==='draw'&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
+        if(g?.kind==='draw'&&!g.constraint?.enabled&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
         return
       }
       raster.current?.dispose();raster.current=null;rasterPending.current=false;lastDense.current=false
@@ -281,14 +291,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       ctx.clearRect(0, 0, element.width, element.height)
       paintStrokes(ctx, latest.current.page.strokes, toPixel, unit(), undefined, 0, tint)
       // A stroke under the pen is repainted whole after a resize or an erase.
-      if (g?.kind === "draw" && !g.out) {
+      if (g?.kind === "draw" && !g.constraint?.enabled && !g.out) {
         paintStrokes(ctx, [g.stroke], toPixel, unit(), undefined, 0, tint)
         g.drawn = g.stroke.points.length
       }
       paintedInk.current={page:current,strokes:current.strokes,key}
       return
     }
-    if (g?.kind === "draw" && g.stroke.points.length > g.drawn) {
+    if (g?.kind === "draw" && !g.constraint?.enabled && g.stroke.points.length > g.drawn) {
       // Only the segments that are new since the last frame.
       paintStrokes(ctx, [g.stroke], toPixel, unit(), undefined, g.drawn, tint)
       g.drawn = g.stroke.points.length
@@ -302,7 +312,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }, [paint])
 
   const commitStrokeNow=(g:Extract<Gesture,{kind:'draw'}>)=>{
-    primeStrokeBox(g.stroke,g.bounds)
+    if(!knownStrokeBox(g.stroke))primeStrokeBox(g.stroke,g.bounds)
     const before=g.page.strokes
     committingStroke.current=true
     try{g.page.add(g.stroke)}finally{committingStroke.current=false}
@@ -313,21 +323,23 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   const commitStroke=(g:Extract<Gesture,{kind:'draw'}>)=>{
     primeStrokeBox(g.stroke,g.bounds)
-    const owned={...g},owner=g.page;let pending=false
-    const completed=()=>{const held=pendingStrokes.current.get(owner);held?.delete(owned.stroke);if(held&&!held.size)pendingStrokes.current.delete(owner);if(pending){if(owner===latest.current.page)schedule(true);latest.current.onEdited()}}
-    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,commit:()=>commitStrokeNow(owned),onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){reportError(error)}
+    const owned={...g},source=g.stroke,owner=g.page;let pending=false
+    if(g.constraint?.enabled)pendingLines.current.set(source,{page:owner,preview:linePreview(g)})
+    const completed=()=>{const held=pendingStrokes.current.get(owner);held?.delete(source);pendingLines.current.delete(source);if(held&&!held.size)pendingStrokes.current.delete(owner);if(pending){if(owner===latest.current.page)schedule(true);latest.current.onEdited(owner)}}
+    try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,prepare:g.constraint?.enabled?(stroke,options)=>prepareFreshStroke(stroke,value=>lineStroke(value,{...options,stepDegrees:g.constraint!.stepDegrees,metric:g.constraint!.metric,frame:g.constraint!.frame})):undefined,commit:candidate=>{owned.stroke=candidate;if(g.constraint?.enabled){owned.drawn=0;commitStrokeNow(owned);if(owner===latest.current.page)schedule(true)}else commitStrokeNow(owned)},onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){pendingLines.current.delete(source);if(owner===latest.current.page)schedule(true);reportError(error)}
   }
 
   const controllerFor=(owner:TabletPage)=>{
-    let controller=actionControllers.current.get(owner);const callbacks={repaint:()=>{if(owner===latest.current.page)schedule(true)},onEdited:()=>latest.current.onEdited(),onError:reportError}
+    let controller=actionControllers.current.get(owner);const callbacks={repaint:()=>{if(owner===latest.current.page)schedule(true)},onEdited:()=>latest.current.onEdited(owner),onError:reportError}
     if(!controller){controller=createInkActionController(owner,callbacks);actionControllers.current.set(owner,controller)}else controller.attach(callbacks)
     return controller
   }
   useEffect(()=>()=>{actionControllers.current.get(page)?.detach()},[page])
-  const inkSelect=useInkSelection({page,focusRoot:()=>wrap.current,pixelSize:pageSize,widthScale:unit,finish:()=>finishGesture.current(),onError:reportError,onEdited:owner=>{if(owner===latest.current.page)schedule(true);latest.current.onEdited()}})
+  const inkSelect=useInkSelection({page,focusRoot:()=>wrap.current,pixelSize:pageSize,widthScale:unit,finish:()=>finishGesture.current(),onError:reportError,onEdited:owner=>{if(owner===latest.current.page)schedule(true);latest.current.onEdited(owner)}})
 
 
   const inkSelectionRef=useRef(inkSelect);inkSelectionRef.current=inkSelect
+  const precision=usePrecisionView({page,focusRoot:()=>wrap.current,beforeChange:()=>finishGesture.current(),onError:reportError,onViewport:view=>{viewport.current=view;setFit({x:0,y:0,width:size.current.width,height:size.current.height,viewport:view});schedule(true)}})
 
   useEffect(() => {
     const element = host.current
@@ -336,7 +348,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const measure = () => {
       const rect = elementSize(element)
       // All available paper is writable. Only the viewport expands: canonical ink and its history never stretch.
-      const sheetView = latest.current.page.fitViewport(rect)
+      const baseView = latest.current.page.fitViewport(rect)
+      const sheetView = rect.width>0&&rect.height>0?precision.configure(baseView,rect,latest.current.page.aspect):baseView
       viewport.current = sheetView
       const box = { x: 0, y: 0, width: rect.width, height: rect.height, viewport: sheetView }
       size.current = { width: box.width, height: box.height }
@@ -538,12 +551,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
             await graphics.yieldTask()
           }
           if(!input.ended&&!input.cancelled)break
-          if(input.marked)latest.current.onEdited()
+          if(input.marked)latest.current.onEdited(input.page)
         }else if(!input.cancelled){
           const first=input.points[0],last=input.points[input.points.length-1],origin=input.origin,hit=origin?hitBox(origin,first.unit,input.pixelSize):null,dragged=input.dragged
           if(dragged&&origin&&hit){const target=hit==='inside'?moveBox(origin,last.unit.x-first.unit.x,last.unit.y-first.unit.y,input.view):resizeBox(origin,hit as BoxHandle,last.unit,input.pixelSize,MIN_BOX_PX,input.view)
-            if(denseInk(input.page.strokes)){let applied:Map<InkStroke,InkStroke|null>|null=null;const op=beginInkMutation(input.page,async(strokes:any,signal:AbortSignal)=>{applied=await transformDrawingInk(strokes,origin,target,{signal});return applied},{onCommit:()=>latest.current.onEdited()});const cancel=()=>op.cancel();input.controller.signal.addEventListener('abort',cancel,{once:true});try{await op.done;if(applied)for(const [a,b]of applied)replacements.set(a,b)}finally{input.controller.signal.removeEventListener('abort',cancel)}}
-            else{const before=input.page.strokes,next=graphics.transform(before,origin,target);before.forEach((stroke,index)=>{if(stroke!==next[index])replacements.set(stroke,next[index]!)});input.page.replace(next);latest.current.onEdited()}
+            if(denseInk(input.page.strokes)){let applied:Map<InkStroke,InkStroke|null>|null=null;const op=beginInkMutation(input.page,async(strokes:any,signal:AbortSignal)=>{applied=await transformDrawingInk(strokes,origin,target,{signal});return applied},{onCommit:()=>latest.current.onEdited(input.page)});const cancel=()=>op.cancel();input.controller.signal.addEventListener('abort',cancel,{once:true});try{await op.done;if(applied)for(const [a,b]of applied)replacements.set(a,b)}finally{input.controller.signal.removeEventListener('abort',cancel)}}
+            else{const before=input.page.strokes,next=graphics.transform(before,origin,target);before.forEach((stroke,index)=>{if(stroke!==next[index])replacements.set(stroke,next[index]!)});input.page.replace(next);latest.current.onEdited(input.page)}
             if(input.page===latest.current.page)latest.current.onBox(target)
           }else if(input.page===latest.current.page){const made=boxFromPoints(first.unit,last.unit);latest.current.onBox(dragged&&made.width*input.pixelSize.width>MIN_BOX_PX&&made.height*input.pixelSize.height>MIN_BOX_PX?made:null)}
         }
@@ -566,17 +579,18 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
     const pen = event.pointerType === "pen"
     if (pen) touching.current = inContact(event)
-    if (inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
+    if (precision.pendingGesture()||inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return
     event.preventDefault()
-    const press=resolvePress(event,sheetPressSettings());let action=press.kind
+    const press=resolvePress(event,sheetPressSettings());let action=press.kind;if(precision.panArmed&&!slotOf(withNative(event))&&!event.ctrlKey&&!event.metaKey)action='pan'
     // Nothing to do here: a side button pressed in the air (its double tap is the runtime's, penActions.ts), or Pan.
-    if (action === "ignore" || action === "pan") return
+    if (action === "ignore") return
     wrap.current?.focus({ preventScroll: true })
     // Keep the gesture when the pointer strays past the edge (a synthetic event has no pointer to capture: the feed keeps the target itself).
     try { wrap.current?.setPointerCapture(event.pointerId) } catch { /* not an active pointer */ }
     // Pen and mouse both follow the active drawing tool.
     const { px, unit: point, raw, inside } = at(event)
+    if(action==='pan'){precision.beginPan(event,px);return}
     // A bound sheet: the shaded margin round the region takes no stroke.
     if (action === "draw" && !inside) return
     if(action==='select'&&!latest.current.box&&!(event.pointerType==='mouse'&&(event.button===2||(event.buttons&2)!==0))){if(inkSelect.begin(event,{point:latest.current.regionBox?raw:point,px},press)){latest.current.onBox(null);return}}
@@ -601,7 +615,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       let reservation:ReturnType<typeof reserveInkStroke>;try{reservation=reserveInkStroke(latest.current.page);fullPages.current.delete(latest.current.page)}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY')reportCapacity(latest.current.page);else reportError(error);return}
       const pressure = event.pressure > 0 ? event.pressure : 0.5
       gesture.current = {
-        reservation,kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
+        reservation,constraint:{enabled:precision.line||event.shiftKey,stepDegrees:event.shiftKey?(precision.angle||15):precision.angle||undefined,frame:latest.current.regionBox?{...latest.current.regionBox}:null,metric:{x:Math.max(1,pageSize().width),y:Math.max(1,pageSize().height)}},kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
         stroke: certifyFreshStroke({
           colorHex: latest.current.colour,
           width: latest.current.width * SHEET_REF / Math.max(1, pageSize().width),
@@ -614,6 +628,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const move = (event: PointerEvent) => {
+    if(precision.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}precision.movePan(event,at(event).px);return}
     if(inkSelect.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}const all=event.getCoalescedEvents?.()||[];for(const sampleEvent of all.length?all:[event]){const sample=at(sampleEvent);inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px})}return}
     const deferred=pendingInput(event);if(deferred){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}rememberInput(deferred,event);return}
     const g = gesture.current
@@ -633,7 +648,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       if (event.pointerType !== "pen" && wrap.current) {
         const current = latest.current.box
         const hit = current ? hitBox(current, at(event).unit, pageSize()) : null
-        wrap.current.style.cursor = tools.eraser ? "crosshair" : hit ? CURSORS[hit] : "crosshair"
+        wrap.current.style.cursor = precision.panArmed?"grab":tools.eraser ? "crosshair" : hit ? CURSORS[hit] : "crosshair"
       }
       return
     }
@@ -665,7 +680,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           g.out = true
           commitStroke(g)
           schedule(true)
-          latest.current.onEdited()
+          latest.current.onEdited(g.page)
         }
       }
       schedule()
@@ -687,6 +702,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const up = (event: PointerEvent) => {
+    if(precision.active(event.pointerId)){if(event.type!=='pointercancel')precision.movePan(event,at(event).px);precision.endPan();touching.current=false;try{wrap.current?.releasePointerCapture(event.pointerId)}catch{};return}
     if(inkSelect.active(event.pointerId)){const sample=at(event);if(event.type!=='pointercancel')inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px});inkSelect.end(event.type==='pointercancel');touching.current=false;try{wrap.current?.releasePointerCapture(event.pointerId)}catch{};return}
     const deferred=pendingInput(event);if(deferred){if(event.type!=='pointercancel'){const here=at(event),point=latest.current.regionBox?here.raw:here.unit;if(!deferred.lastSample||deferred.lastSample.x!==point.x||deferred.lastSample.y!==point.y)rememberInput(deferred,event)}deferred.ended=true;deferred.cancelled ||= event.type==='pointercancel';if(deferred.cancelled)deferred.controller.abort();touching.current=false;void drainInputs();return}
     if (event.pointerType === "pen" && (event.type === "pointerup" || event.type === "pointercancel")) touching.current = false
@@ -717,9 +733,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       commitStroke(g)
       // Begun on a sheet that is no longer open: it went to that sheet, and this one is painted as it is.
       if (g.page !== latest.current.page) schedule(true)
-      latest.current.onEdited()
+      latest.current.onEdited(g.page)
     } else if (g.kind === "erase") {
-      if (g.marked) latest.current.onEdited()
+      if (g.marked) latest.current.onEdited(g.page)
     } else if (g.dragged) {
       if (g.mode === "move" || g.mode === "resize") {
         if (event.type === "pointercancel") {restorePreview(g);latest.current.onBox(g.origin)}
@@ -745,6 +761,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   // A source/document switch can remove the surface before its captured pointer lifts.
   finishGesture.current = () => {
+    precision.endPan()
     inkSelect.finish()
     for(const input of deferredInputs.current)input.ended=true
     void drainInputs()
@@ -756,7 +773,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (!g) return
     if (g.kind === "draw" && !g.out) commitStroke(g)
     if(g.kind==='box'){if(g.dragged&&g.next&&(g.mode==='move'||g.mode==='resize')){transformSelection(g)}else if(g.page===latest.current.page)restorePreview(g);releasePreview(g);setBoxing(false);if(g.page===latest.current.page)schedule(true)}
-    if ((g.kind === "draw" && !g.out) || (g.kind === "erase" && g.marked)) latest.current.onEdited()
+    if ((g.kind === "draw" && !g.out) || (g.kind === "erase" && g.marked)) latest.current.onEdited(g.page)
   }
 
   /**
@@ -787,7 +804,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const erasing = tools.eraser
-  const selectedMembership=inkSelect.controller.bits
+  const selectedMembership=inkSelect.controller.bits,selectionWidthScale=unit()
   const selectedAction=(action:any)=>{if(inkSelect.controller.bits===selectedMembership)void inkSelect.run(action)}
   const selectedInk=inkSelect.bounds?rectOnView(inkSelect.bounds,fit.viewport):null
   const lassoPoints=inkSelect.lasso.map(point=>pointOnView(point,fit.viewport)).map(point=>`${point.x*1000},${point.y*1000}`).join(' ')
@@ -798,8 +815,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
          onPointerMove={(event) => { lastAt.current = { x: event.clientX, y: event.clientY } }}
          onPointerDown={(event) => { if (event.target === host.current) latest.current.onBox(null) }}>
       <div className="tablet" ref={wrap} tabIndex={0} data-tablet="surface" data-paper={paper.kind} data-paper-colour={paper.colour}
-           data-sheet-viewport={JSON.stringify(fit.viewport)}
-           style={{ cursor: erasing ? "crosshair" : "crosshair", left: fit.x, top: fit.y, width: fit.width, height: fit.height,
+           data-sheet-viewport={JSON.stringify(fit.viewport)} data-precision-zoom={precision.zoom}
+           style={{ cursor: precision.panning?"grabbing":precision.panArmed?"grab":"crosshair", left: fit.x, top: fit.y, width: fit.width, height: fit.height,
              backgroundColor: colourOfPaper(paper.colour).paper }}
            onPointerEnter={(event) => enter(event)}
            onPointerLeave={() => { hovered.current = false }}
@@ -811,6 +828,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         {/* The ink is first in the tree (what reads "the sheet's canvas" reads the ink); the paper sits under it by z-order. */}
         <canvas ref={canvas} className="ink" data-layer="ink" style={{ width: "100%", height: "100%" }} />
         <canvas ref={backdrop} className="paper" data-layer="paper" style={{ width: "100%", height: "100%" }} />
+        <canvas ref={bindLineCanvas} className="line-preview" data-layer="line-preview" style={{width:"100%",height:"100%"}}/>
         {(selectedInk&&inkSelect.count>0||lassoPoints)&&<svg className="ink-selection-outline" data-ink-selection="outline" viewBox="0 0 1000 1000" preserveAspectRatio="none">{selectedInk&&inkSelect.count>0&&<rect x={selectedInk.x*1000} y={selectedInk.y*1000} width={Math.max(selectedInk.width*1000,1)} height={Math.max(selectedInk.height*1000,1)}/>} {lassoPoints&&<path d={'M'+lassoPoints.replaceAll(' ',' L')+' Z'}/>}</svg>}
         {shownRegion && (
           <div className="box-clip">
@@ -830,7 +848,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           </div>
         )}
       </div>
-      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*unit()} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/unit()})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
+      <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>
+      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
         <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}
