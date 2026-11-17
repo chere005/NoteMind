@@ -23,9 +23,16 @@ function decodeLeaf(bytes){
  for(let i=0;i<count;i++){const chunk=metadata.chunks[bytes.readUInt32LE(offset+20)],flags=bytes.readUInt32LE(offset+28),record={id:bytes.readDoubleLE(offset),hash:bytes.readUInt32LE(offset+8).toString(16).padStart(8,'0')+bytes.readUInt32LE(offset+12).toString(16).padStart(8,'0'),points:bytes.readUInt32LE(offset+16),chunk,strokeIndex:bytes.readUInt32LE(offset+24),...(flags&1?{pressure:true}:{})};if(flags>1)throw Error('Invalid drawing order flags.');validRecord(record);records.push(record);seen+=record.points;offset+=32;}
  if(seen!==points||seen>MAX_POINTS)throw Error('Invalid drawing point count.');return {kind:'leaf',height:1,count,points,records};
 }
+// Cache decoded ownership, not wire bytes. Allow for wide/cons strings, boxed
+// numbers, spare array capacity and property storage; shared chunk refs count once.
+function retainedNodeBytes(node,limit=Infinity){
+ const seen=new Set(),pending=[node];let bytes=0;
+ while(pending.length){const value=pending.pop();if(value==null||typeof value==='boolean')continue;if(typeof value==='string'){bytes+=64+value.length*2;}else if(typeof value==='number'){bytes+=16;}else if(typeof value!=='object')return Infinity;else if(!seen.has(value)){seen.add(value);if(ArrayBuffer.isView(value)){bytes+=128;pending.push(value.buffer);}else if(value instanceof ArrayBuffer){bytes+=128+value.byteLength;}else{const array=Array.isArray(value),prototype=Object.getPrototypeOf(value);if(!array&&prototype!==Object.prototype&&prototype!==null)return Infinity;bytes+=array?64+value.length*16:128;if(bytes>limit)return bytes;for(const key of Reflect.ownKeys(value)){if(array&&key==='length')continue;const property=Object.getOwnPropertyDescriptor(value,key);if(typeof key!=='string'||!property||!Object.hasOwn(property,'value'))return Infinity;if(!array||!(/^(0|[1-9][0-9]*)$/.test(key)&&Number(key)<value.length))bytes+=32+key.length*2;if(bytes>limit)return bytes;pending.push(property.value);}}}if(bytes>limit)return bytes;
+ }return bytes;
+}
 class SheetOrderIndex{
- constructor(packs,{maxCacheBytes=8*1024*1024,maxCacheEntries=512}={}){Object.assign(this,{packs,maxCacheBytes,maxCacheEntries});this.cache=new Map();this.cacheBytes=0;}
- remember(ref,node){const prior=this.cache.get(ref.sha256),bytes=ref.rawBytes??ref.bytes;if(prior)this.cacheBytes-=prior.bytes;this.cache.delete(ref.sha256);this.cache.set(ref.sha256,{node,bytes});this.cacheBytes+=bytes;for(const [hash,value]of this.cache){if(this.cacheBytes<=this.maxCacheBytes&&this.cache.size<=this.maxCacheEntries)break;this.cache.delete(hash);this.cacheBytes-=value.bytes;}}
+ constructor(packs,{maxCacheBytes=8*1024*1024,maxCacheEntries=512}={}){Object.assign(this,{packs,maxCacheBytes,maxCacheEntries});this.cache=new Map();this.cacheBytes=0;this.cacheRecords=0;}
+ remember(ref,node){const prior=this.cache.get(ref.sha256),bytes=320+retainedNodeBytes(node,this.maxCacheBytes);if(prior){this.cacheBytes-=prior.bytes;this.cacheRecords-=prior.records;}this.cache.delete(ref.sha256);if(bytes>this.maxCacheBytes||this.maxCacheEntries<=0)return;const records=node.records?.length||0;this.cache.set(ref.sha256,{node,bytes,records});this.cacheBytes+=bytes;this.cacheRecords+=records;for(const [hash,value]of this.cache){if(this.cacheBytes<=this.maxCacheBytes&&this.cache.size<=this.maxCacheEntries)break;this.cache.delete(hash);this.cacheBytes-=value.bytes;this.cacheRecords-=value.records;}}
  async leaf(records){const ref=await this.packs.publish(encodeLeaf(records)),node={kind:'leaf',height:1,count:records.length,points:records.reduce((n,r)=>n+r.points,0),records:records.slice()};this.remember(ref,node);return {ref,count:node.count,points:node.points,height:1,packFilter:packFilter(ref,null,records)};}
  async branch(children){
   if(!children.length||children.length>FANOUT)throw Error('Invalid drawing index branch.');const height=children[0].height+1,count=children.reduce((n,c)=>n+c.count,0),points=children.reduce((n,c)=>n+c.points,0);for(const child of children){descriptor(child);if(child.height!==height-1)throw Error('Invalid drawing index height.');}
@@ -62,7 +69,7 @@ class SheetOrderIndex{
  async *records(root,ancestors=new Set(),options={}){
   options.work?.check();descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root,options);options.work?.check();if(node.kind==='leaf'){for(const record of node.records){options.work?.check();yield record;if(options.work?.poll())await options.work.pause();}return;}for(const child of node.children){options.work?.check();yield*this.records(child,path,options);}
  }
- stats(){return {cacheBytes:this.cacheBytes,cacheEntries:this.cache.size};}
- clear(){this.cache.clear();this.cacheBytes=0;}
+ stats(){return {cacheBytes:this.cacheBytes,cacheEntries:this.cache.size,cacheRecords:this.cacheRecords};}
+ clear(){this.cache.clear();this.cacheBytes=0;this.cacheRecords=0;}
 }
-module.exports={SheetOrderIndex,encodeLeaf,decodeLeaf,validRecord,strokeBytes,descriptor,empty,mayContain,packFilter,LEAF,FANOUT,MAX_STROKES,MAX_POINTS,MAX_NODE};
+module.exports={SheetOrderIndex,encodeLeaf,decodeLeaf,retainedNodeBytes,validRecord,strokeBytes,descriptor,empty,mayContain,packFilter,LEAF,FANOUT,MAX_STROKES,MAX_POINTS,MAX_NODE};
