@@ -1,6 +1,6 @@
 // A worker-only immutable file cache. Records are branded objects; paths never leave this owner.
 const fs=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto');
-const {createSpoolDirectory,RawSpoolJournal}=require('./archive-raw-owner.cjs');
+const {createSpoolDirectory,RawSpoolJournal,ownerLost}=require('./archive-raw-owner.cjs');
 const changed=cause=>Object.assign(Error('Private archive asset storage changed.'),{code:'ARCHIVE_RAW_SPOOL_CHANGED',cause});
 const cancelled=()=>Object.assign(Error('Archive asset read cancelled.'),{name:'AbortError'});
 const discard=bytes=>{if(bytes?.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function')try{bytes.buffer.transfer(0)}catch{}};
@@ -10,8 +10,8 @@ function checkDirectory(io,directory,identity){const current=directoryIdentity(i
 function unlinkOwned(io,file,expected){const stat=io.lstatSync(file,{bigint:true});if(!stat.isFile()||stat.isSymbolicLink()||signature(stat)!==signature(expected))throw changed();io.unlinkSync(file);}
 class RawAssetSpool{
  #records=new Map();#reader=null;#io;#directory;#identity;#journal;
- constructor(directory,{io=fs,uuid=randomUUID,authority}={}){if(typeof directory!=='string'||!path.isAbsolute(directory))throw Error('Invalid private archive directory.');this.#identity=directoryIdentity(io,directory);this.#directory=directory;this.#io=io;this.#journal=new RawSpoolJournal(directory,{io,authority});this.uuid=uuid;}
- #assertDirectory(){checkDirectory(this.#io,this.#directory,this.#identity);this.#journal.check();}
+ constructor(directory,{io=fs,uuid=randomUUID,authority,journalQuota}={}){if(typeof directory!=='string'||!path.isAbsolute(directory))throw Error('Invalid private archive directory.');try{this.#identity=directoryIdentity(io,directory);}catch(error){throw ownerLost(error);}this.#directory=directory;this.#io=io;this.#journal=new RawSpoolJournal(directory,{io,authority,...journalQuota});this.uuid=uuid;}
+ #assertDirectory(){try{checkDirectory(this.#io,this.#directory,this.#identity);this.#journal.check();}catch(error){throw ownerLost(error);}}
  get count(){return this.#records.size;}
  get bytes(){let total=0;for(const record of this.#records.keys())total+=record.bytes;return total;}
  put(bytes,{sha256}={}){
@@ -20,8 +20,8 @@ class RawAssetSpool{
   }catch(error){if(fd!==undefined)try{this.#io.closeSync(fd)}catch{}if(created)try{this.#assertDirectory();unlinkOwned(this.#io,file,ownedStat);}catch(cleanup){if(cleanup.code!=='ENOENT'){cleanup.cause=error;throw cleanup;}}throw error;}
  }
  #entry(record){const entry=this.#records.get(record);if(!entry)throw Error('Private archive asset is unavailable.');return entry;}
- #verify(record,fd){const entry=this.#entry(record);try{this.#assertDirectory();const opened=this.#io.fstatSync(fd,{bigint:true}),named=this.#io.lstatSync(entry.file,{bigint:true});if(!opened.isFile()||!named.isFile()||named.isSymbolicLink()||signature(opened)!==entry.signature||signature(named)!==entry.signature)throw changed();}catch(error){if(error.code==='ARCHIVE_RAW_SPOOL_CHANGED')throw error;throw changed(error);}}
- #open(record){const entry=this.#entry(record);let fd;try{this.#assertDirectory();fd=this.#io.openSync(entry.file,this.#io.constants.O_RDONLY|(this.#io.constants.O_NOFOLLOW||0)|(this.#io.constants.O_NONBLOCK||0));this.#verify(record,fd);return fd;}catch(error){if(fd!==undefined)try{this.#io.closeSync(fd)}catch{}if(error.code==='ARCHIVE_RAW_SPOOL_CHANGED')throw error;throw changed(error);}}
+ #verify(record,fd){const entry=this.#entry(record);try{this.#assertDirectory();const opened=this.#io.fstatSync(fd,{bigint:true}),named=this.#io.lstatSync(entry.file,{bigint:true});if(!opened.isFile()||!named.isFile()||named.isSymbolicLink()||signature(opened)!==entry.signature||signature(named)!==entry.signature)throw changed();}catch(error){if(['ARCHIVE_RAW_SPOOL_CHANGED','ARCHIVE_RAW_OWNER_LOST'].includes(error.code))throw error;throw changed(error);}}
+ #open(record){const entry=this.#entry(record);let fd;try{this.#assertDirectory();fd=this.#io.openSync(entry.file,this.#io.constants.O_RDONLY|(this.#io.constants.O_NOFOLLOW||0)|(this.#io.constants.O_NONBLOCK||0));this.#verify(record,fd);return fd;}catch(error){if(fd!==undefined)try{this.#io.closeSync(fd)}catch{}if(['ARCHIVE_RAW_SPOOL_CHANGED','ARCHIVE_RAW_OWNER_LOST'].includes(error.code))throw error;throw changed(error);}}
  #fill(record,fd,bytes,offset){this.#verify(record,fd);let at=0;while(at<bytes.byteLength){const used=this.#io.readSync(fd,bytes,at,bytes.byteLength-at,offset+at);if(!used)throw changed();at+=used;}this.#verify(record,fd);return bytes;}
  verify(record){const fd=this.#open(record);this.#io.closeSync(fd);return true;}
  abandon(record){if(this.#reader?.record===record)this.closeReads();return this.#records.delete(record);}
