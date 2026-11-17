@@ -20,7 +20,7 @@ async function decodeScanPNG(bytes,{check=()=>{}}={}){
  if(colour===3&&(!palette||palette.length/3>1<<depth||transparent&&transparent.length>palette.length/3))throw Error('Invalid scan PNG palette.');
  const max=depth===16?65535:(1<<depth)-1,bits=channels*depth,bpp=Math.max(1,Math.ceil(bits/8)),passes=(interlace?PASSES:[[0,0,1,1]]).map(([x,y,dx,dy])=>({x,y,dx,dy,w:Math.ceil((width-x)/dx),h:Math.ceil((height-y)/dy)})).filter(p=>p.w>0&&p.h>0);
  const expected=passes.reduce((sum,p)=>sum+(Math.ceil(p.w*bits/8)+1)*p.h,0);if(!Number.isSafeInteger(expected)||expected>136*1024*1024)throw Error('Scan PNG decoded data is too large.');
- const rgbChannel=new Uint8Array(width*height*3),alphaChannel=new Uint8Array(width*height);let hasAlpha=false,passIndex=0,rowIndex=0,rowOffset=0,decoded=0,previous=null,filtered=null;
+ const color=require('./scan-color.cjs').readPngColor(bytes,{check}),rgbChannel=new Uint8Array(width*height*3),alphaChannel=new Uint8Array(width*height);let hasAlpha=false,passIndex=0,rowIndex=0,rowOffset=0,decoded=0,previous=null,filtered=null;
  function newRow(){const pass=passes[passIndex];if(pass){const stride=Math.ceil(pass.w*bits/8);filtered=new Uint8Array(stride+1);if(!previous||previous.length!==stride)previous=new Uint8Array(stride);}}
  newRow();
  function placeRow(){
@@ -38,6 +38,6 @@ async function decodeScanPNG(bytes,{check=()=>{}}={}){
  function* chunks(){for(let at=dataStart;at<dataEnd;){const length=bytes.readUInt32BE(at);for(let offset=0;offset<length;offset+=65536){check();yield bytes.subarray(at+8+offset,at+8+Math.min(length,offset+65536));}at+=12+length;}}
  const input=Readable.from(chunks(),{objectMode:false,highWaterMark:65536}),decoder=zlib.createInflate({chunkSize:65536});input.on('error',error=>decoder.destroy(error));input.pipe(decoder);
  try{for await(const chunk of decoder){check();decoded+=chunk.length;if(decoded>expected)throw Error('Scan PNG pixels exceed its declared dimensions.');for(let at=0;at<chunk.length;){if(!filtered)throw Error('Scan PNG has extra pixels.');const take=Math.min(chunk.length-at,filtered.length-rowOffset);filtered.set(chunk.subarray(at,at+take),rowOffset);at+=take;rowOffset+=take;if(rowOffset===filtered.length)placeRow();}}if(decoder.bytesWritten!==compressedBytes)throw Error('Scan PNG has trailing compressed data.');if(decoded!==expected||passIndex!==passes.length||rowOffset)throw Error('Scan PNG pixels do not match its declared dimensions.');}finally{input.destroy();decoder.destroy();}
- return {width,height,bitsPerComponent:8,rgbChannel,alphaChannel:hasAlpha?alphaChannel:undefined};
+ return {width,height,color,bitsPerComponent:8,rgbChannel,alphaChannel:hasAlpha?alphaChannel:undefined};
 }
 module.exports={decodeScanPNG,crc};
