@@ -92,8 +92,8 @@ async function setup(){
    build.onLoad({filter:/\/tablet-entry\.tsx$/},async args=>{
     let contents=await fs.promises.readFile(args.path,'utf8');
     const marker=' const [loaded,setLoaded]';assert.ok(contents.includes(marker));
-    contents=contents.replace(marker,' window.fixtureSetSource=source=>setSource(source);window.fixtureNewPage=()=>new TabletPage(1);window.fixturePenCommand=runPenAction;window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current,pdf:pdfViews.current});\n'+marker);
-    const overviewMarker=' const chooseOverview=';assert.ok(contents.includes(overviewMarker));contents=contents.replace(overviewMarker,' window.fixtureOverview=overview;\n'+overviewMarker);
+    contents=contents.replace(marker,' window.fixtureSetSource=source=>setSource(source);window.fixtureSetVisibility=value=>setShowing(value);window.fixtureSetDocument=value=>setDocumentId(value);window.fixtureNewPage=()=>new TabletPage(1);window.fixturePenCommand=runPenAction;window.fixtureObserveOwners({camera:cameraSession.current,previews:previewModels.current,sheets:sheetModels.current,pdf:pdfViews.current});\n'+marker);
+    const overviewMarker=' const chooseOverview=';assert.ok(contents.includes(overviewMarker));contents=contents.replace(overviewMarker,' window.fixtureOverview=overview;window.fixtureCloseOverview=closeOverview;window.fixtureOverviewEpoch=()=>overviewIntent.current.epoch;\n'+overviewMarker);
     const mount="createRoot(document.getElementById('tablet-root')).render(<App/>);";assert.ok(contents.includes(mount));
     contents=contents.replace(mount,"const fixtureRoot=createRoot(document.getElementById('tablet-root'));window.fixtureUnmount=()=>fixtureRoot.unmount();fixtureRoot.render(<App/>);");
     return{contents,loader:'tsx',resolveDir:path.dirname(args.path)};
@@ -116,6 +116,26 @@ async function run(){
  await evaluate('fixtureOwners.camera.flush()');
  assert.equal(await evaluate('fixtureCameraLoads'),1);
  results.push({phase,loads:1,mounts:await evaluate('fixtureMounts')});
+ phase='overview-pending-intent';
+ for(const transition of ['double','close','source','document','visibility']){
+  await evaluate(`(()=>{const camera=fixtureOwners.camera,f={original:camera.flush,calls:0,settled:0};f.gate=new Promise(resolve=>f.release=resolve);camera.flush=function(...args){f.calls++;return f.gate.then(()=>f.original.apply(camera,args)).finally(()=>f.settled++)};window.fixturePendingOverview=f;document.querySelector('[data-page-overview-toggle]').click();})()`);
+  await until('fixturePendingOverview.calls>0');const epoch=await evaluate('fixtureOverviewEpoch()');
+  if(transition==='double')await evaluate(`document.querySelector('[data-page-overview-toggle]').click()`);
+  else if(transition==='close')await evaluate('fixtureCloseOverview(document)');
+  else if(transition==='source')await evaluate(`fixtureSetSource('tablet')`);
+  else if(transition==='document')await evaluate(`fixtureSetDocument('fixture-pending-document')`);
+  else await evaluate('fixtureSetVisibility(false)');
+  if(!['double','close'].includes(transition))await until('fixtureOverviewEpoch()>'+epoch);
+  await evaluate('fixturePendingOverview.release()');await until('fixturePendingOverview.settled===fixturePendingOverview.calls');
+  assert.equal(await evaluate('!!document.querySelector(".page-overview")'),false);
+  await evaluate('fixtureOwners.camera.flush=fixturePendingOverview.original;void 0');
+  if(transition==='source')await evaluate(`fixtureSetSource('camera')`);
+  if(transition==='document')await evaluate('fixtureSetDocument(null)');
+  if(transition==='visibility')await evaluate('fixtureSetVisibility(true)');
+  if(!['double','close'].includes(transition))await until('fixtureOverviewEpoch()>'+String(epoch+1));
+  assert.equal(await evaluate('!!document.querySelector(".page-overview")'),false);
+ }
+ results.push({phase,rapidClose:true,explicitClose:true,sourceDocumentVisibilityInvalidated:true});
  phase='camera-page-overview';
  await evaluate(`document.querySelector('[aria-label="Page overview"]').click()`);await until(`!!document.querySelector('.page-overview')&&document.querySelectorAll('.page-overview-preview img').length===2`);
  await evaluate('window.fixtureOverviewCoordinator=fixtureOverview.coordinator;window.fixtureOverviewCamera=fixtureOwners.camera.page.current;void 0');
