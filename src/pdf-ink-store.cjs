@@ -1,9 +1,10 @@
 const fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto'),{runWithNativeLock}=require('./native-file-lock.cjs'),graphics=require('./graphics-pane.js'),inkCodec=require('./pdf-ink-codec.cjs');
 const HASH=/^[a-f0-9]{64}$/i,MAX_PAGE=150*1024*1024,MAX_SOURCE=150*1024*1024;
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex'),missingSource=()=>Object.assign(Error('The PDF changed after it was opened.'),{code:'PDF_OPENED_BYTES_REQUIRED'});
-async function syncDirectory(directory){let handle;try{handle=await fs.open(directory,'r');await handle.sync();}catch(error){if(!['EINVAL','ENOTSUP','EISDIR','EPERM','EBADF'].includes(error.code))throw error;}finally{await handle?.close();}}
+const {syncDirectory,syncReadOnlyHandle}=require('./fs-durability.cjs');
 async function ensureDirectory(directory){const first=await fs.mkdir(directory,{recursive:true});if(!first)return;const parent=path.dirname(first);for(let current=directory;;current=path.dirname(current)){await syncDirectory(current);if(current===parent||path.dirname(current)===current)break;}}
-async function confirmFile(file){const handle=await fs.open(file,'r');try{await handle.sync();}finally{await handle.close();}await syncDirectory(path.dirname(file));}
+async function confirmFile(file){const handle=await fs.open(file,'r');try{await syncReadOnlyHandle(handle);}finally{await handle.close();}await syncDirectory(path.dirname(file));}
+async function* originalSource(file){try{for await(const chunk of raw.createReadStream(file))yield chunk;}catch(error){if(['ENOENT','EACCES','EPERM'].includes(error.code))throw missingSource();throw error;}}
 async function atomic(file,bytes){const temp=file+'.'+randomUUID()+'.tmp';await ensureDirectory(path.dirname(file));let handle,committed=false;try{handle=await fs.open(temp,'wx');await handle.writeFile(bytes);await handle.sync();await handle.close();handle=null;await fs.rename(temp,file);committed=true;await syncDirectory(path.dirname(file));}catch(error){if(committed)error.notemindFileCommitted=true;throw error;}finally{await handle?.close();await fs.unlink(temp).catch(()=>{});}}
 
 class PDFInkStore {
@@ -23,11 +24,10 @@ class PDFInkStore {
    if(stat){const before=this.verified.get(hash);if(before&&before.size===stat.size&&before.ino===stat.ino&&before.dev===stat.dev&&before.mtimeMs===stat.mtimeMs&&before.ctimeMs===stat.ctimeMs)return file;if(stat.size>MAX_SOURCE)throw Error('Stored PDF source is damaged.');const check=createHash('sha256');for await(const chunk of raw.createReadStream(file))check.update(chunk);if(check.digest('hex')!==hash)throw Error('Stored PDF source is damaged.');await this.confirm(file);this.rememberVerified(hash,stat);return file;}
    const temp=file+'.'+randomUUID()+'.tmp';let handle,total=0;
    try{
-    handle=await fs.open(temp,'wx');const check=createHash('sha256'),input=sourceBytes!==undefined?[sourceBytes]:sourcePath?raw.createReadStream(sourcePath):null;if(!input)throw missingSource();
+    handle=await fs.open(temp,'wx');const check=createHash('sha256'),input=sourceBytes!==undefined?[sourceBytes]:sourcePath?originalSource(sourcePath):null;if(!input)throw missingSource();
     for await(const chunk of input){if(!(chunk instanceof Uint8Array))throw Error('Invalid original PDF bytes.');total+=chunk.byteLength;if(total>MAX_SOURCE)throw Error('The original PDF exceeds 150 MB.');check.update(chunk);await handle.writeFile(chunk);}
     if(check.digest('hex')!==hash)throw missingSource();await handle.sync();await handle.close();handle=null;await fs.link(temp,file);await syncDirectory(path.dirname(file));await syncDirectory(path.dirname(path.dirname(file)));this.rememberVerified(hash,await fs.stat(file));return file;
-   }catch(error){if(['ENOENT','EACCES','EPERM'].includes(error.code)&&sourceBytes===undefined)throw missingSource();throw error;}
-   finally{await handle?.close().catch(()=>{});await fs.unlink(temp).catch(()=>{});}
+   }finally{await handle?.close().catch(()=>{});await fs.unlink(temp).catch(()=>{});}
   });
  }
  async page(identity,hash,number){return runWithNativeLock(path.join(this.folder(identity,hash),'index.json'),async()=>{const index=await this.read(identity,hash);return this.readPage(index,number);});}
