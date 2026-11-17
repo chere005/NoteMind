@@ -24,6 +24,12 @@ test('reference paper overrides drawing preferences without changing source ink'
 test('Undo during a selection gesture cannot restore the removed source ink on lift',()=>{
  const page=new pageModule.TabletPage(1);page.add(stroke(.3));const h=surfaceHarness({page});h.props.box={x:.2,y:.1,width:.4,height:.5};h.tools.select=true;h.render();h.pointer('pointerdown',350,500,1,'mouse');h.pointer('pointermove',400,550,1,'mouse');assert.equal(page.undo(),true);assert.equal(page.strokes.length,0);h.pointer('pointerup',450,600,0,'mouse');assert.equal(page.strokes.length,0);h.unmount();
 });
+test('Escape cancels an in-contact selection transform so lift and flush cannot apply it later',()=>{
+ const page=new pageModule.TabletPage(1);page.add(stroke(.3));const original=page.strokes,h=surfaceHarness({page});h.props.box={x:.2,y:.1,width:.4,height:.5};h.tools.select=true;h.render();h.pointer('pointerdown',350,500,1,'mouse');h.pointer('pointermove',400,550,1,'mouse');h.key('Escape');assert.equal(h.props.box,null);h.pointer('pointerup',450,600,0,'mouse');h.handle.current.flush();assert.equal(page.strokes,original);h.unmount();
+});
+test('Escape cancels a queued selection without discarding the earlier accepted drawing mutation',async()=>{
+ const registry=require('../src/ink-mutations.js'),page=dense(),source=page.strokes,h=surfaceHarness({page});let release;const held=new Promise(resolve=>release=resolve);registry.registerInkProjection(page,held.then(()=>new Map()),held);h.props.box={x:0,y:0,width:1,height:1};h.tools.select=true;h.render();h.pointer('pointerdown',300,500,1,'mouse');h.pointer('pointermove',350,500,1,'mouse');h.pointer('pointerup',350,500,0,'mouse');h.key('Escape');release();await h.handle.current.flush();assert.equal(page.strokes,source);assert.equal(page.geometryRetained,false);assert.equal(h.props.box,null);h.unmount();
+});
 
 test('flushing a moving selection commits its visible placement once before the later lift',()=>{
  const page=new pageModule.TabletPage(1);page.add(stroke(.3));const h=surfaceHarness({page});h.props.box={x:.2,y:.1,width:.4,height:.5};h.tools.select=true;h.render();h.pointer('pointerdown',350,500,1,'mouse');h.pointer('pointermove',400,550,1,'mouse');h.handle.current.flush();const changed=page.strokes;assert.notEqual(changed[0].points[0].x,.3);h.pointer('pointerup',450,600,0,'mouse');assert.equal(page.strokes,changed);assert.equal(page.undo(),true);assert.equal(page.strokes[0].points[0].x,.3);h.unmount();
