@@ -23,12 +23,13 @@ parentPort.on('message',async packet=>{
   const transfers=[],known=new Set(knownAssets);let value,output,received={accepted:{},refs:{}};
   if(op==='rawBegin')value=raw.begin(args[0]);
   else if(op==='rawAppend')value=raw.append(args[0]);
-  else if(op==='rawFinish')value=raw.finish(args[0]);
+  else if(op==='rawFinish')value=raw.finish(args[0],rawContext);
   else if(op==='rawCancel')value=raw.cancel(args[0]);
   else if(op==='rawPin')value=raw.preflight(args[0]);
   else if(op==='rawLeaseRelease')value=raw.releaseLease(args[0]);
   else if(op==='rawRetain')value=raw.retain(args[0]);
   else if(op==='rawRelease')value=raw.release(args[0]);
+  else if(op==='rawInfo')value=raw.info(args[0].descriptor,rawContext);
   else if(op==='rawRead'){value=raw.read(args[0],rawContext);transfers.push(value.buffer);}
   else if(op==='rawReadWhole'){value=raw.readWhole(args[0].descriptor,rawContext);transfers.push(value.bytes.buffer);}
   else if(op==='rawReleaseRead')value=raw.releaseRead(args[0]);
@@ -52,7 +53,9 @@ parentPort.on('message',async packet=>{
      const prepared=snapshots.prepareSnapshot(...args);for(const object of prepared.objects){object.bytes=owned(object.bytes);transfers.push(object.bytes.buffer);}if(prepared.manifestBytes)transfers.push(prepared.manifestBytes.buffer);return prepared;
     }
     if(op==='publishVersion')return require('./version-publisher.cjs').publishVersion(...args);
-    if(op==='publishVersionFromFile')return require('./archive-version-source.cjs').publishVersionFromFile(...args);
+    if(op==='readRecoveryState')return require('./archive-version-source.cjs').readRecoveryState(...args);
+    if(op==='importRawAssetFile')return raw.importFile(args[0],args[1],rawContext);
+    if(op==='publishVersionFromFile')return require('./archive-version-source.cjs').publishVersionFromFile(...args,{withEntry:(entry,run)=>entry.name.startsWith('assets/')?raw.withWorking(entry.original,run):run()});
     if(op==='readSnapshot'){const doc=await snapshots.readSnapshot(args[0],args[1],{...args[2],assetResolver:(bytes,info)=>rawContext?raw.decoded(bytes,info,rawContext):assets.resolve(bytes,info)}),packed=packOutput(doc,known,rawContext);output=packed.wire;return packed.document;}
     if(op==='readCommitted'){const doc=await require('./recovery-commit.cjs').readCommitted(...args,{asset:(_name,bytes,info)=>rawContext?raw.decoded(bytes,info,rawContext):assets.resolve(bytes,info)}),packed=packOutput(doc,known,rawContext);output=packed.wire;return packed.document;}
     if(op==='parseJson')return JSON.parse(view(args[0]).toString('utf8'));

@@ -76,13 +76,13 @@ async function publishSnapshotObjects(root,prepared,cache=new Map()){
  for(const hash of objects.keys())if(!refs.has(hash))throw Error('Unreferenced prepared version asset.');
  await mapLimit([...refs.values()],8,async ref=>objects.has(ref.hash)?publishObject(root,objects.get(ref.hash),ref,cache):verifiedObject(root,ref,cache));
 }
-async function publishSnapshot(root,id,prepared,cache=new Map()){
+async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}={}){
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;
  if(!(manifestBytes instanceof Uint8Array)||!manifestBytes.byteLength||manifestBytes.byteLength>MANIFEST_LIMIT)throw Error('Invalid prepared version metadata.');
  await publishSnapshotObjects(root,prepared,cache);
  const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});
  // Both document hashing and JSON serialization have already completed in the trusted worker.
- try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
+ try{await fs.writeFile(temp,manifestBytes,{flag:'wx'});await beforePublish?.();await fs.link(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
 }
 async function readSnapshot(root,id,{referencesOnly=false,assetResolver,expectedHash}={}){
  const manifest=validateManifest(JSON.parse(await readLimited(manifestFile(root,id),MANIFEST_LIMIT,'Version metadata is too large.')),{verifyIntegrity:true});

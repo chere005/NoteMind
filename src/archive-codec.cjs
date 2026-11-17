@@ -1,7 +1,7 @@
 const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=require('node:path');
 const {TextEncoder}=require('node:util');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
-const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawRead','rawReadWhole','rawReleaseRead']);
+const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
 const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
@@ -58,7 +58,7 @@ function inputBytes(op,args,limit){
  if(op==='encodeDrawingOwned'){const value=args[0];if(!value||typeof value!=='object')throw TypeError('Invalid owned drawing assets.');bytes=(value.graphics?.byteLength||0)+(value.image?.byteLength||0)+256;}
  else if(binaryOps.has(op)){const value=args[0];bytes=typeof value==='string'?value.length*2:value?.byteLength;if(!Number.isSafeInteger(bytes)||bytes<0)throw TypeError('Expected archive bytes.');}
  else if(rawOps.has(op)){const value=args[0];bytes=op==='rawAppend'?nestedBytes({...value,data:undefined},limit)+(value.data?.byteLength||0):nestedBytes(value,limit);}
- else if(op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
+ else if(op==='readSnapshot'||op==='readCommitted'||op==='publishVersionFromFile'||op==='readRecoveryState'||op==='importRawAssetFile'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
  else bytes=documentBytes(args[0],limit);
  for(let i=1;i<args.length&&bytes<=limit;i++)bytes+=nestedBytes(args[i],limit-bytes);
  return bytes;
@@ -88,15 +88,17 @@ class ArchiveCodec{
  brandRawOutput(value,context){const doc=value?.doc?.assets?value.doc:value;if(!doc?.assets)return value;for(const name of Object.keys(doc.assets)){const descriptor=doc.assets[name];if(isRawAsset(descriptor)){if(!context)throw Error('Raw archive output has no owner scope.');doc.assets[name]=this.brandRaw(descriptor,context.owner);context.tokens.add(descriptor.rawAssetToken);}}return value;}
  async beginRawAsset(options){const result=await this.run('rawBegin',options);this.rawUploads.set(result.upload,{...options,epoch:result.epoch});return result;}
  appendRawAsset(upload,data,{owner,epoch,offset,owned=false}={}){return this.run('rawAppend',{upload,data,owner,epoch,offset,owned});}
- async finishRawAsset(upload,{owner,epoch}={}){const value=await this.run('rawFinish',{upload,owner,epoch});this.rawUploads.delete(upload);return this.brandRaw(value,owner);}
+ async finishRawAsset(upload,{owner,epoch}={}){const context=this.rawScope.getStore();if(context){this.checkRawContext(context);if(context.owner!==owner)throw Error('Raw archive upload belongs to another owner.');}const value=await this.run('rawFinish',{upload,owner,epoch});this.rawUploads.delete(upload);const descriptor=this.brandRaw(value,owner);if(context)context.tokens.add(descriptor.rawAssetToken);return descriptor;}
  async cancelRawAsset(upload,{owner,epoch}={}){const entry=this.rawUploads.get(upload);if(entry&&(entry.owner!==owner||entry.epoch!==epoch))throw Error('Raw archive upload belongs to another owner or epoch.');try{return await this.run('rawCancel',{upload,owner,epoch});}finally{this.rawUploads.delete(upload);this.retireIfReady();}}
  async preflightRawAssets(descriptors=[],{owner}={}){for(const descriptor of descriptors||[])if(this.rawBrands.get(descriptor)!==owner)throw Error('Raw archive asset was not issued to this owner.');const result=await this.run('rawPin',{descriptors,owner});if(result.missing.length)return result;const context={owner,epoch:result.epoch,lease:result.lease,tokens:new Set(descriptors.map(value=>value.rawAssetToken)),entered:false,released:false,lost:false};this.rawLeases.set(context.lease,context);const release=async()=>{if(context.released)return;context.released=true;try{if(!context.lost&&context.epoch===this.epoch&&this.worker)await this.run('rawLeaseRelease',{owner,epoch:context.epoch,lease:context.lease});}finally{this.rawLeases.delete(context.lease);this.retireIfReady();}};return {missing:[],epoch:context.epoch,run:fn=>{this.checkRawContext(context);context.entered=true;return this.rawScope.run(context,fn);},release};}
  async retainRawAssets(owner,tokens){const result=await this.run('rawRetain',{owner,tokens}),keep=new Set(tokens);for(const [token,entry]of this.rawDescriptors)if(entry.owner===owner&&!keep.has(token))this.rawDescriptors.delete(token);return result;}
  async releaseRawAssets(owner,tokens){const result=await this.run('rawRelease',{owner,tokens}),selected=tokens&&new Set(tokens);for(const [token,entry]of this.rawDescriptors)if(entry.owner===owner&&(!selected||selected.has(token)))this.rawDescriptors.delete(token);if(!selected)for(const [upload,entry]of this.rawUploads)if(entry.owner===owner)this.rawUploads.delete(upload);this.retireIfReady();return result;}
+ rawAssetInfo(descriptor){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);return this.run('rawInfo',{descriptor});}
  readRawAsset(descriptor,{owner,offset=0,length=512*1024}={}){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);if(owner!==undefined&&owner!==context.owner)return Promise.reject(Error('Raw archive read belongs to another owner.'));return this.run('rawRead',{descriptor,offset,length});}
- async readRawAssetBytes(descriptor){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);const result=await this.run('rawReadWhole',{descriptor});const bytes=Buffer.from(result.bytes.buffer,result.bytes.byteOffset,result.bytes.byteLength);this.rawReadBuffers.set(bytes,{read:result.read,owner:context.owner,lease:context.lease,epoch:context.epoch});return bytes;}
+ async readRawAssetBytes(descriptor){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);const result=await this.run('rawReadWhole',{descriptor});const bytes=Buffer.from(result.bytes.buffer,result.bytes.byteOffset,result.bytes.byteLength);this.rawReadBuffers.set(bytes,{read:result.read,owner:context.owner,lease:context.lease,epoch:context.epoch,info:result.info});return bytes;}
  async releaseRawAssetBytes(bytes){const read=this.rawReadBuffers.get(bytes);if(!read)return false;this.rawReadBuffers.delete(bytes);if(read.epoch!==this.epoch||!this.worker)return false;return this.run('rawReleaseRead',read);}
- async withRawAssetBytes(descriptor,run){const bytes=await this.readRawAssetBytes(descriptor);try{return await run(bytes);}finally{await this.releaseRawAssetBytes(bytes);}}
+ async withRawAssetBytes(descriptor,run){const bytes=await this.readRawAssetBytes(descriptor);try{return await run(bytes,this.rawReadBuffers.get(bytes)?.info);}finally{await this.releaseRawAssetBytes(bytes);}}
+ async importRawAssetFile(file,options){const context=this.rawScope.getStore();this.checkRawContext(context);const value=await this.run('importRawAssetFile',file,options),descriptor=this.brandRaw(value,context.owner);context.tokens.add(descriptor.rawAssetToken);return descriptor;}
  liveRaw(){return this.rawUploads.size||[...this.rawLeases.values()].some(value=>!value.released&&!value.lost&&value.epoch===this.epoch);}
  retireIfReady(){if(this.retireRequested&&!this.liveRaw()&&!this.active){this.retireRequested=false;this.stopWorker();}else this.pump();}
  encode(doc,options){return this.run('encode',doc,options);}
@@ -107,6 +109,7 @@ class ArchiveCodec{
  inspectOwned(bytes,options){return this.run('inspectOwned',bytes,options);}
  inspectDrawingOwned(bytes){return this.run('inspectDrawingOwned',bytes);}
  prepareSnapshot(doc,options){return this.run('prepareSnapshot',doc,options);}
+ readRecoveryState(file){return this.run('readRecoveryState',file);}
  publishVersionFromFile(file,options){return this.run('publishVersionFromFile',file,options);}
  publishVersion(doc,options){return this.run('publishVersion',doc,options);}
  readSnapshot(root,version,options){return this.run('readSnapshot',root,version,options);}
