@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 11:20 AM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 11:35 AM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
 
@@ -12,8 +12,9 @@ The working estimate remains **12–24 hours for the first stable test bundle** 
 |---|---|---|
 | **A — tools and presets** | **Complete: source checkpoint `9759c71`** | Saved presets and focused quick switching are integrated. All 34 focused tests, 14 actual main/tablet UI checks and the production drawing-host lifecycle check pass. This is a recoverable source pause point; no installation occurred. |
 | **B1 — useful ink selection** | **Complete: source checkpoint `62e54b2`** | Click/topmost occurrence selection, delete, duplicate and compact controls are integrated. The actual hidden StrictMode Surface passes 15 interaction checks; 58 focused selection/memory integration checks pass. Pen maps, right-click region selection and initiating-page completion survive. This is the second recoverable source pause point. |
-| **B2 — complete ink editing** | **Approximately 4–8 hours** | Add lasso, move, recolor and width editing, including modifiers, cancellation, new pen appends and large selections. Focused bug/UI/performance checks run against this integrated feature. |
-| **C — PDF reference and markup** | **Approximately 8–16 hours** | Prioritize the essential right-pane PDF workflow: navigation/fit/zoom/search, Wacom ink, durable page edits/recovery and annotated export. Reconcile raw/chunked transport with the current foundation and validate the real workflow. |
+| **B2 — complete ink editing** | **Functional source saved at `a3c64fe`; large-scene gate remains** | Lasso, move, recolor, width and nudge join B1. All 24 actual small-surface interaction checks and 45 focused author checks pass, including one Undo and preserved pressure. The 2M-scene performance check follows the actively owned memory fix. |
+| **C1 — PDF workflow** | **Isolated source checkpoint `fc5c6c0` verified** | The hidden 100-page workflow passes fit, ink/Undo/Redo, search, cancellation, text import and annotated export through all four rotations. Sources open through verified immutable files and 196608-byte chunks. Combined sampled peak is 927,498,240 bytes. This is a recoverable source pause point, not an install-ready claim. |
+| **C2 — PDF ownership and scale** | **Next PDF increment; approximately 8–16 hours for full C acceptance** | Keep PDF sources, page models, Undo and pending saves stable through actual tablet-host moves and close/reopen. The new App/PadHost gate found a pending-save issue and is actively driving its fix. Finish raw markup transport, lease cleanup and large-document/markup stress. |
 | **First stable bundle** | **Approximately 12–24 hours** | Review the core + presets + selection + PDF workflow as one useful bundle. Close findings and known stability blockers, then freeze, preflight, package and verify a candidate. Notify before installation. |
 | **D — overview and large imports** | **Approximately 12–24 hours, overlapping independent work** | Finish only-visible thumbnails, stable-ID page reorder, camera/SVG coverage and cancellable page-by-page PDF/scan imports. Save separate tested checkpoints as each lands. |
 | **E — precision tools** | **Approximately 16–30 hours** | Add anchored zoom/pan/fit and line/angle constraints, coordinated with the new selection handlers. Test actual drawing, rotation and exports. |

@@ -31,6 +31,7 @@
  * way until the pen lifts.
  */
 
+import {certifyFreshStroke} from "../../drawing-history.js"
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useSyncExternalStore } from "react"
 import { zoomScale, type Point } from "@notemind/core"
 import type { Turns } from "../shared/orientation"
@@ -349,12 +350,12 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
       kind: "draw", pointerId: event.pointerId, drawn: 0, page: p,
       reservation,
       bounds:{x:normalized.x,y:normalized.y,right:normalized.x,bottom:normalized.y},
-      stroke: {
+      stroke: certifyFreshStroke({
         colorHex: latest.current.colour,
         width: inkWidth(latest.current.width, latest.current.view),
         points: [normalized],
         ...(penSettings().pressure ? { pressures: [pressure] } : {}),
-      },
+      }),
     }
     latest.current.onDrawing(true)
     schedule()

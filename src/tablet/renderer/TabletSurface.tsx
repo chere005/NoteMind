@@ -39,6 +39,7 @@ import {transformDrawingInk} from '../../drawing-export.js'
 import {beginInkMutation,pendingInkMutation,flushInkMutations,registerInkProjection,appendInkStroke,hasPendingInkMutations,createInkActionController,reserveInkStroke,capacityError} from '../../ink-mutations.js'
 import {useInkSelection} from "./useInkSelection"
 import {InkSelectionActions} from "./InkSelectionActions"
+import {certifyFreshStroke} from "../../drawing-history.js"
 import "./tablet.css"
 
 export interface SurfaceHandle {
@@ -601,12 +602,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       const pressure = event.pressure > 0 ? event.pressure : 0.5
       gesture.current = {
         reservation,kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
-        stroke: {
+        stroke: certifyFreshStroke({
           colorHex: latest.current.colour,
           width: latest.current.width * SHEET_REF / Math.max(1, pageSize().width),
           points: [point],
           ...(pen && penSettings().pressure ? { pressures: [pressure] } : {}),
-        },
+        }),
       }
       schedule()
     }
@@ -649,7 +650,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           // Back in the region: a new stroke begins here.
           try{g.reservation=reserveInkStroke(g.page);accepted=true}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY'){g.full=true;reportCapacity(g.page)}else reportError(error);continue}
           const { points: _points, pressures, ...rest } = g.stroke
-          g.stroke = { ...rest, points: [], ...(pressures ? { pressures: [] } : {}) }
+          g.stroke = certifyFreshStroke({ ...rest, points: [], ...(pressures ? { pressures: [] } : {}) })
           g.drawn = 0
           g.bounds={x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity}
           g.out = false
