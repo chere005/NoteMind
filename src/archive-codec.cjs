@@ -49,9 +49,13 @@ function binaryOwned(value){
  if(!(buffer instanceof ArrayBuffer)||offset!==0||length!==buffer.byteLength||isMarkedAsUntransferable?.(buffer))throw TypeError('Owned archive bytes require an exact, transferable ArrayBuffer.');
  return structuredClone(new Uint8Array(buffer),{transfer:[buffer]});
 }
+function drawingOwned(value){
+ if(!value||typeof value!=='object'||Object.keys(value).length!==2||!['graphics','image'].every(key=>Object.hasOwn(value,key)))throw TypeError('Invalid owned drawing assets.');const buffers=[];for(const key of ['graphics','image']){const item=value[key];if(!(item instanceof ArrayBuffer)&&!ArrayBuffer.isView(item))throw TypeError('Invalid owned drawing bytes.');const buffer=item instanceof ArrayBuffer?item:item?.buffer,offset=item instanceof ArrayBuffer?0:item?.byteOffset;if(!(buffer instanceof ArrayBuffer)||offset!==0||item.byteLength!==buffer.byteLength||isMarkedAsUntransferable?.(buffer)||buffers.includes(buffer))throw TypeError('Owned drawing assets require separate exact, transferable ArrayBuffers.');buffers.push(buffer);}return structuredClone({graphics:new Uint8Array(buffers[0]),image:new Uint8Array(buffers[1])},{transfer:buffers});
+}
 function inputBytes(op,args,limit){
  let bytes=0;
- if(binaryOps.has(op)){const value=args[0];bytes=typeof value==='string'?value.length*2:value?.byteLength;if(!Number.isSafeInteger(bytes)||bytes<0)throw TypeError('Expected archive bytes.');}
+ if(op==='encodeDrawingOwned'){const value=args[0];if(!value||typeof value!=='object')throw TypeError('Invalid owned drawing assets.');bytes=(value.graphics?.byteLength||0)+(value.image?.byteLength||0)+256;}
+ else if(binaryOps.has(op)){const value=args[0];bytes=typeof value==='string'?value.length*2:value?.byteLength;if(!Number.isSafeInteger(bytes)||bytes<0)throw TypeError('Expected archive bytes.');}
  else if(op==='readSnapshot'||op==='readCommitted'||op==='stringifyJson')bytes=nestedBytes(args[0],limit);
  else bytes=documentBytes(args[0],limit);
  for(let i=1;i<args.length&&bytes<=limit;i++)bytes+=nestedBytes(args[i],limit-bytes);
@@ -68,7 +72,8 @@ class ArchiveCodec{
   // Preserve the initiating snapshot while work waits in the bounded queue.
   let transfers=[];try{
    for(let i=1;i<args.length;i++)if(args[i]!==undefined)args[i]=structuredClone(args[i]);
-   if(binaryOps.has(op)){args[0]=ownedOps.has(op)?binaryOwned(args[0]):binaryCopy(args[0]);transfers=[args[0].buffer];}
+   if(op==='encodeDrawingOwned'){args[0]=drawingOwned(args[0]);transfers=[args[0].graphics.buffer,args[0].image.buffer];}
+   else if(binaryOps.has(op)){args[0]=ownedOps.has(op)?binaryOwned(args[0]):binaryCopy(args[0]);transfers=[args[0].buffer];}
    else if(op==='stringifyJson')args[0]=structuredClone(args[0]);
    else if(documentOps.has(op))args[0]=documentCopy(args[0]);
   }catch(error){return Promise.reject(error);}
@@ -76,6 +81,7 @@ class ArchiveCodec{
  }
  encode(doc,options){return this.run('encode',doc,options);}
  encodeWithDigest(doc,options){return this.run('encodeWithDigest',doc,options);}
+ encodeDrawingOwned(packet){return this.run('encodeDrawingOwned',packet);}
  decode(bytes,options){return this.run('decode',bytes,options);}
  decodeOwned(bytes,options){return this.run('decodeOwned',bytes,options);}
  inspectOwned(bytes,options){return this.run('inspectOwned',bytes,options);}
@@ -98,7 +104,7 @@ class ArchiveCodec{
     if(job.op==='inspectOwned'&&value)value={...value,doc:this.assets.hydrate(value.doc,packet.assetResult?.output,job.assetPacket?.source,this.epoch)};
     else value=this.assets.hydrate(value,packet.assetResult?.output,job.assetPacket?.source,this.epoch);
     if(job.op==='encode'||job.op==='stringifyJson')value=Buffer.from(value.buffer,value.byteOffset,value.byteLength);
-    if(job.op==='encodeWithDigest'){const bytes=value.bytes;value={...value,bytes:Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength)};}
+    if(job.op==='encodeWithDigest'||job.op==='encodeDrawingOwned'){const bytes=value.bytes;value={...value,bytes:Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength)};}
     const decoded=job.op==='inspectOwned'?value.doc:value;if((job.op==='decode'||ownedOps.has(job.op))&&decoded.files)for(const name of Object.keys(decoded.files)){const bytes=decoded.files[name];decoded.files[name]=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
     this.assets.trim();this.workerAssetStats=packet.assetStats;this.finish(job,null,value);
    }catch(error){this.assets.trim();this.finish(job,error);}

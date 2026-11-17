@@ -17,7 +17,8 @@ parentPort.on('message',async packet=>{
   if(received.missing){parentPort.postMessage({id,missingAssets:received.missing});return;}
   if(assetPacket)args[0]=received.doc;
   const transfers=[],known=new Set(knownAssets);let value,output;
-  if(op==='encode'||op==='encodeWithDigest'){
+  if(op==='encodeDrawingOwned'){const bytes=format.encodeDrawingOwned(args[0]),encoded=owned(bytes);transfers.push(encoded.buffer);value={bytes:encoded,revision:digest(bytes)};}
+  else if(op==='encode'||op==='encodeWithDigest'){
    const bytes=format.encode(...args,{asset:(name,bytes,info)=>assets.observe(received.refs[name],bytes,info)}),encoded=owned(bytes);transfers.push(encoded.buffer);value=op==='encode'?encoded:{bytes:encoded,revision:digest(bytes)};
   }else if(op==='inspectDrawingOwned'){
    const original=view(args[0]),parsed=format.decode(original,{asset:()=>''}),files=parsed.files,info=files['drawing.json']?JSON.parse(files['drawing.json'].toString('utf8')):{},name=info.sheet||(files['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');
