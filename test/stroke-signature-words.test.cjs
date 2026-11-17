@@ -1,0 +1,10 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),signature=require('../src/stroke-signature.js'),owned=require('../src/owned-ink-metadata.js');
+const text=(high,low)=>high.toString(16).padStart(8,'0')+low.toString(16).padStart(8,'0');
+test('direct fingerprint words feed exactly the same UTF16 hex bytes without changing prefix state',()=>{
+ for(const [high,low]of [[0,0],[0xffffffff,0xffffffff],[0x80000000,1],[1,0x80000000],...Array.from({length:1000},(_,i)=>[(Math.imul(i,2246822519)>>>0),(Math.imul(i+1,16777619)>>>0)])]){const prefix='頁😀\ud800["'+high+',',suffix='",null]';assert.equal(signature.hashWriter().write(prefix).writeHexWords(high,low).write(suffix).digest(),signature.hashText(prefix+text(high,low)+suffix));}
+});
+test('known fingerprint words preserve owned and generic hashes without traversing or priming unknown geometry',()=>{
+ const view=new DataView(new ArrayBuffer(16)),generic={colorHex:'#123456',width:2,points:[{x:.2,y:.3}]},expected=signature.fingerprint(generic);view.setBigUint64(4,0xffffffffffffffffn,true);assert.equal(signature.writeKnownStrokeFingerprintWords(generic,view,4),false);assert.equal(view.getBigUint64(4,true),0xffffffffffffffffn);signature.primeStrokeFingerprint(generic,expected);Object.defineProperty(generic,'points',{get(){throw Error('known geometry traversed')}});assert.equal(signature.writeKnownStrokeFingerprintWords(generic,view,4),true);assert.equal(text(view.getUint32(4,true),view.getUint32(8,true)),expected);
+ const hashBytes=new Uint8Array(8),page=owned.createOwnedInkMetadataPage(1,{hashBytes}),stroke=owned.createOwnedInkStroke(page,0,'#123456',2,[{x:.2,y:.3}]);assert.equal(signature.writeKnownStrokeFingerprintWords(stroke,view),true);assert.equal(text(view.getUint32(0,true),view.getUint32(4,true)),'0000000000000000');
+ const unseeded=owned.createOwnedInkMetadataPage(1),unknown=owned.createOwnedInkStroke(unseeded,0,'#123456',2,[{x:.2,y:.3}]),before=unseeded.storageBytes;assert.equal(signature.writeKnownStrokeFingerprintWords(unknown,view),false);assert.equal(unseeded.storageBytes,before);assert.equal(owned.knownOwnedFingerprint(unknown),null);
+});
