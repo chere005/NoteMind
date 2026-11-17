@@ -1,6 +1,6 @@
 (() => {
  const api=window.NoteMindDocumentSync?.api(window.notemind.notes)||window.notemind.notes;
- let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),startupRun=null;
+ let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),closingDrafts=new Map(),startupRun=null;
  const automaticTitle=text=>text.split(/\r?\n/).map(s=>s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim()).find(Boolean)?.slice(0,100)||'Untitled';
  const serial=fn=>{const next=queue.catch(()=>{}).then(fn);queue=next;return next;};
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
@@ -14,23 +14,35 @@
   return true;
  }
  function insertAssetFor(target,name,data,sheet=null){const tab=insertionTab(target);if(tab===activeTab){restoreInsertion(target);const inserted=insertAsset(name,data,sheet);if(inserted){target.text=currentText();target.start=target.end=!visual?source.selectionEnd:null;try{target.range=getSelection()?.rangeCount?getSelection().getRangeAt(0).cloneRange():null;}catch{}}return inserted;}const assets={[name]:data};if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);return insertMarkdownFor(target,'\n\n!['+(sheet?'Drawing':'Image')+']('+name+')\n\n',{assets,graphic:name});}
- async function session(){await api.session({tabs:tabs.filter(t=>!t.placeholder).map(t=>({id:t.doc.id,path:t.doc.path,visual:t.visual,scroll:t===activeTab?window.NoteMindScroll?.anchor():t.scroll})),active:activeTab?.doc.id});}
+ async function session(){const pending=[...closingDrafts.values()].filter(job=>!job.persisted).map(job=>job.tab),kept=[...new Set([...tabs,...pending])];await api.session({tabs:kept.filter(t=>!t.placeholder).map(t=>({id:t.doc.id,path:t.doc.path,visual:t.visual,scroll:t===activeTab?window.NoteMindScroll?.anchor():t.scroll})),active:activeTab?.doc.id});}
  async function persist(tab,saveFile=true){
   if(tab.placeholder)return;
   const snap=snapshot(tab),edit=tab.editVersion||0;
   if(!snap.path&&!snap.manualTitle)snap.title=automaticTitle(snap.text);
-  const stamp=JSON.stringify([edit,snap.path,snap.revision,snap.visual]);const kept=tab.draftStamp===stamp?snap:await api.draft(snap);tab.draftStamp=stamp;if(!tabs.includes(tab))return;
-  tab.doc.id=kept.id;tab.doc.created=kept.created;
+  const stamp=JSON.stringify([edit,snap.path,snap.revision,snap.visual]);const kept=tab.draftStamp===stamp?snap:await api.draft(snap);tab.draftStamp=stamp;
+  tab.doc.id=kept.id;tab.doc.created=kept.created;if(!tabs.includes(tab))return;
   if(edit===(tab.editVersion||0))tab.doc.title=kept.title;
   if(saveFile&&tab.dirty&&snap.path){try{
    const saved=await api.autosave({...snap,id:kept.id,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});
-   tab.doc.revision=saved.revision;
-   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
-   else await api.draft(snapshot(tab));
+   for(const key of ['id','path','revision','created'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
+   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
+   else if(!closingDrafts.has(tab))await api.draft(snapshot(tab));
    if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
    tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
   }catch(error){tab.saveError=error.message;if(tab===activeTab)$('status').textContent='Draft recovered locally · '+error.message;}}
   else if(tab===activeTab&&tab.dirty)$('status').textContent='Draft saved';
+ }
+ function reopenClosing(next){for(const job of closingDrafts.values()){const tab=job.tab;if(next.id&&next.id===tab.doc.id||next.path&&tab.doc.path&&notePathKey(next.path)===notePathKey(tab.doc.path)){job.reopened=true;return tab;}}return null;}
+ function closeDraft(tab,captured,onFailure){
+  if(tab.placeholder)return Promise.resolve(null);const existing=closingDrafts.get(tab);if(existing)return existing.promise;
+  const kept={...captured,assets:{...captured.assets},meta:structuredClone(captured.meta||{})},job={tab,editVersion:tab.editVersion||0,persisted:false,promise:null};closingDrafts.set(tab,job);
+  job.promise=serial(async()=>{try{
+   if(startupRun&&!ready)await startupRun;
+   const reopened=job.reopened&&tabs.includes(tab),latest=reopened?snapshot(tab):{...(job.saved||kept),dirty:tab.dirty};for(const key of ['id','path','revision','created'])if(Object.hasOwn(tab.doc,key))latest[key]=tab.doc[key];
+   tab.doc={...latest};if(reopened&&tab===activeTab)doc=tab.doc;const saved=await api.draft(latest);tab.doc.id=saved.id;tab.doc.created=saved.created;job.persisted=true;
+   await session();return saved;
+  }catch(error){tab.saveError=error.message;onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);}});
+  return job.promise;
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
  async function flush(){if(startupRun&&!ready)await startupRun;ensureActiveTab();return serial(async()=>{for(const tab of [...tabs])await persist(tab);await session();updateTitle();window.notemind.dirty(false);});}
@@ -38,8 +50,8 @@
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
   await persist(tab,false);const snap=snapshot(tab),edit=tab.editVersion||0;
   const saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs);if(!saved)return false;
-  tab.doc.path=saved.path;tab.doc.id=saved.id;tab.doc.revision=saved.revision;
-  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
+  for(const key of ['id','path','revision','created'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
+  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
   tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)await api.draft(snapshot(tab));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
@@ -87,5 +99,5 @@
  window.addEventListener('camera-flush',e=>e.detail.promises.push(flush()));
  window.addEventListener('notemind-command',e=>{if(e.detail==='quickNote'){$('new').click();rich.focus();}if(e.detail==='indexImages')action(indexCurrent);if(e.detail==='deleteNote'){const focused=window.NoteMindSidebar?.focusedDelete();if(focused)action(focused);else if(!activeTab.placeholder)action(()=>trash({path:doc.path,id:doc.id,title:doc.title}));}});
  api.onIndexProgress(value=>{if(value.id===doc.id)$('status').textContent='Indexing image text…';});
- window.NoteMindNotes={session,api,changed,changedView,schedule,flush,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
+ window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
 })();
