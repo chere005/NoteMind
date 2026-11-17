@@ -2,6 +2,7 @@
 // Persistent 32-way trees share untouched branches so an append never walks old points.
 // Current ink and the nearest complete Undo/Redo are protected; inactive pages must unload.
 const { strokeAppend } = require("./stroke-signature.js");
+const { DrawingResourceLedger } = require("./drawing-resource-ledger.js");
 const WIDTH = 32, ENTRY_BYTES = 96;
 const clock = () => globalThis.performance?.now() ?? Date.now();
 const yieldTask = () => new Promise(resolve => {
@@ -17,19 +18,21 @@ class DrawingHistoryBudget {
   constructor({ maxBytes = 128 * 1024 * 1024, maxStates = 100 } = {}) {
     this.maxBytes = maxBytes;
     this.maxStates = maxStates;
-    this.extra = 0;
-    this.total = 0;
+    this.ownExtra = 0;
+    this.ownTotal = 0;
+    this.geometry = new DrawingResourceLedger();
     this.entryBytes = 0;
     this.entries = /* @__PURE__ */ new Map();
     this.owners = /* @__PURE__ */ new Set();
     this.resources = /* @__PURE__ */ new WeakMap();
-    this.tokens = /* @__PURE__ */ new WeakMap();
     this.states = /* @__PURE__ */ new WeakMap();
     this.visits = 0;
     this.pendingPreparations = 0;
     this.releaseQueue = [];
     this.finalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((record) => this.scheduleRelease(record)) : null;
   }
+  get extra() { return this.ownExtra + this.geometry.extra; }
+  get total() { return this.ownTotal + this.geometry.total; }
   resource(key, bytes) {
     let value = this.resources.get(key);
     if (!value) {
@@ -43,21 +46,23 @@ class DrawingHistoryBudget {
     value[kind] += delta;
     if (value[kind] < 0) throw Error("Invalid drawing history ownership.");
     const next = value.history > 0 && !value.current, now = value.current + value.history > 0;
-    if (charged !== next) this.extra += next ? value.bytes : -value.bytes;
-    if (used !== now) this.total += now ? value.bytes : -value.bytes;
+    if (charged !== next) this.ownExtra += next ? value.bytes : -value.bytes;
+    if (used !== now) this.ownTotal += now ? value.bytes : -value.bytes;
   }
   prime(stroke) {
-    let token = this.tokens.get(stroke);
-    if (token) return token;
     if (!stroke || !Array.isArray(stroke.points) || stroke.pressures != null && !Array.isArray(stroke.pressures)) throw TypeError("Invalid immutable drawing stroke.");
-    const resources = [this.resource(stroke, 128), this.resource(stroke.points, 32 + stroke.points.length * 64)];
-    if (stroke.pressures) resources.push(this.resource(stroke.pressures, 32 + stroke.pressures.length * 8));
-    token = { current: 0, history: 0, resources, children: null, pointCount: stroke.points.length, estimatedBytes: resources.reduce((n,resource)=>n+resource.bytes,0) };
-    this.tokens.set(stroke, token);
-    return token;
+    // Leaves retain the immutable source identities themselves. Accounting is
+    // acquired only while a tree is held, so decode needs no per-stroke graph.
+    return stroke;
   }
   node(children, level) {
-    return { current: 0, history: 0, children, level, count: level ? children.reduce((n, child) => n + child.count, 0) : children.length, pointCount: children.reduce((n, child) => n + child.pointCount, 0), estimatedBytes:64+children.length*8+children.reduce((n,child)=>n+child.estimatedBytes,0), resources: [{ bytes: 64 + children.length * 8, current: 0, history: 0 }] };
+    let count = 0, pointCount = 0, estimatedBytes = 64 + children.length * 8;
+    for (const child of children) {
+      count += level ? child.count : 1;
+      pointCount += level ? child.pointCount : child.points.length;
+      estimatedBytes += level ? child.estimatedBytes : 160 + child.points.length * 64 + (child.pressures ? 32 + child.pressures.length * 8 : 0);
+    }
+    return { current: 0, history: 0, children, level, count, pointCount, estimatedBytes, resources: [{ bytes: 64 + children.length * 8, current: 0, history: 0 }] };
   }
   build(array) {
     if (!array.length) return null;
@@ -142,7 +147,14 @@ class DrawingHistoryBudget {
     if (node[kind] < 0) throw Error("Invalid drawing tree ownership.");
     if (before === node[kind] > 0) return;
     for (const resource of node.resources) this.adjust(resource, kind, delta > 0 ? 1 : -1);
-    if (node.children) for (const child of node.children) this.holdNode(child, kind, delta > 0 ? 1 : -1);
+    if (node.level) for (const child of node.children) this.holdNode(child, kind, delta > 0 ? 1 : -1);
+    else for (const stroke of node.children) this.holdStroke(stroke, kind, delta > 0 ? 1 : -1);
+  }
+  holdStroke(stroke, kind, delta) {
+    this.visits++;
+    this.geometry.adjust(stroke, 128, kind, delta);
+    this.geometry.adjust(stroke.points, 32 + stroke.points.length * 64, kind, delta);
+    if (stroke.pressures) this.geometry.adjust(stroke.pressures, 32 + stroke.pressures.length * 8, kind, delta);
   }
   hold(state, kind, delta) {
     const before = state[kind] > 0;
@@ -167,9 +179,11 @@ class DrawingHistoryBudget {
       if (node[kind] < 0) throw Error('Invalid drawing tree ownership.');
       if (held !== (node[kind] > 0)) {
         for (const resource of node.resources) this.adjust(resource, kind, change);
-        if (node.children) for (const child of node.children) stack.push(child);
+        if (node.level) for (const child of node.children) stack.push(child);
+        else for (const stroke of node.children) this.holdStroke(stroke, kind, change);
       }
-      if (++work % 128 === 0 && clock() - start >= 3) { await pause(); start = clock(); }
+      work += node.level ? 1 : node.children.length + 1;
+      if (work >= 128 && clock() - start >= 3) { await pause(); start = clock(); work = 0; }
     }
   }
   register(owner, array) {
