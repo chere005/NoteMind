@@ -1,8 +1,8 @@
 const {Worker,isMarkedAsUntransferable}=require('node:worker_threads'),path=require('node:path');
 const {TextEncoder}=require('node:util');
 const {ArchiveAssetClient}=require('./archive-assets.cjs'),{isRawAsset,rawMissing}=require('./archive-raw-assets.cjs'),{AsyncLocalStorage}=require('node:async_hooks');
-const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
-const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
+const rawOps=new Set(['rawBegin','rawAppend','rawFinish','rawCancel','rawPin','rawLeaseRelease','rawRetain','rawRelease','rawScopedRelease','rawRead','rawInfo','rawReadWhole','rawReleaseRead']);
+const documentOps=new Set(['encode','encodeWithDigest','prepareSnapshot','publishVersion','exportWord']),binaryOps=new Set(['decode','decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned','parseJson']),ownedOps=new Set(['decodeOwned','inspectOwned','inspectDrawingOwned','duplicateArchiveOwned']);
 const busy=()=>Error('Archive work is busy. The current document remains open; try saving again shortly.');
 function nestedBytes(value,limit){
  const pending=[value],seen=new Set();let bytes=0;
@@ -103,10 +103,13 @@ class ArchiveCodec{
  notifyRawCapacity(){if(this.capacityQueued||!this.rawCapacityListeners.size)return;this.capacityQueued=true;queueMicrotask(()=>{this.capacityQueued=false;for(const listener of [...this.rawCapacityListeners])try{listener({epoch:this.epoch});}catch{}});}
  observeRawStats(value){const previous=this.workerRawStats;this.workerRawStats=value;if(previous&&['bytes','reserved','working','leases','uploads','reads','entries'].some(key=>value[key]<previous[key]))this.notifyRawCapacity();}
  async importRawAssetFile(file,options){const context=this.rawScope.getStore();this.checkRawContext(context);const value=await this.run('importRawAssetFile',file,options),descriptor=this.brandRaw(value,context.owner);context.tokens.add(descriptor.rawAssetToken);return descriptor;}
+ async importRawAssetBytes(bytes){const context=this.rawScope.getStore();this.checkRawContext(context);if(!(bytes instanceof Uint8Array))throw TypeError('Expected raw asset bytes.');const staged=await this.beginRawAsset({owner:context.owner,bytes:bytes.byteLength,chars:4*Math.ceil(bytes.byteLength/3)});try{for(let offset=0;offset<bytes.byteLength;offset+=512*1024)await this.appendRawAsset(staged.upload,bytes.subarray(offset,Math.min(bytes.byteLength,offset+512*1024)),{...staged,owner:context.owner,offset});return await this.finishRawAsset(staged.upload,{...staged,owner:context.owner});}catch(error){await this.cancelRawAsset(staged.upload,{...staged,owner:context.owner}).catch(()=>{});throw error;}}
+ async releaseScopedRawAssets(descriptors){const context=this.rawScope.getStore();this.checkRawContext(context);for(const descriptor of descriptors)this.checkRawDescriptor(descriptor,context);await this.run('rawScopedRelease',{descriptors});for(const descriptor of descriptors){context.tokens.delete(descriptor.rawAssetToken);this.rawDescriptors.delete(descriptor.rawAssetToken);}}
  liveRaw(){return this.rawUploads.size||[...this.rawLeases.values()].some(value=>!value.released&&!value.lost&&value.epoch===this.epoch);}
  retireIfReady(){if(this.retireRequested&&!this.liveRaw()&&!this.active){this.retireRequested=false;this.stopWorker();}else this.pump();}
  encode(doc,options){return this.run('encode',doc,options);}
  encodeWithDigest(doc,options){return this.run('encodeWithDigest',doc,options);}
+ exportWord(doc,images,options){return this.run('exportWord',doc,images,options);}
  encodeDrawingOwned(packet){return this.run('encodeDrawingOwned',packet);}
  decode(bytes,options){return this.run('decode',bytes,options);}
  decodeOwned(bytes,options){return this.run('decodeOwned',bytes,options);}
@@ -133,7 +136,7 @@ class ArchiveCodec{
     let value=packet.value;this.assets.accepted(packet.assetResult?.accepted,job.assetPacket,this.epoch);
     if(job.op==='inspectOwned'&&value)value={...value,doc:this.assets.hydrate(value.doc,packet.assetResult?.output,job.assetPacket?.source,this.epoch)};
     else value=this.assets.hydrate(value,packet.assetResult?.output,job.assetPacket?.source,this.epoch);
-    if(job.op==='encode'||job.op==='duplicateArchiveOwned'||job.op==='stringifyJson')value=Buffer.from(value.buffer,value.byteOffset,value.byteLength);
+    if(job.op==='encode'||job.op==='duplicateArchiveOwned'||job.op==='exportWord'||job.op==='stringifyJson')value=Buffer.from(value.buffer,value.byteOffset,value.byteLength);
     if(job.op==='encodeWithDigest'||job.op==='encodeDrawingOwned'){const bytes=value.bytes;value={...value,bytes:Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength)};}
     const decoded=job.op==='inspectOwned'?value.doc:value;if((job.op==='decode'||ownedOps.has(job.op))&&decoded.files)for(const name of Object.keys(decoded.files)){const bytes=decoded.files[name];decoded.files[name]=Buffer.from(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
     value=this.brandRawOutput(value,job.rawContext);this.assets.trim();this.workerRawStats=packet.rawStats;this.workerAssetStats=packet.assetStats;this.finish(job,null,value);

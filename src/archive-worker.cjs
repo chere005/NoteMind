@@ -29,6 +29,7 @@ parentPort.on('message',async packet=>{
   else if(op==='rawLeaseRelease')value=raw.releaseLease(args[0]);
   else if(op==='rawRetain')value=raw.retain(args[0]);
   else if(op==='rawRelease')value=raw.release(args[0]);
+  else if(op==='rawScopedRelease')value=raw.releaseScoped(args[0],rawContext);
   else if(op==='rawInfo')value=raw.info(args[0].descriptor,rawContext);
   else if(op==='rawRead'){value=raw.read(args[0],rawContext);transfers.push(value.buffer);}
   else if(op==='rawReadWhole'){value=raw.readWhole(args[0].descriptor,rawContext);transfers.push(value.bytes.buffer);}
@@ -43,6 +44,9 @@ parentPort.on('message',async packet=>{
     if(op==='encodeDrawingOwned'){const bytes=format.encodeDrawingOwned(args[0]),encoded=owned(bytes);transfers.push(encoded.buffer);return {bytes:encoded,revision:digest(bytes)};}
     if(op==='duplicateArchiveOwned'){const bytes=owned(format.duplicateArchiveOwned(view(args[0]),args[1]));transfers.push(bytes.buffer);return bytes;}
     if(op==='encode'||op==='encodeWithDigest'){const bytes=format.encode(...args,hooks),encoded=owned(bytes);transfers.push(encoded.buffer);return op==='encode'?encoded:{bytes:encoded,revision:digest(bytes)};}
+    if(op==='exportWord'){
+     const images=args[1];if(!images||typeof images!=='object'||Array.isArray(images)||Object.keys(images).length>9998)throw Error('Invalid Word image metadata.');let total=0;const entries={};for(const [name,image]of Object.entries(images)){if(!image||!['png','jpg','gif','bmp'].includes(image.type)||!Number.isFinite(image.width)||image.width<=0||image.width>1000000||!Number.isFinite(image.height)||image.height<=0||image.height>1000000||/\.json$/i.test(name)||!Object.hasOwn(args[0].assets||{},name))throw Error('Invalid Word image metadata.');let data;entries[name]={width:image.width,height:image.height,type:image.type,get data(){if(!data){const value=args[0].assets[name],resolved=hooks.assetBytes(name,value);data=resolved===undefined?Buffer.from(value,'base64'):Buffer.from(resolved.buffer,resolved.byteOffset,resolved.byteLength);if((total+=data.length)>require('./archive-limits.cjs').TOTAL_BYTES)throw Error('Word images are too large.');}return data;}};}const bytes=owned(await require('./documents.cjs').exportWord(args[0],entries,args[2]));transfers.push(bytes.buffer);return bytes;
+    }
     if(op==='inspectDrawingOwned'){
      const original=view(args[0]),parsed=format.decode(original,{asset:()=>''}),files=parsed.files,info=files['drawing.json']?JSON.parse(files['drawing.json'].toString('utf8')):{},name=info.sheet||(files['assets/drawing.svg.json']?'assets/drawing.svg.json':'assets/drawing.json');
      if(typeof name!=='string'||!name.startsWith('assets/')||!files[name])throw Error('This Notepad does not contain an editable drawing sheet.');
