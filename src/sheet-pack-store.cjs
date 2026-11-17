@@ -9,7 +9,7 @@ function decodeExtent(bytes,ref){const codec=ref.codec||'raw',limit=ref.rawBytes
 const sameStat=(a,b)=>a&&b&&['dev','ino','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);
 async function syncDirectory(directory){let handle;try{handle=await fs.open(directory,'r');await handle.sync();}catch(error){if(!['EINVAL','ENOTSUP','EISDIR','EPERM','EBADF'].includes(error.code))throw error;}finally{await handle?.close();}}
 class SheetPackStore{
- constructor(directory,{targetBytes=TARGET_PACK_BYTES,maxExtentBytes=MAX_EXTENT_BYTES,maxHints=4096,encoder=bytes=>({codec:'raw',bytes}),staging}={}){Object.assign(this,{directory,targetBytes,maxExtentBytes,maxHints,encoder});this.staging=staging||new(require('./sheet-staging.cjs').SheetStaging)(directory);this.ownsStaging=!staging;this.active=null;this.created=new Set();this.known=new Map();this.statsByPack=new Map();this.dirtyPacks=new Map();this.directoryDirty=false;this.closed=false;this.closing=false;this.queue=Promise.resolve();this.writtenBytes=0;this.rawBytesWritten=0;this.readBytes=0;this.createdPacks=0;}
+ constructor(directory,{targetBytes=TARGET_PACK_BYTES,maxExtentBytes=MAX_EXTENT_BYTES,maxHints=4096,encoder=bytes=>({codec:'raw',bytes}),staging}={}){Object.assign(this,{directory,targetBytes,maxExtentBytes,maxHints,encoder});this.staging=staging||new(require('./sheet-staging.cjs').SheetStaging)(directory);this.ownsStaging=!staging;this.active=null;this.candidateRefs=new WeakSet();this.revived=false;this.created=new Set();this.known=new Map();this.statsByPack=new Map();this.dirtyPacks=new Map();this.directoryDirty=false;this.closed=false;this.closing=false;this.queue=Promise.resolve();this.writtenBytes=0;this.rawBytesWritten=0;this.readBytes=0;this.createdPacks=0;}
  file(pack){if(!validPack(pack))throw Error('Invalid drawing pack identity.');return path.join(this.directory,pack+'.pack');}
  remember(ref){this.known.delete(ref.sha256);this.known.set(ref.sha256,ref);while(this.known.size>this.maxHints)this.known.delete(this.known.keys().next().value);}
  rememberStat(pack,stat){this.statsByPack.delete(pack);this.statsByPack.set(pack,stat);while(this.statsByPack.size>this.maxHints)this.statsByPack.delete(this.statsByPack.keys().next().value);}
@@ -20,18 +20,19 @@ class SheetPackStore{
   const release=await require('./sheet-pack-lock.cjs').leasePack(file,handle);this.active={pack,handle,release,size:0,stat:await handle.stat()};this.created.add(pack);this.rememberStat(pack,this.active.stat);this.createdPacks++;this.directoryDirty=true;return this.active;
  }
  async closeActive(){const active=this.active;this.active=null;if(active){try{await active.release?.();}finally{await active.handle.close();}}}
+ resetCandidateTracking(){this.candidateRefs=new WeakSet();this.revived=false;}
  forgetPacks(packs){const removed=new Set(packs);for(const pack of removed){this.created.delete(pack);this.statsByPack.delete(pack);this.dirtyPacks.delete(pack);}for(const [hash,ref]of this.known)if(removed.has(ref.pack))this.known.delete(hash);}
  publish(value){if(this.closed||this.closing)return Promise.reject(Error('Drawing storage is closing.'));const next=this.queue.catch(()=>{}).then(()=>this.publishNow(value));this.queue=next;return next;}
  async publishNow(value){
   if(this.closed)throw Error('Drawing storage is closing.');const bytes=Buffer.isBuffer(value)?value:Buffer.from(value.buffer,value.byteOffset,value.byteLength);
   if(!bytes.length||bytes.length>this.maxExtentBytes)throw Error('Drawing storage block is too large.');const sha256=digest(bytes),known=this.known.get(sha256);
-  if(known&&(known.rawBytes??known.bytes)===bytes.length&&await this.verifyKnown(known)){this.remember(known);return known;}
+  if(known&&(known.rawBytes??known.bytes)===bytes.length&&await this.verifyKnown(known)){if(!this.candidateRefs.has(known))this.revived=true;this.remember(known);return known;}
   // Only trusted worker-local policy chooses compression; raw stays the default until measured.
   let encoded=await this.encoder(bytes);if(!encoded||!['raw','deflate','zstd'].includes(encoded.codec)||!(encoded.bytes instanceof Uint8Array)||!encoded.bytes.length)throw Error('Invalid drawing block encoder.');if(encoded.codec==='raw'||encoded.bytes.length>=bytes.length)encoded={codec:'raw',bytes};const stored=encoded.bytes;
   let active=this.active;if(!active||active.size&&active.size+stored.length>this.targetBytes)active=await this.newPack();
   const before=await active.handle.stat();if(!sameStat(before,active.stat))throw Error('Drawing storage changed outside this window.');const offset=active.size;
   try{let written=0;while(written<stored.length){const result=await active.handle.write(stored,written,stored.length-written,offset+written);if(!result.bytesWritten)throw Error('Could not write drawing storage.');written+=result.bytesWritten;}active.size+=stored.length;active.stat=await active.handle.stat();this.rememberStat(active.pack,active.stat);this.dirtyPacks.set(active.pack,active.stat);this.writtenBytes+=stored.length;this.rawBytesWritten+=bytes.length;
-   const ref={pack:active.pack,offset,bytes:stored.length,rawBytes:bytes.length,codec:encoded.codec,sha256};this.remember(ref);return ref;
+   const ref={pack:active.pack,offset,bytes:stored.length,rawBytes:bytes.length,codec:encoded.codec,sha256};this.candidateRefs.add(ref);this.remember(ref);return ref;
   }catch(error){try{this.dirtyPacks.set(active.pack,await active.handle.stat());}catch{}await this.closeActive().catch(()=>{});throw error;}
  }
  async read(reference,maxBytes=this.maxExtentBytes){
