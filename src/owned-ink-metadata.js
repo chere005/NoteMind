@@ -6,9 +6,21 @@ function reserveIds(count) {
  const first = nextRasterId; nextRasterId += count; return first;
 }
 const isWord = value => Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+class MetadataRange {
+ #count; #first; #claimed;
+ constructor(count) {
+  if (!Number.isSafeInteger(count) || count < 0 || count > 2000000) throw TypeError('Invalid owned ink range.');
+  this.#count = count; this.#first = reserveIds(count); this.#claimed = new Uint8Array(Math.ceil(Math.ceil(count / MAX_PAGE) / 8)); Object.freeze(this);
+ }
+ static claim(range, offset, count) {
+  if (!range || typeof range !== 'object' || !(#count in range) || !Number.isSafeInteger(offset) || offset < 0 || offset % MAX_PAGE || count !== Math.min(MAX_PAGE, range.#count - offset) || !count) throw TypeError('Invalid owned ink range page.');
+  const page = offset / MAX_PAGE, mask = 1 << (page & 7), byte = page >>> 3;
+  if (range.#claimed[byte] & mask) throw Error('Owned ink range page was already assigned.');range.#claimed[byte] |= mask; return range.#first + offset;
+ }
+}
 class MetadataPage {
  #count; #namespace; #view; #known; #used; #first; #stride;
- constructor(count, { namespace = null, identityBytes = null, hashBytes = null } = {}) {
+ constructor(count, { namespace = null, identityBytes = null, hashBytes = null, rasterRange = null, rasterOffset = 0 } = {}) {
   if (!Number.isSafeInteger(count) || count < 0 || count > MAX_PAGE) throw TypeError('Invalid owned ink metadata page.');
   if (identityBytes && hashBytes || identityBytes && (typeof namespace !== 'string' || !namespace)) throw TypeError('Invalid owned ink metadata source.');
   const input = identityBytes || hashBytes, stride = identityBytes ? 16 : 8;
@@ -18,7 +30,7 @@ class MetadataPage {
   this.#view = new DataView(bytes.buffer); this.#stride = stride; this.#count = count; this.#namespace = identityBytes ? namespace : null;
   if (identityBytes) for (let index = 0; index < count; index++) if (!Number.isSafeInteger(this.#view.getFloat64(index * stride, true)) || this.#view.getFloat64(index * stride, true) <= 0) throw TypeError('Invalid owned ink stored identity.');
   this.#known = new Uint8Array(Math.ceil(count / 8)); if (input) this.#known.fill(255);
-  this.#used = new Uint8Array(Math.ceil(count / 8)); this.#first = reserveIds(count); Object.freeze(this);
+  this.#used = new Uint8Array(Math.ceil(count / 8)); this.#first = rasterRange ? MetadataRange.claim(rasterRange, rasterOffset, count) : reserveIds(count); Object.freeze(this);
  }
  get count() { return this.#count; }
  get storageBytes() { return this.#view.byteLength + this.#known.byteLength + this.#used.byteLength; }
@@ -69,5 +81,5 @@ function writeOwnedFingerprintWords(stroke, output, at = 0) {
  if (!output || typeof output.setUint32 !== 'function' || !Number.isSafeInteger(at) || at < 0 || at + 8 > output.byteLength) throw TypeError('Invalid owned ink fingerprint destination.');
  return OwnedStroke.words(stroke, output, at);
 }
-const api = { MAX_OWNED_INK_PAGE: MAX_PAGE, createOwnedInkMetadataPage: (count, options) => new MetadataPage(count, options), createOwnedInkStroke, ownedInkId: OwnedStroke.id, ownedStoredId: OwnedStroke.storedId, knownOwnedFingerprint: OwnedStroke.text, primeOwnedFingerprintWords: OwnedStroke.prime, writeOwnedFingerprintWords, allocateInkId: () => reserveIds(1) };
+const api = { MAX_OWNED_INK_PAGE: MAX_PAGE, reserveOwnedInkRange: count => new MetadataRange(count), createOwnedInkMetadataPage: (count, options) => new MetadataPage(count, options), createOwnedInkStroke, ownedInkId: OwnedStroke.id, ownedStoredId: OwnedStroke.storedId, knownOwnedFingerprint: OwnedStroke.text, primeOwnedFingerprintWords: OwnedStroke.prime, writeOwnedFingerprintWords, allocateInkId: () => reserveIds(1) };
 module.exports = globalThis.NoteMindOwnedInkMetadata ||= api;
