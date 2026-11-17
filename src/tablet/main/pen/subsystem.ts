@@ -27,7 +27,7 @@ import { createWintabBackend } from "./wintabBackend"
 import { MacPenBackend } from "./macPenBackend"
 import { createButtonsFeed } from "./buttonsFeed"
 import { MacPenButtons } from "./displayButtonsReader"
-import { MacWacomOneCaptureController } from "./displayCapture"
+import { MacWacomOneCaptureController, type OneCaptureStatus } from "./displayCapture"
 import { createPadCaptureLease } from "./padCapture"
 import { screenToSheet } from "../../shared/orientation"
 
@@ -45,6 +45,7 @@ export interface PenSubsystemDeps {
   penHelper?: string | null
   displayHelper?: string | null
   displayTarget?: () => { id: number; rotation: number } | null
+  onDisplayStatus?(status: OneCaptureStatus): void
   log(line: string): void
 }
 
@@ -177,7 +178,7 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
   const eligible=()=>!suspended&&!locked&&manager.settings().enabled!==false ? deps.displayTarget?.() ?? null : null
   const lease=createPadCaptureLease({driver:capture ?? {start(){},heartbeat(){return false},stop(){}},target:()=>eligible()?.id ?? null,now:()=>performance.now()})
   const offCaptureSamples=capture?.onSample((id,sample)=>{const target=eligible(),win=deps.window();if(!target||target.id!==id||!win||win.isDestroyed())return;const turns=target.rotation===90?1:target.rotation===180?2:target.rotation===270?3:0;const p=screenToSheet({x:sample.x,y:1-sample.y},turns);win.webContents.send("pad:pen-samples",[{...sample,x:p.x,y:1-p.y}])})
-  const offCaptureStatus=capture?.onStatus((id,status)=>{const active=["checking","listening","active"].includes(status.state);if(active)buttonsReader?.stop();else buttonsReader?.start();lease.status(id,status);const win=deps.window();if(win&&!win.isDestroyed()&&win.id===id)win.webContents.send("pad:pen-status",status)})
+  const offCaptureStatus=capture?.onStatus((id,status)=>{const active=["checking","listening","active"].includes(status.state);if(active)buttonsReader?.stop();else buttonsReader?.start();lease.status(id,status);const win=deps.window();if(win&&!win.isDestroyed()&&win.id===id)win.webContents.send("pad:pen-status",status);deps.onDisplayStatus?.(status)})
   const audit=setInterval(()=>lease.audit(),100);audit.unref?.()
   const onSuspend=():void=>{suspended=true;lease.stop()},onLock=():void=>{locked=true;lease.stop()}
   const clearSuspend=():void=>{suspended=false},clearLock=():void=>{locked=false}

@@ -23,7 +23,7 @@ export function PaperMenu() {
       custom: (
         <span className="paper-chips" role="radiogroup" aria-label="Spacing">
           {PAPER_SPACINGS.map((one) => (
-            <button key={one.value} type="button" role="radio" aria-checked={paper.spacing === one.value} data-paper-spacing={one.value}
+            <button key={one.value} type="button" role="radio" aria-checked={paper.spacing === one.value} data-paper-spacing={one.value} title={one.label+' paper spacing'}
                     disabled={pitchOf(paper.kind, one.value) === 0} onClick={() => setPaper({ spacing: one.value })}>{one.label}</button>
           ))}
         </span>
@@ -34,7 +34,7 @@ export function PaperMenu() {
       custom: (
         <span className="paper-chips" role="radiogroup" aria-label="Paper colour">
           {PAPER_COLOURS.map((one) => (
-            <button key={one.value} type="button" role="radio" aria-checked={paper.colour === one.value} data-paper-colour={one.value}
+            <button key={one.value} type="button" role="radio" aria-checked={paper.colour === one.value} data-paper-colour={one.value} title={one.label+' paper'}
                     onClick={() => setPaper({ colour: one.value })}>
               <span className="swatch" style={{ background: one.paper }} />{one.label}
             </button>

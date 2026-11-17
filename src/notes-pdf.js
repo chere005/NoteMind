@@ -13,7 +13,7 @@
     +choose('Margins','margin',[['normal','Normal (0.75 in)'],['narrow','Narrow (0.5 in)'],['none','None']])
     +toggle('Page numbers (1 / N)','pageNumbers')+toggle('Remove picture backgrounds','clean')+toggle('Open after export','open')
     +'</div><div class="pdf-preview"><div class="pdf-frame"><div class="pdf-sheet"><iframe sandbox="allow-same-origin" scrolling="no" title="Preview of the first page"></iframe><div class="pdf-folio"></div></div></div><p class="pdf-note">First page. Page breaks are set when you export.</p></div></div>'
-    +'<div class="dialog-actions"><button data-cancel>Cancel</button><button data-go>Export…</button></div>';
+    +'<div class="dialog-actions"><button data-cancel title="Cancel PDF export">Cancel</button><button data-go title="Choose where to save the PDF">Export…</button></div>';
    const value=options(),fields=[...d.querySelectorAll('[data-k]')],frame=d.querySelector('.pdf-frame'),sheet=d.querySelector('.pdf-sheet'),iframe=d.querySelector('iframe'),folio=d.querySelector('.pdf-folio'),note=d.querySelector('.pdf-note');
    for(const field of fields){if(field.type==='checkbox')field.checked=!!value[field.dataset.k];else field.value=value[field.dataset.k];}
    const read=()=>{const next={};for(const field of fields)next[field.dataset.k]=field.type==='checkbox'?field.checked:field.value;return next;};

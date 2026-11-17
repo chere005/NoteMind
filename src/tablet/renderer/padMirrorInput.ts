@@ -1,7 +1,15 @@
 /** The owner window's mouse, sent only by its visible pixel mirror to the same-origin Wacom portal. */
 type View = Window & typeof globalThis
 
-const MIRROR_MOUSE_POINTER_ID = 4243
+export const MIRROR_MOUSE_POINTER_ID = 4243
+const mirrorEvents = new WeakSet<Event>()
+/** Source-window mirror input and its forwarded compatibility events are the user's mouse, never pen driver echoes. */
+export const isPadMirrorEvent = (event: Event): boolean =>
+  mirrorEvents.has(event) || !!(event.target as Element | null)?.closest?.(".pad-mirror")
+const dispatchMirrorEvent = (target: EventTarget, event: Event): boolean => {
+  mirrorEvents.add(event)
+  return target.dispatchEvent(event)
+}
 const CLICK_SLOP = 6
 const CLICKABLE = "button, [role='button'], [role='tab'], summary, a[href], input, textarea, select, [contenteditable='true'], [contenteditable='']"
 
@@ -60,10 +68,10 @@ function bridgeFor(view: View, emit: Emit): Bridge {
   })
   const pointer = (target: Element, type: string, event: PadMirrorPointer, point: Point, related?: EventTarget | null): void => {
     const init = base(event, point, related)
-    emit(() => target.dispatchEvent(new view.PointerEvent(type, init)))
+    emit(() => dispatchMirrorEvent(target, new view.PointerEvent(type, init)))
   }
   const mouse = (target: Element, type: string, event: PadMirrorPointer, point: Point, related?: EventTarget | null): void => {
-    target.dispatchEvent(new view.MouseEvent(type, base(event, point, related)))
+    dispatchMirrorEvent(target, new view.MouseEvent(type, base(event, point, related)))
   }
   const hover = (target: Element | null, event: PadMirrorPointer, point: Point): void => {
     if (hovered === target) {
@@ -74,16 +82,16 @@ function bridgeFor(view: View, emit: Emit): Bridge {
     hovered = target
     if (prior) {
       pointer(prior, "pointerout", event, point, target)
-      emit(() => prior.dispatchEvent(new view.PointerEvent("pointerleave", { ...base(event, point, target), bubbles: false })))
+      emit(() => dispatchMirrorEvent(prior, new view.PointerEvent("pointerleave", { ...base(event, point, target), bubbles: false })))
       mouse(prior, "mouseout", event, point, target)
-      prior.dispatchEvent(new view.MouseEvent("mouseleave", { ...base(event, point, target), bubbles: false }))
+      dispatchMirrorEvent(prior, new view.MouseEvent("mouseleave", { ...base(event, point, target), bubbles: false }))
     }
     if (!target) return
     if (target) {
       pointer(target, "pointerover", event, point, prior)
-      emit(() => target.dispatchEvent(new view.PointerEvent("pointerenter", { ...base(event, point, prior), bubbles: false })))
+      emit(() => dispatchMirrorEvent(target, new view.PointerEvent("pointerenter", { ...base(event, point, prior), bubbles: false })))
       mouse(target, "mouseover", event, point, prior)
-      target.dispatchEvent(new view.MouseEvent("mouseenter", { ...base(event, point, prior), bubbles: false }))
+      dispatchMirrorEvent(target, new view.MouseEvent("mouseenter", { ...base(event, point, prior), bubbles: false }))
       pointer(target, "pointermove", event, point)
       mouse(target, "mousemove", event, point)
     }
@@ -135,14 +143,14 @@ function bridgeFor(view: View, emit: Emit): Bridge {
       contact = null
       const upTarget = hit(point)
       if (event.type === "pointerup" && held.button === 2 && Math.hypot(point.x - held.start.x, point.y - held.start.y) < CLICK_SLOP) {
-        if (upTarget) upTarget.dispatchEvent(new view.MouseEvent("contextmenu", { ...base(event, point), button: 2 }))
+        if (upTarget) dispatchMirrorEvent(upTarget, new view.MouseEvent("contextmenu", { ...base(event, point), button: 2 }))
       } else if (event.type === "pointerup" && held.button === 0 && held.clickable && clickable(upTarget) === held.clickable
         && Math.hypot(point.x - held.start.x, point.y - held.start.y) < CLICK_SLOP) {
         const now = view.performance.now()
         const detail = lastClick?.target === held.clickable && now - lastClick.at <= 500 ? lastClick.detail + 1 : 1
         lastClick = { target: held.clickable, at: now, detail }
-        held.clickable.dispatchEvent(new view.MouseEvent("click", { ...base(event, point), detail }))
-        if (detail === 2) held.clickable.dispatchEvent(new view.MouseEvent("dblclick", { ...base(event, point), detail }))
+        dispatchMirrorEvent(held.clickable, new view.MouseEvent("click", { ...base(event, point), detail }))
+        if (detail === 2) dispatchMirrorEvent(held.clickable, new view.MouseEvent("dblclick", { ...base(event, point), detail }))
       } else if (event.type === "pointercancel") lastClick = null
       hover(upTarget, event, point)
       return true
@@ -160,10 +168,10 @@ function bridgeFor(view: View, emit: Emit): Bridge {
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
       bubbles: true, cancelable: true, composed: true, view,
     })
-    target.dispatchEvent(keyEvent)
+    dispatchMirrorEvent(target, keyEvent)
     if (event.type === "keydown" && !keyEvent.defaultPrevented && (event.key === "Enter" || event.key === " ")
       && target.matches("button, [role='button'], [role='menuitem']")) {
-      target.dispatchEvent(new view.MouseEvent("click", { bubbles: true, cancelable: true, composed: true, view, detail: 0 }))
+      dispatchMirrorEvent(target, new view.MouseEvent("click", { bubbles: true, cancelable: true, composed: true, view, detail: 0 }))
     }
     return true
   }

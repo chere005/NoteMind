@@ -3,7 +3,7 @@
  async function shortcuts(){
   const entries=await window.notemind.shortcuts();
   const d=document.createElement('dialog');d.className='shell-dialog shortcuts-dialog';
-  d.innerHTML='<h2>Keyboard Shortcuts</h2><input type="search" placeholder="Search shortcuts" aria-label="Search shortcuts"><div class="shortcut-list"></div><div class="dialog-actions"><button data-close>Close</button></div>';
+  d.innerHTML='<h2>Keyboard Shortcuts</h2><input type="search" placeholder="Search shortcuts" aria-label="Search shortcuts"><div class="shortcut-list"></div><div class="dialog-actions"><button data-close title="Close keyboard shortcuts">Close</button></div>';
   const input=d.querySelector('input'),list=d.querySelector('.shortcut-list');
   function draw(){
    const words=input.value.toLowerCase().split(/\s+/).filter(Boolean);list.replaceChildren();

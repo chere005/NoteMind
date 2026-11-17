@@ -334,6 +334,10 @@ export type Press =
   | { kind: "ignore" }
 
 export function resolvePress(event: PressLike, settings: PressSettings): Press {
+  // The mouse's secondary button is a temporary Select tool, independently of the pen's physical button map.
+  if (event.pointerType === "mouse" && (event.button === 2 || (event.buttons & BIT.lower) !== 0)) {
+    return { kind: "select", additive: false, tool: false, move: true }
+  }
   const displayEvent = withNative(event)
   const slot = slotOf(displayEvent)
   if (displayEvent.viaDisplay && !inContact(displayEvent)) return { kind: "ignore" }

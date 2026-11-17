@@ -32,6 +32,7 @@ import { penNear, penSettings, pressEraseKey, setPenDraws, setSelectTool, setShe
 import { penOnSheet, tabletUndo } from "./tabletFocus"
 import { penGate } from "./penGate"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState, onNativeButtons } from "./nativeButtons"
+import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
 const SYNTH_POINTER_ID = 4242
 
 type Id = PenAction | PenCommandAction
@@ -173,6 +174,7 @@ function installNativeGuard(win: Window): () => void {
   }
   const pointer = (event: Event): void => {
     const e = event as PointerEvent
+    if (e.pointerType === "mouse" && (e.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(e))) return
     const pen = e.pointerType === "pen" && e.pointerId !== SYNTH_POINTER_ID
     const contacting = pen && inContact(e)
     if (pen && nativeLive() && e.type === "pointermove") {
@@ -217,6 +219,7 @@ function installNativeGuard(win: Window): () => void {
     if (e.pointerType === "mouse" && nativeSideBusy() && !nativeState().tip && atLocalPen(event)) drop(event)
   }
   const mouse = (event: Event): void => {
+    if (isPadMirrorEvent(event)) return
     const e = event as MouseEvent
     const penTyped = (e as MouseEvent & { pointerType?: string }).pointerType === "pen"
     if (nativeLive() && penTyped && (e.button === 1 || e.button === 2)) { drop(event); return }
@@ -279,6 +282,7 @@ export function installPenActions(win: Window = window): () => void {
   }
   /** The driver's mouse click for a side button pressed in the air (see the header). */
   const echo = (phase: Phase, event: PointerEvent) => {
+    if (event.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(event)) return
     if (phase === "cancel") { echoBits = 0; return }
     if (phase !== "down" && phase !== "up") return
     const bit = event.button === 2 ? 2 : event.button === 1 ? 4 : 0

@@ -1,13 +1,13 @@
 {
   "name": "notemind",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "private": true,
   "description": "A simple desktop notepad for Markdown and Python.",
   "main": "src/main.cjs",
   "scripts": {
     "start": "electron .",
     "build": "node scripts/build.cjs",
-    "test": "node --test test/*.test.cjs",
+    "test": "node --test --test-concurrency=1 test/*.test.cjs",
     "preflight": "npm test"
   },
   "dependencies": {

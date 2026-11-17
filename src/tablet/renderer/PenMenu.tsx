@@ -160,7 +160,7 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
       {!onPad && status?.mapping === "refused" && (
         <p className="hint">
           The Wacom driver would not confine the pen to the sheet.{" "}
-          <button className="icon-button" data-pen="retry-mapping" onClick={() => { void retryMapping() }}
+          <button className="icon-button" data-pen="retry-mapping" title="Try mapping the tablet to this sheet again" onClick={() => { void retryMapping() }}
                   style={{ width: "auto", padding: "0 8px", fontSize: 11 }}>Retry</button>
         </p>
       )}

@@ -20,3 +20,18 @@ test('mirror input is bounded and rejected after the display closes',()=>{
 test('a visible display stays active when the mouse focuses another application',()=>{
  const h=setup(),c=h.controller,p=h.window();c.attach(p);c.markReady();h.owner.isFocused=()=>false;c.refresh();assert.equal(p.visible,true);assert.equal(c.captureEligible(),true);c.setOwned(false);assert.equal(p.visible,false);assert.equal(c.captureEligible(),false);c.dispose();
 });
+test('idle mirroring slows down, wakes for input and stops before capturing a hidden owner',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','Date']});
+ const h=setup(),c=h.controller,p=h.window();let captures=0;
+ p.webContents.capturePage=async()=>{captures++;return {isEmpty:()=>false,getSize:()=>({width:800,height:600}),toJPEG:()=>Buffer.from('same frame')};};
+ c.attach(p);c.markReady();
+ const tick=async ms=>{t.mock.timers.tick(ms);await Promise.resolve();await Promise.resolve();};
+ await tick(0);assert.equal(captures,1);
+ await tick(200);assert.equal(captures,2);
+ await tick(400);assert.equal(captures,3);
+ await tick(800);assert.equal(captures,4);
+ await tick(999);assert.equal(captures,4,'idle mirror waits a full second');
+ c.activity();await tick(100);assert.equal(captures,5,'interaction wakes the mirror promptly');
+ c.activity();await tick(50);c.activity();await tick(50);assert.equal(captures,6,'continuous interaction cannot postpone a scheduled capture');
+ h.owner.isVisible=()=>false;await tick(1000);assert.equal(captures,6,'visibility is checked before capture');c.dispose();
+});

@@ -4,6 +4,7 @@
  * Pen and mouse follow the Pen, Eraser and Select tools. Native pen samples arrive as PointerEvents on the same
  * path. Held side buttons override the tool: lower erases complete strokes, upper selects; double taps undo/redo.
  * In Select mode, drag outside the box to select, inside to move selected ink, or at a corner to resize it.
+ * The mouse's right button temporarily selects, moves or resizes ink without changing the active tool.
  * The sheet's tools belong to penSettings `sheetTools`, independently of the document's drawing controls.
  *
  * Built to feel like a pad. Pointer events arrive far faster than frames, so every coalesced sample is kept (the
@@ -352,7 +353,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const pen = event.pointerType === "pen"
     if (pen) touching.current = inContact(event)
     if (gesture.current && gesture.current.pointerId !== event.pointerId) return
-    if (!pen && event.button !== 0) return
+    if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return
     event.preventDefault()
     let action = pressAction(event, sheetPressSettings())
     // Nothing to do here: a side button pressed in the air (its double tap is the runtime's, penActions.ts), or Pan.

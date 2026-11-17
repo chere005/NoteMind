@@ -44,6 +44,9 @@
 // then exclusively opens only that known source, any required known sibling, and the One Mouse interface. The child releases on
 // EOF/SIGTERM, invalid/stale in-range traffic or a 2s missed lease.
 //
+// Explicit consent request: `wm-pen --request-access` asks only for Input Monitoring and reports {"k":"access","v":...}.
+// It exits before matching, opening or seizing any device.
+//
 // Read-only diagnostics that never seize, never ask for Input Monitoring and do not run the pen:
 //   wm-pen --classify "<product name>" <product id, decimal>   {"k":"verdict",…}   the rule alone (the tests ask it)
 //   wm-pen --list                                              {"k":"list",…}      each Wacom HID device and what would be done with it
@@ -130,6 +133,20 @@ func verdict(name: String, pid: Int) -> Verdict {
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+func access() -> String {
+    switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
+    case kIOHIDAccessTypeGranted: return "granted"
+    case kIOHIDAccessTypeDenied: return "denied"
+    default: return "undecided"
+    }
+}
+if arguments.first == "--request-access" {
+    guard arguments.count == 1 else { FileHandle.standardError.write(Data("usage: wm-pen --request-access\n".utf8)); exit(64) }
+    var answer = access()
+    if answer != "granted" { answer = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) ? "granted" : access() }
+    say(["k": "access", "v": answer])
+    exit(0)
+}
 if arguments.first == "--stress-capture-output" {
     guard arguments.count == 1, enableCaptureOutput() else { exit(64) }
     let payload = String(repeating: "x", count: 8192)
@@ -734,14 +751,7 @@ guard let pointer = all.first else {
     exit(4)
 }
 
-// Asked only once there is a tablet to take: a Mac with none plugged in never sees macOS's question.
-func access() -> String {
-    switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
-    case kIOHIDAccessTypeGranted: return "granted"
-    case kIOHIDAccessTypeDenied: return "denied"
-    default: return "undecided"
-    }
-}
+// Generic tablet capture asks only once there is a tablet to take.
 var answer = access()
 if answer == "undecided" {
     answer = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) ? "granted" : access()

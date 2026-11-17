@@ -23,6 +23,7 @@ const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openP
 require('./features.cjs')(() => win, projectService);
 
 let pen;
+const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({shell,helper:process.platform==='darwin'?path.join(__dirname,'helpers','wm-pen-display'):null,onError:error=>console.error('Input Monitoring:',error.message)});
 
 let sheetWrite = Promise.resolve();
 
@@ -40,7 +41,7 @@ if (!instance||closeOnly) app.quit();
 const documentArg = args => args.slice(1).find(arg => !arg.startsWith('-') && /\.(nm|wm|wmpr|md|txt|py|docx|pdf|png|jpe?g|webp|gif|bmp|svg|avif)$/i.test(arg));
 
 let pendingDocument = documentArg(process.argv),guidePending=process.argv.includes('--tour');
-const showWelcomeAtStart=!process.env.NOTEMIND_DATA&&!process.argv.includes('--workspace')&&!pendingDocument&&!guidePending;
+let showWelcomeAtStart=!process.env.NOTEMIND_DATA&&!process.argv.includes('--workspace')&&!pendingDocument&&!guidePending;
 
 app.on('open-file', (event, file) => { event.preventDefault(); if (!/\.(nm|wm|wmpr|md|txt|py|docx|pdf|png|jpe?g|webp|gif|bmp|svg|avif)$/i.test(file)) return; if (win && !win.isDestroyed() && !win.webContents.isLoading()) {win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(file));} else pendingDocument = file; });
 
@@ -52,6 +53,9 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   let bounds={width:1440,height:920}; try {const kept=JSON.parse(require('node:fs').readFileSync(path.join(app.getPath('userData'),'window.json'),'utf8')); const displays=screen.getAllDisplays(); if(displays.some(d=>kept.x<d.workArea.x+d.workArea.width && kept.x+kept.width>d.workArea.x && kept.y<d.workArea.y+d.workArea.height && kept.y+kept.height>d.workArea.y))bounds=kept;}catch{}
 
+  let padEnabled=process.env.NOTEMIND_TEST_NO_PAD!=='1';if(padEnabled)try{padEnabled=JSON.parse(require('node:fs').readFileSync(path.join(projectHome,'pad.json'),'utf8')).enabled!==false;}catch{}
+  if(padEnabled&&require('./pad-display.cjs').findPenDisplay(screen.getAllDisplays(),screen.getPrimaryDisplay().id))showWelcomeAtStart=false;
+
   win = new BrowserWindow({ ...bounds, show:!showWelcomeAtStart, minWidth: 800, minHeight: 550, autoHideMenuBar: false, title: 'NoteMind', icon:path.join(__dirname,'icon.png'), backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#f4f3ef', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
 
   win.setAutoHideMenuBar(false);
@@ -59,7 +63,6 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   const external=url=>{try{if(['https:','http:','mailto:'].includes(new URL(url).protocol))void shell.openExternal(url);}catch{}};
   win.webContents.on('will-navigate',(event,url)=>{event.preventDefault();external(url);});
-  let padEnabled=process.env.NOTEMIND_TEST_NO_PAD!=='1';if(padEnabled)try{padEnabled=JSON.parse(require('node:fs').readFileSync(path.join(projectHome,'pad.json'),'utf8')).enabled!==false;}catch{}
   let claimingPad=false;
   const padOwnership=require('./pad-ownership.cjs').createPadOwnership({file:path.join(projectHome,'pad-owner.json'),onChange:owned=>padController?.setOwned(owned)});
   const claimPad=()=>{if(claimingPad||!padController?.state().available||!padController.state().enabled)return;claimingPad=true;padOwnership.claim().catch(error=>console.error('Pen display ownership:',error)).finally(()=>{claimingPad=false;});};
@@ -133,7 +136,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
   win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
 
-  pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
+  pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>inputMonitoring.onStatus(status), displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
 
   pen.attachWindow();
 
@@ -292,10 +295,13 @@ ipcMain.handle('duplicate-entry', async (_, source) => { const ext = path.extnam
 ipcMain.handle('move-entry', async (_, source, folder) => { const src = path.resolve(source), dir = path.resolve(folder), target = path.join(dir, path.basename(src)); const key = p => process.platform === 'win32' ? p.toLowerCase() : p; if (key(src) === key(target)) return src; const stat = await fs.lstat(src); if (stat.isDirectory() && (key(dir) === key(src) || key(dir).startsWith(key(src) + path.sep))) throw Error('A folder cannot be moved inside itself.'); try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(src);await fileActions.rename(src,target);await notesStore.rename(src,target);notesIPC.send();return target; });
 
 ipcMain.handle('trash-entry', async (_, source) => {await settleDocumentWrites(source);await fileActions.trash(source);notesIPC.send();});
+ipcMain.handle('pad:request-access',event=>{if(event.sender!==win?.webContents)return null;return inputMonitoring.request();});
 ipcMain.handle('pad:state',event=>event.sender===win?.webContents?padController?.state():null);
+ipcMain.handle('pad:close',event=>{if(event.sender!==win?.webContents)return null;padController?.setEnabled(false);return padController?.state();});
 ipcMain.handle('pad:set',async(event,enabled)=>{if(event.sender!==win?.webContents||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();});
 ipcMain.handle('pad:ready',event=>{if(event.sender===win?.webContents)padController?.markReady();});
 ipcMain.on('pad:input',(event,input)=>{if(event.sender===win?.webContents)padController?.input(input);});
+ipcMain.on('pad:activity',event=>{if(event.sender===win?.webContents)padController?.activity();});
 ipcMain.on('pad:pen-heartbeat',event=>{if(event.sender===win?.webContents)pen?.displayHeartbeat?.();});
 ipcMain.on('pad:pen-stop',event=>{if(event.sender===win?.webContents)pen?.displayStop?.();});
 ipcMain.handle('edit-native',(_,action)=>{if(!['cut','copy','paste','selectAll'].includes(action))throw Error('Invalid edit action');win?.webContents[action]();});

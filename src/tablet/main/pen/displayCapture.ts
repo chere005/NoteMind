@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import type { PenSample } from "../../shared/pen"
 export interface OneCaptureStatus { state: "checking" | "listening" | "active" | "needs-input-monitoring" | "unavailable" | "failed" | "idle"; reason: string | null }
-const WACOM_ONE_INPUT_MONITORING = "NoteMind needs Input Monitoring to capture this pen display. Enable it in System Settings and reopen the drawing display."
+const WACOM_ONE_INPUT_MONITORING = "NoteMind needs Input Monitoring to capture this pen display. Allow NoteMind in System Settings; pen input retries automatically."
 function parseHelperLine(text: string): any { try {const value=JSON.parse(text);return value && typeof value.k === "string" ? value : null} catch {return null} }
 
 export function sampleOf(r: { f: number; x: number; y: number; p: number }, device: { maxX: number; maxY: number; maxP: number }, t: number): PenSample | null {

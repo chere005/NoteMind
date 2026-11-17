@@ -3,6 +3,18 @@ const result=esbuild.buildSync({stdin:{contents:"export * from './src/tablet/ren
 vm.runInNewContext(result.outputFiles[0].text,{module:loaded,exports:loaded.exports,require,process,performance,Buffer,setTimeout,clearTimeout});
 const pen=loaded.exports,plain=value=>JSON.parse(JSON.stringify(value)),device={maxX:1000,maxY:1000,maxP:1000};
 
+test('right mouse temporarily selects regardless of the active tool or custom pen assignments',()=>{
+ pen.resetNativeButtons();
+ const right={pointerType:'mouse',pointerId:4243,button:2,buttons:2,pressure:.5};
+ const settings={eraser:true,buttons:{lower:{hold:'pan',double:'contextMenu'},upper:{hold:'erase',double:'wider'}}};
+ assert.deepEqual(plain(pen.resolvePress(right,settings)),{kind:'select',additive:false,tool:false,move:true});
+ assert.equal(pen.resolvePress({...right,button:-1},settings).kind,'select');
+ assert.equal(pen.resolvePress({...right,button:0,buttons:1},settings).kind,'erase');
+ assert.equal(pen.resolvePress({...right,button:0,buttons:1},{eraser:false}).kind,'draw');
+ assert.equal(pen.resolvePress({...right,pointerType:'pen',pointerId:4242,buttons:3},settings).kind,'pan');
+ assert.equal(pen.resolvePress({...right,pointerType:'pen',pointerId:4242,button:1,buttons:5},settings).kind,'erase');
+});
+
 test('first and second button defaults migrate the old pair while retaining custom assignments',()=>{
  assert.deepEqual(plain(pen.DEFAULT_BUTTONS.upper),{hold:'erase',double:'undo'});
  assert.deepEqual(plain(pen.DEFAULT_BUTTONS.lower),{hold:'select',double:'redo'});
