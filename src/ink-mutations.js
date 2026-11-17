@@ -1,7 +1,7 @@
 // Pending immutable edits outlive a mounted Surface, but never an owning page's geometry lease.
 const graphics=require('./graphics-pane.js'),bounds=require('./stroke-bounds.js'),signatures=require('./stroke-signature.js');
 const shared=globalThis.NoteMindInkMutations||(()=>{
- const pending=new WeakMap(),active=new Set(),projections=new WeakMap(),projectionSet=new Set(),listeners=new Set();
+ const pending=new WeakMap(),active=new Set(),projections=new WeakMap(),projectionSet=new Set(),listeners=new Set(),capacityReservations=new WeakMap(),reservationRecords=new WeakMap();
  const changed=owner=>{for(const listener of listeners){try{listener(owner)}catch{}}};
  const aborted=()=>{const error=Error('Drawing change cancelled.');error.name='AbortError';return error;};
  async function project(strokes,replacements,{signal}={}){if(replacements?.eraseOccurrences){const counts=new Map(),next=[],box=bounds.emptyInkBox();let work=0;for(const stroke of replacements.eraseOccurrences){counts.set(stroke,(counts.get(stroke)||0)+1);if(++work%4096===0)await graphics.yieldTask();}for(let i=strokes.length-1;i>=0;i--){if(signal?.aborted)throw aborted();const stroke=strokes[i],count=counts.get(stroke)||0;if(count)counts.set(stroke,count-1);else{next.push(stroke);bounds.extendInkBox(box,bounds.strokeBox(stroke));}if(++work%4096===0)await graphics.yieldTask();}for(let i=0,j=next.length-1;i<j;i++,j--){const item=next[i];next[i]=next[j];next[j]=item;if(++work%4096===0)await graphics.yieldTask();}bounds.primeInkBox(next,box);return next;}if(replacements?.target)return replacements.target;if(replacements?.identity)return strokes;const append=replacements?.append;if(append)replacements=new Map();const next=[],box=bounds.emptyInkBox();for(let i=0;i<strokes.length;i++){if(signal?.aborted)throw aborted();const original=strokes[i],stroke=replacements.has(original)?replacements.get(original):original;if(!stroke)continue;next.push(stroke);bounds.extendInkBox(box,bounds.strokeBox(stroke));if(i%4096===4095)await graphics.yieldTask();}if(append){next.push(append);bounds.extendInkBox(box,bounds.strokeBox(append));}bounds.primeInkBox(next,box);return next;}
@@ -16,8 +16,22 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
   // The owner receives the rejection through done; ready may reject before an export subscribes.
   registerInkProjection(page,op.ready,op.done);op.ready.catch(()=>{});op.done.catch(()=>{});return op;
  }
- function appendInkStroke(owner,stroke,{nativeCanonical=false,commit=value=>owner.add(value),retain=()=>owner.retainGeometry?.()||(()=>{}),onCommit=()=>{},finalize,before}={}){
-  const prior=before===undefined?flushInkMutations(owner):before,release=retain();let hash,geometry=null
+ const INK_LIMIT=2000000;
+ function capacityError(){const error=Error('This drawing is full. Add another page to keep drawing.');error.code='NOTEMIND_INK_CAPACITY';return error;}
+ function geometrySize(owner){const points=owner.currentGeometryPoints,strokes=owner.strokes?.length??owner.current?.length;if(!Number.isSafeInteger(points)||points<0||!Number.isSafeInteger(strokes)||strokes<0)throw Error('Drawing capacity requires cached geometry counts.');return {points,strokes};}
+ function inkCapacity(owner){const current=geometrySize(owner),reserved=capacityReservations.get(owner);return {points:Math.max(0,INK_LIMIT-current.points-(reserved?.points||0)),strokes:Math.max(0,INK_LIMIT-current.strokes-(reserved?.strokes||0))};}
+ function releaseReservation(record){if(!record.active)return;record.active=false;const reserved=capacityReservations.get(record.owner);reserved.points-=record.points;reserved.strokes--;if(!reserved.strokes)capacityReservations.delete(record.owner);}
+ function reserveInkStroke(owner,initialPoints=1){
+  if(!Number.isSafeInteger(initialPoints)||initialPoints<0)throw Error('Invalid drawing capacity reservation.');const capacity=inkCapacity(owner);if(capacity.strokes<1||capacity.points<initialPoints)throw capacityError();let reserved=capacityReservations.get(owner);if(!reserved)capacityReservations.set(owner,reserved={points:0,strokes:0});const record={owner,points:initialPoints,active:true,locked:false};reserved.points+=initialPoints;reserved.strokes++;
+  const lease={get points(){return record.points;},accept(count=1){if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid drawing capacity request.');if(!record.active||record.locked)return 0;const accepted=Math.min(count,inkCapacity(owner).points);record.points+=accepted;reserved.points+=accepted;return accepted;},release(){if(!record.locked)releaseReservation(record);}};reservationRecords.set(lease,record);return lease;
+ }
+ function adoptReservation(owner,stroke,lease){
+  if(!Array.isArray(stroke?.points)||!stroke.points.length)throw Error('A drawing stroke needs at least one point.');lease ||=reserveInkStroke(owner,stroke.points.length);const record=reservationRecords.get(lease);if(!record||record.owner!==owner||!record.active||record.locked||record.points!==stroke.points.length)throw Error('Invalid drawing capacity reservation.');record.locked=true;
+  return {release:()=>releaseReservation(record),check(){const size=geometrySize(owner),reserved=capacityReservations.get(owner);if(!record.active||record.points!==stroke.points.length||size.points+(reserved?.points||0)>INK_LIMIT||size.strokes+(reserved?.strokes||0)>INK_LIMIT)throw capacityError();}};
+ }
+ function appendInkStroke(owner,stroke,{nativeCanonical=false,commit=value=>owner.add(value),retain=()=>owner.retainGeometry?.()||(()=>{}),onCommit=()=>{},finalize,before,reservation}={}){
+  const admitted=adoptReservation(owner,stroke,reservation),prior=before===undefined?flushInkMutations(owner):before;let release,hash,geometry=null
+  try{const held=retain();release=()=>{admitted.release();held()}}catch(error){admitted.release();throw error}
   try{
    hash=signatures.knownStrokeFingerprint(stroke)
    if(!hash){
@@ -25,9 +39,9 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
     if(nativeCanonical&&stroke.points.length>=50000){const run=finalize||globalThis.NoteMindDrawingExport?.fingerprintStroke||((value)=>signatures.canonicalStrokeFingerprintAsync(value,graphics.yieldTask));hash=run(stroke)}else hash=signatures.strokeFingerprint(stroke)
    }
    geometry=!bounds.knownStrokeBox(stroke)&&stroke.points.length>=50000?bounds.strokeBoxAsync(stroke,{yieldControl:graphics.yieldTask}):null
-   if(typeof hash==='string'&&!prior&&!geometry){commit(stroke);onCommit(stroke);release();return null}
+   if(typeof hash==='string'&&!prior&&!geometry){admitted.check();commit(stroke);onCommit(stroke);release();return null}
   }catch(error){release();throw error}
-  const ready=Promise.all([Promise.resolve(hash).then(value=>{signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(()=>({append:stroke})),done=ready.then(()=>{commit(stroke);onCommit(stroke)}).finally(release)
+  const ready=Promise.all([Promise.resolve(hash).then(value=>{signatures.primeStrokeFingerprint(stroke,value)}),prior?.catch?.(()=>{}),geometry]).then(()=>({append:stroke})),done=ready.then(()=>{admitted.check();commit(stroke);onCommit(stroke)}).finally(release)
   ready.catch(()=>{});done.catch(()=>{});registerInkProjection(owner,ready,done);return done
  }
  function createInkActionController(owner,adapters={}){
@@ -44,6 +58,6 @@ const shared=globalThis.NoteMindInkMutations||(()=>{
  function flushInkMutations(page){const held=[...(projections.get(page)||[])];return held.length?Promise.all(held.map(record=>record.done)).then(()=>{}):null;}
  async function flushAllInkMutations(){const held=[...projectionSet];await Promise.all(held.map(record=>record.done));}
  function projectInkSnapshot(page,strokes){const held=(projections.get(page)||[]).map(record=>{const ready=record.capture?record.capture():record.ready;ready?.catch?.(()=>{});return {ready};});return held.length?(async()=>{for(const record of held)strokes=await project(strokes,await record.ready);return strokes;})():strokes;}
- return {beginInkMutation,pendingInkMutation,flushInkMutations,flushAllInkMutations,projectInkSnapshot,projectInkReplacements:project,registerInkProjection,appendInkStroke,createInkActionController,hasPendingInkMutations:owner=>!!projections.get(owner)?.length,subscribeInkMutations:listener=>{listeners.add(listener);return()=>listeners.delete(listener)}};
+ return {inkCapacity,reserveInkStroke,capacityError,beginInkMutation,pendingInkMutation,flushInkMutations,flushAllInkMutations,projectInkSnapshot,projectInkReplacements:project,registerInkProjection,appendInkStroke,createInkActionController,hasPendingInkMutations:owner=>!!projections.get(owner)?.length,subscribeInkMutations:listener=>{listeners.add(listener);return()=>listeners.delete(listener)}};
 })();
 globalThis.NoteMindInkMutations=shared;module.exports=shared;
