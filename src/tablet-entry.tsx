@@ -87,7 +87,7 @@ function App(){
  const [showing,setShowing]=useState(true),[rescan,setRescan]=useState(null);
 
  const sheetReady=sheets[active]?.loaded!==false;
- usePenFeed(showing && loaded && sheetReady);
+ usePenFeed(showing && loaded && (source!=='tablet'||!!documentId||sheetReady));
 
 
 
