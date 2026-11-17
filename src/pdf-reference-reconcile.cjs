@@ -3,8 +3,8 @@ const fs=require('node:fs/promises'),path=require('node:path'),{digest}=require(
 // public note's current source and revision remain the authority for adoption.
 async function reconcile(store,{id,revision,pdfs,files=false}){
  const patches=[];if(typeof id!=='string'||!Array.isArray(pdfs)||pdfs.length>1000)throw Error('Invalid PDF recovery owner.');
+ for(const item of pdfs)if(!item||typeof item.name!=='string'||item.sourceHash!==undefined&&!/^[a-f0-9]{64}$/.test(item.sourceHash)||item.sourceHash===undefined&&(typeof item.data!=='string'||item.data.length>200*1024*1024))throw Error('Invalid PDF attachment recovery.');
  for(const item of pdfs){
-  if(typeof item.name!=='string'||item.sourceHash!==undefined&&!/^[a-f0-9]{64}$/.test(item.sourceHash)||item.sourceHash===undefined&&(typeof item.data!=='string'||item.data.length>200*1024*1024))throw Error('Invalid PDF attachment recovery.');
   const alias=item.reference?.ownerId===id&&typeof item.reference?.recoveryOwnerId==='string'&&/^[\w-]{1,80}$/.test(item.reference.recoveryOwnerId)?item.reference.recoveryOwnerId:id,owners=[...new Set([id,alias])],identities=[];
   for(const owner of owners){const identity='attachment:'+owner+':'+String(item.reference?.id||item.name);try{await fs.access(path.dirname(store.folder(identity,'0'.repeat(64))));identities.push({owner,identity});}catch(error){if(error.code!=='ENOENT')throw error;}}if(!identities.length)continue;
   const sourceHash=item.sourceHash||digest(Buffer.from(item.data,'base64')),pages={},assets={},previous=item.reference?.sourceHash===sourceHash?item.reference.pages||{}:{},seen=new Set(),leases=[];let conflicts=0,recoveryOwner=alias;
