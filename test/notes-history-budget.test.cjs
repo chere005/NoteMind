@@ -3,7 +3,7 @@ function fixture({budget=8192,assets={},text='Original'}={}){
  const listeners={},windowListeners={},observers=[],a={doc:{id:'A',text,assets,meta:{}},dirty:false},b={doc:{id:'B',text:'Other note',assets:{},meta:{}},dirty:false},source={value:text},rich={contains:()=>false,innerHTML:''},body={},strip={};let api;
  const c={activeTab:a,tabs:[a,b],doc:a.doc,source,rich,structuredClone,WeakRef,queueMicrotask,richChanged:false,render:text=>text,currentText:()=>source.value,markDirty:()=>api.record(c.activeTab),document:{activeElement:source,body,contains:()=>true,getElementById:()=>strip,addEventListener:(name,fn)=>listeners[name]=fn,execCommand(){}},MutationObserver:class{constructor(fn){observers.push(fn)}observe(){}},window:{addEventListener:(name,fn)=>windowListeners[name]=fn,NoteMindWriting:{decorate(){}},NoteMindFind:{refresh(){}}}};
  const code=fs.readFileSync(require.resolve('../src/notes-history.js'),'utf8').replace('const MAX_BYTES=192*1024*1024','const MAX_BYTES='+budget);vm.runInNewContext(code,c);api=c.window.NoteMindHistory;api.initialize(a);
- const edit=(value,{input=true}={})=>{if(input)listeners.input({target:source,inputType:'insertText'});source.value=value;c.doc.text=value;api.record(c.activeTab);};
+ const edit=(value,{input=true}={})=>{if(input){listeners.keydown({target:source,key:'x',isTrusted:true});listeners.input({target:source,inputType:'insertText',data:'x',isTrusted:true});}source.value=value;c.doc.text=value;api.record(c.activeTab);};
  const activate=tab=>{c.activeTab=tab;c.doc=tab.doc;source.value=tab.doc.text;api.initialize(tab);};
  return{c,a,b,api,listeners,windowListeners,observers,edit,activate};
 }
@@ -37,4 +37,11 @@ test('oversized current text and metadata remain intact while older undo-only va
 test('repeated edits and undo/redo keep accounting nonnegative and match retained entry ownership',()=>{
  const f=fixture({budget:4096});let seed=7;for(let i=0;i<600;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const op=seed%4;if(op===0){f.c.doc.assets['assets/image.png']=String(i)+'x'.repeat(200);f.api.record(f.a);}else if(op===1)f.edit('Text '+i);else f.api.step(op===3);const value=f.api.stats();assert.ok(value.retainedBytes>=0&&value.retainedBytes<=4096);assert.ok(value.totalBytes>=value.retainedBytes);assert.equal(value.states,f.a.textHistory.past.length+f.a.textHistory.future.length);}
  f.c.tabs=[];f.api.prune();assert.equal(f.api.stats().totalBytes,0);assert.equal(f.api.stats().retainedBytes,0);
+});
+
+test('programmatic insertText after synchronous image mutation cannot create an image-less undo state',()=>{
+ const f=fixture(),name='assets/inserted.png';f.c.doc.assets[name]='IMAGE';f.c.doc.meta.graphicsPanes={[name]:{version:1}};f.c.source.value=f.c.doc.text='![Image]('+name+')';f.listeners.input({target:f.c.source,inputType:'insertText',data:null,isTrusted:true});f.api.record(f.a);f.api.record(f.a);f.api.step();assert.equal(f.c.doc.text,'Original');assert.equal(f.c.doc.assets[name],undefined);f.api.step(true);assert.equal(f.c.doc.text,'![Image]('+name+')');assert.equal(f.c.doc.assets[name],'IMAGE');
+});
+test('prevented or mismatched physical keys do not lend provenance to programmatic asset edits',()=>{
+ for(const prevented of[true,false]){const f=fixture(),event={key:'Enter',isTrusted:true,defaultPrevented:false};f.listeners.keydown(event);event.defaultPrevented=prevented;f.c.doc.assets['assets/new.png']='NEW';f.c.source.value=f.c.doc.text='Inserted image';f.listeners.input({target:f.c.source,inputType:'insertText',data:'Inserted image',isTrusted:true});f.api.record(f.a);f.api.step();assert.equal(f.c.doc.text,'Original');assert.equal(f.c.doc.assets['assets/new.png'],undefined);f.api.step(true);assert.equal(f.c.doc.assets['assets/new.png'],'NEW');}
 });
