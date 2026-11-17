@@ -22,7 +22,7 @@ async function visitAsset(data,visit){
  }
  if(carry)throw Error('Invalid attachment data.');
 }
-async function assetMappingAsync(assets,target){const mapping={};const map=async name=>{if(mapping[name])return mapping[name];const preview=name.endsWith('.json')&&name.slice(0,-5);return mapping[name]=preview&&Object.hasOwn(assets,preview)?await map(preview)+'.json':await target(name);};for(const name of Object.keys(assets))await map(name);return mapping;}
+async function assetMappingAsync(assets,target){const mapping=Object.create(null);const map=async name=>{if(Object.hasOwn(mapping,name))return mapping[name];const preview=name.endsWith('.json')&&name.slice(0,-5);return mapping[name]=preview&&Object.hasOwn(assets,preview)?await map(preview)+'.json':await target(name);};for(const name of Object.keys(assets))await map(name);return mapping;}
 async function assetHashAsync(assets,name){const hash=crypto.createHash('sha256');await visitAsset(assets[name],bytes=>hash.update(bytes));if(assets[name+'.json']){hash.update('\0');await visitAsset(assets[name+'.json'],bytes=>hash.update(bytes));}return hash.digest('hex');}
 async function canonicalAsync(doc){
  const input={...doc,assets:{...(doc.assets||{})},meta:structuredClone(doc.meta||{})},assets={},mapping=await assetMappingAsync(input.assets,async name=>/^assets\/[\w./ -]+$/.test(name)&&!name.split('/').some(p=>p==='..'||p==='.'||!p)?name:'assets/'+(await assetHashAsync(input.assets,name)).slice(0,16)+path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g,''));
@@ -60,8 +60,8 @@ async function read(file,text){
    if(admitted.bytes>maximum||total+admitted.bytes>TOTAL_BYTES)continue;
    // The scoped importer owns one validated file buffer in the archive worker.
    // Pass the original path so its confinement/identity checks see symlinks too.
-   if(scoped){const asset=await codec.importRawAssetFile(requested,{name,root:base});if(total+asset.bytes>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');assets[url]=asset;total+=asset.bytes;}
-   else{const bytes=await require('./read-limited.cjs').readLimited(target,maximum,'Linked attachment is too large.');validateEntry(name,bytes);if(total+bytes.length>TOTAL_BYTES)continue;assets[url]=bytes.toString('base64');total+=bytes.length;}
+   if(scoped){const asset=await codec.importRawAssetFile(requested,{name,root:base});if(total+asset.bytes>TOTAL_BYTES)throw Error('This Notepad is too large. Use fewer or smaller images.');Object.defineProperty(assets,url,{value:asset,enumerable:true,writable:true,configurable:true});total+=asset.bytes;}
+   else{const bytes=await require('./read-limited.cjs').readLimited(target,maximum,'Linked attachment is too large.');validateEntry(name,bytes);if(total+bytes.length>TOTAL_BYTES)continue;Object.defineProperty(assets,url,{value:bytes.toString('base64'),enumerable:true,writable:true,configurable:true});total+=bytes.length;}
   }catch(error){if(scoped&&(!error.code||!['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error.code)))throw error;}
  }
  return {path:file,text,assets,id:metadata.id,title:metadata.title,created:metadata.created,meta:metadata.meta||{}};
