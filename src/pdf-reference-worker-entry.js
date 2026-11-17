@@ -11,6 +11,7 @@ window.notemindPDFWorker.onRequest(async packet=>{
   else if(method==='info')value=await session.info(args.page,{signal:controller.signal});
   else if(method==='render'){const lease=await session.render(args.page,{maxDimension:args.maxDimension||2048,thumbnail:!!args.thumbnail,signal:controller.signal});try{value={...lease.value};delete value.dispose;window.notemindPDFWorker.reply({id,value});return;}finally{lease.release();}}
   else if(method==='text'){const page=await session.document.page(args.page,{signal:controller.signal});try{value=await page.text({signal:controller.signal});}finally{page.cleanup();}}
+  else if(method==='stats')value=session.stats();
   else if(method==='source')value=await session.document.bytes();
   else if(method==='close'){await session.close();value=null;}
   else throw Error('Unknown PDF reference operation.');window.notemindPDFWorker.reply({id,value});
