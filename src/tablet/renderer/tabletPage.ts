@@ -281,12 +281,16 @@ export class TabletPage {
   private applying = false
   private signaturePreparer:((next:InkStroke[],options:any)=>Promise<any>)|null=null
   private metadataIntents=new Map<string,object>()
+  private metadataWork=new Set<Promise<boolean>>()
+  private metadataEpoch=0
 
   constructor(aspect = 16 / 9) {
     this.aspect = Number.isFinite(aspect) && aspect >= 0.1 && aspect <= 10 ? aspect : 16 / 9
     Object.defineProperty(this, 'history', { enumerable: false })
     Object.defineProperty(this, 'signaturePreparer', { enumerable: false })
     Object.defineProperty(this, 'metadataIntents', { enumerable: false })
+    Object.defineProperty(this, 'metadataWork', { enumerable: false })
+    Object.defineProperty(this, 'metadataEpoch', { enumerable: false, writable: true })
     Object.defineProperty(this, 'strokes', {
       enumerable: true,
       get: () => this.history.current,
@@ -296,13 +300,16 @@ export class TabletPage {
 
   setSignaturePreparer(prepare:(next:InkStroke[],options:any)=>Promise<any>):void{this.signaturePreparer=prepare}
   private changePrepared(next:InkStroke[],action:()=>void,options:GeometryChangeOptions={},signatureMetadata:any=options.signatureMetadata||{}){const beforeCommit=this.signaturePreparer?()=>this.signaturePreparer!(next,{...options,signatureMetadata}):undefined;return this.history.change(next,action,{...options,beforeCommit})}
-  private async metadataChange(changes:any,apply:()=>void,options:GeometryChangeOptions={}):Promise<boolean>{
+  private metadataChange(changes:any,apply:()=>void,options:GeometryChangeOptions={}):Promise<boolean>{
     const keys=Object.keys(changes),intent={};for(const key of keys)this.metadataIntents.set(key,intent);const active=()=>!options.signal?.aborted&&keys.every(key=>this.metadataIntents.get(key)===intent)&&(options.valid?.()??true);
-    for(;;){if(!active())return false;const original=this.strokes,current=()=>active()&&this.strokes===original;let prepared;
+    this.metadataEpoch++;const work=(async()=>{for(;;){if(!active())return false;const original=this.strokes,current=()=>active()&&this.strokes===original;let prepared;
       try{prepared=await this.signaturePreparer?.(original,{...options,valid:current,signatureMetadata:changes});}catch(error){if(!active())return false;if(this.strokes!==original)continue;throw error;}
       if(!active())return false;if(this.strokes!==original||prepared?.valid&&!prepared.valid())continue;apply();prepared?.commit?.();this.emit(null);return true;
-    }
+    }})();this.metadataWork.add(work);void work.finally(()=>{this.metadataWork.delete(work);this.metadataEpoch++}).catch(()=>{});return work;
   }
+  get metadataVersion():number{return this.metadataEpoch}
+  get hasPendingMetadata():boolean{return this.metadataWork.size>0}
+  async flushMetadata():Promise<void>{while(this.metadataWork.size)await Promise.all([...this.metadataWork])}
   async setAspectAsync(aspect:number,options:GeometryChangeOptions={}):Promise<boolean>{const next=Number.isFinite(aspect)&&aspect>=.1&&aspect<=10?aspect:16/9;return this.metadataChange({aspect:next},()=>{this.aspect=next},options)}
   async setBackdropAsync(backdrop:string|null,options:GeometryChangeOptions={}):Promise<boolean>{return this.metadataChange({backdrop},()=>{this.backdrop=backdrop},options)}
 
@@ -490,7 +497,7 @@ export class TabletPage {
 
   /** Drop a clean inactive model after its catalog has been marked unloaded. */
   unloadGeometry(): boolean {
-    if (this.geometryRetained) return false
+    if (this.geometryRetained || this.hasPendingMetadata) return false
     this.history.dispose()
     this.backdrop = null
     this.target = null
@@ -498,7 +505,7 @@ export class TabletPage {
     return true
   }
   async unloadGeometryAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
-    if (this.geometryRetained || options.signal?.aborted || options.valid?.() === false) return false
+    if (this.geometryRetained || this.hasPendingMetadata || options.signal?.aborted || options.valid?.() === false) return false
     const released = this.history.disposeAsync()
     this.backdrop = null
     this.target = null
@@ -509,6 +516,7 @@ export class TabletPage {
 
   /** An unloaded page must never retain geometry through its undo history. */
   dispose(): void {
+    this.metadataIntents.clear()
     if (this.geometryRetained) { this.disposeRequested = true; return }
     this.disposeRequested = false
     this.history.dispose()
@@ -518,6 +526,7 @@ export class TabletPage {
     this.target = null
   }
   async disposeAsync(): Promise<boolean> {
+    this.metadataIntents.clear()
     if (this.geometryRetained) { this.disposeRequested = true; return false }
     this.disposeRequested = false
     const released = this.history.disposeAsync()

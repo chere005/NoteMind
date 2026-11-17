@@ -26,11 +26,11 @@ async function writeSheetUpload(channel,token,part,options){try{return await ipc
 const sheetCloseFlush=(()=>{
  const jobs=new Map(),valid=id=>typeof id==='string'&&id.length>0&&id.length<=128;
  const send=(channel,packet)=>{try{ipcRenderer.send(channel,packet);}catch{}};
- const stop=id=>{const job=jobs.get(id);if(!job)return;clearInterval(job.timer);jobs.delete(id);};
+ const stop=(id,expected)=>{const job=jobs.get(id);if(!job||expected&&job!==expected)return;clearInterval(job.timer);jobs.delete(id);};
  ipcRenderer.on?.('sheets:flush-cancel',(_,packet)=>stop(packet?.requestId));
  globalThis.addEventListener?.('unload',()=>{for(const id of jobs.keys())stop(id);});
- const on=fn=>listen('sheets:flush-request',packet=>{const requestId=packet?.requestId;if(!valid(requestId)||jobs.has(requestId))return;const job={sequence:0,timer:null};jobs.set(requestId,job);const pulse=()=>{if(jobs.get(requestId)===job)send('sheets:flush-progress',{requestId,sequence:++job.sequence});};job.timer=setInterval(pulse,1000);pulse();void Promise.resolve().then(()=>jobs.get(requestId)===job?fn({requestId}):undefined).catch(error=>send('sheets:flush-done',{requestId,error:String(error?.message||error)})).finally(()=>stop(requestId));});
- return{on,done:(error,requestId)=>{if(valid(requestId))send('sheets:flush-done',{requestId,error});}};
+ const on=fn=>listen('sheets:flush-request',packet=>{const requestId=packet?.requestId;if(!valid(requestId)||jobs.has(requestId))return;const job={sequence:0,timer:null};jobs.set(requestId,job);const pulse=()=>{if(jobs.get(requestId)===job)send('sheets:flush-progress',{requestId,sequence:++job.sequence});};job.timer=setInterval(pulse,1000);pulse();void Promise.resolve().then(()=>jobs.get(requestId)===job?fn({requestId,current:()=>jobs.get(requestId)===job}):undefined).catch(error=>{if(jobs.get(requestId)===job)send('sheets:flush-done',{requestId,error:String(error?.message||error)});}).finally(()=>stop(requestId,job));});
+ return{on,done:(error,requestId)=>{if(valid(requestId)&&jobs.has(requestId)){send('sheets:flush-done',{requestId,error});stop(requestId);}}};
 })();
 
 const drawingSaveMethods={beginDrawingSave:header=>ipcRenderer.invoke('drawing-save-begin',header),writeDrawingSave:(token,part)=>ipcRenderer.invoke('drawing-save-write',token,part),cancelDrawingSave:token=>ipcRenderer.invoke('drawing-save-cancel',token)};

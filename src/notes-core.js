@@ -51,6 +51,8 @@
   return job.promise;
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
+ function flushRevision(){const revision=[ready,...tabs.flatMap(tab=>[tab,tab.doc,tab.editVersion||0,tab.visual,tab.dirty])];for(const job of closingDrafts.values())revision.push(job.tab,job.generation,job.editVersion,job.persisted);return revision;}
+
  async function flush(){if(startupRun&&!ready)await startupRun;ensureActiveTab();return serial(async()=>{for(const tab of [...tabs])await persist(tab);await session();updateTitle();window.notemind.dirty(tabs.some(tab=>tab.dirty),!activeTab.placeholder);});}
  function changed(tab,{history=true}={}){tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n)||/\.pdf$/i.test(n));tab.placeholder=false;if(history)window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(!tab.doc.path&&!tab.doc.manualTitle)tab.doc.title=automaticTitle(tab===activeTab?currentText():tab.doc.text);schedule();clearTimeout(indexTimers.get(tab));indexTimers.set(tab,setTimeout(()=>{indexTimers.delete(tab);if(ready&&tabs.includes(tab)&&tab.doc.id&&tab.hadImageAssets)void api.indexImages(snapshot(tab),{background:true}).then(result=>{if(tab===activeTab)$('status').textContent=result.errors.length?'Image search: '+result.errors.join('; '):'Image search updated';}).catch(error=>$('status').textContent='Image search: '+error.message);},3500));}
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
@@ -105,5 +107,5 @@
  window.addEventListener('camera-flush',e=>e.detail.promises.push(flush()));
  window.addEventListener('notemind-command',e=>{if(e.detail==='quickNote'){$('new').click();rich.focus();}if(e.detail==='indexImages')action(indexCurrent);if(e.detail==='deleteNote'){const focused=window.NoteMindSidebar?.focusedDelete();if(focused)action(focused);else if(!activeTab.placeholder)action(()=>trash({path:doc.path,id:doc.id,title:doc.title}));}});
  api.onIndexProgress(value=>{if(value.id===doc.id)$('status').textContent='Indexing image text…';});
- window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,captureDurable,prepareDurable,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
+ window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,flushRevision,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,captureDurable,prepareDurable,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
 })();
