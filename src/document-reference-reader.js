@@ -1,0 +1,18 @@
+// Async-only materialization. A yielded chunk belongs to this read until the
+// next next()/return(); callers can copy or transfer its exclusive backing.
+(function(root,factory){if(typeof module==='object'&&module.exports)module.exports={create:factory};else root.NoteMindReferenceReader={create:factory};})(typeof globalThis==='object'?globalThis:this,function({references,transfer,hold=()=>()=>{},yieldTask=()=>new Promise(resolve=>setTimeout(resolve,0))}={}){
+ const CHARS=262144,check=signal=>{if(signal?.aborted)throw Object.assign(Error('Document asset read cancelled.'),{name:'AbortError'})};
+ const discard=bytes=>{if(bytes?.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function')try{bytes.buffer.transfer(0)}catch{}};
+ function info(value){if(references.is(value))return references.describe(value);if(typeof value!=='string'||value.length%4)throw Error('Invalid document asset.');return{bytes:value.length/4*3-(value.endsWith('==')?2:value.endsWith('=')?1:0),chars:value.length};}
+ async function* legacy(value,{signal}={}){for(let at=0;at<value.length;at+=CHARS){check(signal);let bytes;try{const text=value.slice(at,at+CHARS);bytes=typeof Uint8Array.fromBase64==='function'?Uint8Array.fromBase64(text):Uint8Array.from(atob(text),char=>char.charCodeAt(0));yield bytes;}finally{discard(bytes)}await yieldTask();}}
+ function chunks(assets,name,options={}){
+  const value=assets?.[name],metadata=info(value),release=hold(assets,name,value);let iterator=null,ended=false,tail=Promise.resolve();
+  const finish=async()=>{if(ended)return;ended=true;try{await iterator?.return?.()}finally{release()}};
+  const serial=run=>{const result=tail.then(run);tail=result.then(()=>{},()=>{});return result;};
+  const output={next:()=>serial(async()=>{if(ended)return{done:true,value:undefined};try{check(options.signal);iterator ||=references.is(value)?transfer.referenceChunks(metadata.id,metadata,options):legacy(value,options);const result=await iterator.next();if(result.done)await finish();return result;}catch(error){await finish();throw error;}}),return:()=>serial(async()=>{await finish();return{done:true,value:undefined}}),[Symbol.asyncIterator](){return this;}};return output;
+ }
+ async function bytes(assets,name,options){const expected=info(assets?.[name]).bytes,result=new Uint8Array(expected);let at=0,published=false;try{for await(const chunk of chunks(assets,name,options)){if(!ArrayBuffer.isView(chunk)||Object.prototype.toString.call(chunk)!=='[object Uint8Array]'||!chunk.byteLength||at+chunk.byteLength>expected)throw Error('Document asset read changed.');result.set(chunk,at);at+=chunk.byteLength;}if(at!==expected)throw Error('Document asset read was incomplete.');published=true;return result;}finally{if(!published)discard(result)}}
+ const encode=bytes=>{if(typeof bytes.toBase64==='function')return bytes.toBase64();let binary='';for(let at=0;at<bytes.length;at+=8192)binary+=String.fromCharCode(...bytes.subarray(at,at+8192));return btoa(binary)};
+ async function base64(assets,name,options){const value=assets?.[name];if(typeof value==='string')return value;let text='',tail=[];for await(const chunk of chunks(assets,name,options)){let at=0;if(tail.length){while(tail.length<3&&at<chunk.length)tail.push(chunk[at++]);if(tail.length===3){text+=encode(Uint8Array.from(tail));tail=[];}}const end=at+Math.floor((chunk.length-at)/3)*3;if(end>at)text+=encode(chunk.subarray(at,end));for(at=end;at<chunk.length;at++)tail.push(chunk[at]);}if(tail.length)text+=encode(Uint8Array.from(tail));return text;}
+ return{info,chunks,bytes,base64};
+});
