@@ -1,6 +1,7 @@
 // Word-only semantic Markdown stream reuses rules with a compact block ledger.
 const { md, mime, resolveAssetName } = require("./document-renderer.cjs");
 const {parseInline, linkifyTokens, joinText, releaseInline} = require("./word-inline.cjs");
+const {APP_TEXT_BYTES}=require('./document-text-limit.cjs');
 const PAGE = 8192, MAX_TEXT = 16 * 1024 * 1024;
 class BlockSink {
   constructor(check) {
@@ -56,8 +57,10 @@ class BlockSink {
   }
 }
 function streamMarkdown(text, onToken, { check = () => {
-}, onStats, inlineThreshold = 32768, consumeInline = false, byteLength = value => Buffer.byteLength(value) } = {}) {
-  if (typeof text !== "string" || byteLength(text) > MAX_TEXT) throw Error("Invalid Word export text.");
+}, onStats, inlineThreshold = 32768, consumeInline = false, byteLength = value => Buffer.byteLength(value), maximumTextBytes = MAX_TEXT } = {}) {
+  if (!Number.isSafeInteger(maximumTextBytes) || maximumTextBytes < 1 || maximumTextBytes > APP_TEXT_BYTES) throw Error("Invalid Markdown text-byte limit.");
+  const bytes=typeof text === "string" ? byteLength(text) : NaN;
+  if (typeof text !== "string" || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > maximumTextBytes) throw Error("Invalid Word export text.");
   if (typeof onToken !== "function") throw TypeError("Word token consumer is required.");
   check();
   const coreRules = md.core.ruler.__rules__;

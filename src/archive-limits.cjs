@@ -1,4 +1,5 @@
-const ENTRY_BYTES=50*1024*1024,GRAPHICS_BYTES=150*1024*1024,TOTAL_BYTES=199*1024*1024;
+const {APP_TEXT_BYTES:ENTRY_BYTES}=require('./document-text-limit.cjs');
+const GRAPHICS_BYTES=150*1024*1024,TOTAL_BYTES=199*1024*1024;
 const graphicsName=name=>/^assets\/.*\.json$/i.test(name);
 const maximumEntryBytes=name=>graphicsName(name)?GRAPHICS_BYTES:ENTRY_BYTES;
 function validateEntry(name,bytes){
