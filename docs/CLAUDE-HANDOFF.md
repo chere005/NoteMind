@@ -35,6 +35,6 @@ Complete integrated top-three bottleneck rankings at every requested pipeline st
 
 One heavy build/native run at a time, low priority, hidden nonfocusable windows and disposable profiles. The original 1 GiB aggregate, 900 MiB renderer, 384 MiB raw and 2 GiB free-disk guards were retained. No forced GC, cache flush, reduced model/image/geometry/text input or heap/thread reduction was used to manufacture a pass. Do not kill the user's installed app or use real pen/media/clipboard in tests.
 
-The signed final rebuild is recorded as session `54343`; its actual build/fidelity result is appended after exit. No main/tag/release/install is authorized by a passing unit suite alone.
+Final signed build `54343` actually exited 0 at candidate `26d1f617963744dd3be0c00494d0794b6fe70284`. All **659 production files** match the tested Root source, candidate and package; `codesign --verify --deep --strict` exited 0. Evidence: `build-final-d.log` and `final-d-source-package-fidelity.json`. The new DATA package has not repeated the full 100-page OCR gate or the earlier two-launch startup checkpoint. No main/tag/release/install occurred; this remains a WIP handoff.
 
 Source-level port fault tests cover acknowledged private ownership, every accepted retry clone, late/duplicate data, frame/key/identity mismatch, borrowed typed views, actual-exit settlement, ACK publication failure and capability fallback. The final full-suite result and package fidelity must accompany the final source head; earlier passes do not qualify later changes.

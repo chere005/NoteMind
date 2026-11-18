@@ -1,3 +1,15 @@
+## November 18, 8 AM Central handoff
+
+**Tested WIP, not production complete.** Integration branch `perf/pipeline-top-three` is pushed. Installed 0.35.0 remains untouched; no main/tag/release/install. See [Claude handoff](CLAUDE-HANDOFF.md).
+
+Final preflight `46268`, tested source `43f4569`: **3,392 passed, zero failed, zero skipped**, including original 100-JPEG history. Actual exit 0; all 1,423 file hashes and HEAD unchanged. Final signed candidate build `54343` exited 0, candidate `26d1f617963744dd3be0c00494d0794b6fe70284`; all 659 production files match Root/candidate/package and deep strict signature verification passes. Final source changes after the tested head are documentation only.
+
+DATA input now removes large image payloads from evaluated source; exact eight-image no-canvas pair shows renderer 158.63→132.58 MB, aggregate 460.65→416.81 MB and stage wall 173.34→43.00 ms. This is not full-App qualification. New DATA source closes independent pending-exit, raw-view, accepted-retry, ACK failure, malformed-envelope and capability-fallback faults; final suite is green after the earlier 30-fixture failure.
+
+Still unqualified: full original-100 mixed OCR after DATA; active large-source App editor/IME/history migration; complete integrated top-three rankings at every requested stage. Older Web and experimental Native full-workload failures remain failures. Native is not adopted. The separate `feature/source-editor-adapter` WIP contains an unwired Native-only foundation and 13 focused boundary tests; its isolated CM primitive passes exact 16 MiB at 497.27 MB, but no App integration is claimed. All six primitive evidence directories are archived in local results with SHA `fe7431a9f6a1148ba44336335bf5b23f276a688affdc8e17984efaa141bc3143`.
+
+No heavy/native test remains active after the final build. Retained worktrees and ignored local receipts are intentional reproducibility/handoff artifacts; do not remove them without preserving referenced worker/runtime/proof paths. Continue from the exact handoff and delivery plan, not from older status paragraphs below. No TaskMind proposals.
+
 ## November 18, 7 AM Central checkpoint
 
 Handoff remains **8 AM Central**. The hourly chat update and CoreMind beat were delivered; beat session `89263` exited 0. Installed **0.35.0** is unchanged. Root is on `perf/pipeline-top-three`; no release, main push or install has occurred.

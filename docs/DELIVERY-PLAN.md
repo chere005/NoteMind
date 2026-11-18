@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Handoff target: **8 AM Central, November 18, 2026**. Updated at the 6:40 AM checkpoint. The objective is the best implemented, tested and reviewable state by that cutoff. Failed qualification does not become a stable release because the deadline arrives.
+Handoff target: **8 AM Central, November 18, 2026**. Final checkpoint: 8 AM Central. See [the handoff](CLAUDE-HANDOFF.md) for final source/build identities. The objective is the best implemented, tested and reviewable state by that cutoff. Failed qualification does not become a stable release because the deadline arrives.
 
 Installed **0.35.0** remains untouched. Candidate source is **0.37.0**. No main push, release or install has occurred. Work and findings stay in this chat and repository documents, following Sean's explicit instruction not to put them in TaskMind.
 
@@ -23,7 +23,7 @@ The preset-layout icon request was withdrawn as belonging to another chat. Unapp
 
 | Gate | Evidence and limit |
 |---|---|
-| Full suite | Last coherent run at `5a13e75`: **3,333 passed, zero failed, one explicitly gated history case skipped**. Later Word ordering, clean-checkout fixture and browser-bootstrap leaves require the final repeat. |
+| Full suite | Final coherent run at `43f4569`: **3,392 passed, zero failed, zero skipped**, including original 100-JPEG history. All 1,423 before/after source hashes match. |
 | Original 2M distinct dots | All five fixed pixel oracles passed; aggregate owned peak **1,008,320,512 B**; all 415 captured process IDs exited. |
 | Original pressure strokes | 100,000 strokes × 20 points; five fixed pixel oracles passed; peak **887,095,296 B**; all 292 captured process IDs exited. |
 | Fresh PDF reference UI | 100 pages; 22 phases passed including fit, markup Undo/Redo, navigation, cancellation, source pinning, search, export and four rotations. Peak **992,477,184 B**. |
