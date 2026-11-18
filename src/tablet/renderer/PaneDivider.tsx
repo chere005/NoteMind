@@ -26,7 +26,7 @@ export function PaneDivider({ sidebar }: Props) {
   
   const before = useRef<{ fraction: number | null } | null>(null)
   const [dragging, setDragging] = useState(false)
-  const pointer=useRef<{id:number;node:HTMLElement}|null>(null)
+  const pointer=useRef<{id:number;node:HTMLElement;x:number;width:number}|null>(null)
 
   const app = (): HTMLElement | null => self.current?.closest<HTMLElement>(".workspace") ?? null
 
@@ -35,7 +35,8 @@ export function PaneDivider({ sidebar }: Props) {
     const root = app()
     if (!root) return 0
     const side = root.querySelector<HTMLElement>(".sidebar:not([hidden])")
-    return root.clientWidth - (side ? side.getBoundingClientRect().width : 0)
+    const divider = self.current?.parentElement?.getBoundingClientRect().width ?? 0
+    return root.clientWidth - (side ? side.getBoundingClientRect().width : 0) - divider
   }, [])
 
   const apply = useCallback(() => {
@@ -58,10 +59,10 @@ export function PaneDivider({ sidebar }: Props) {
   }, [apply, sidebar])
 
   const move = (clientX: number) => {
-    const root = app()
+    const start = pointer.current
     const room = available()
-    if (!root || room <= 0) return
-    const video = root.getBoundingClientRect().right - clientX
+    if (!start || room <= 0) return
+    const video = start.width + start.x - clientX
     fraction.current = fractionFor(room, videoWidth(room, fractionFor(room, video)))
     apply()
   }
@@ -108,8 +109,10 @@ export function PaneDivider({ sidebar }: Props) {
            if (event.button !== 0||pointer.current) return
            // The mouse must not take the keyboard from the notes.
            event.preventDefault()
-           pointer.current={id:event.pointerId,node:event.currentTarget}
-           try{event.currentTarget.setPointerCapture(event.pointerId)}catch{}
+           const room=available()
+           if(room<=0)return
+           try{event.currentTarget.setPointerCapture(event.pointerId)}catch{return}
+           pointer.current={id:event.pointerId,node:event.currentTarget,x:event.clientX,width:videoWidth(room,fraction.current)}
            setDragging(true)
          }}
          onPointerMove={(event) => { if (ownsPointer(event)) move(event.clientX) }}

@@ -29,6 +29,12 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   await command('pen:clearSelection');await click('[data-capture=ink]');await pause(250);
   check(await js(`document.querySelectorAll('#rich .graphics-pane.floating-graphics').length===1&&Object.keys(doc.assets).some(n=>n.endsWith('.json'))`),'Insert Writing defaults to floating and preserves editable ink');
   check(await js(`NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===2`),'the stored graphics pane retains both strokes');
+  check(await js(`doc.meta.imageWidths[document.querySelector('#rich img[data-asset]').dataset.asset]===640`),'inserted ink uses the Drawing 100% scale');
+  await js(`{
+    const img=document.querySelector('#rich img[data-asset]');
+    NoteMindPicture.editSize(img);
+    const dialog=document.querySelector('dialog[open]');dialog.querySelector('input').value='500';dialog.querySelector('[data-apply]').click();
+  }`);
   await js(`(()=>{const name=document.querySelector('#rich img[data-asset]').dataset.asset+'.json',sheet=NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[name]))));sheet.aspect=.75;doc.assets[name]=btoa(unescape(encodeURIComponent(NoteMindGraphics.encode(sheet))))})()`);
   await click('[data-edit-graphics]');await pause(650);check((await sheets()).length===2&&(await sheets())[1].strokes.length===2&&(await sheets())[1].aspect===.75,'Edit in Wacom restores the editable stroke data and preserves its aspect ratio');
   await click('[data-bar=pen]');await drag([.45,.6],[.55,.6]);
@@ -36,6 +42,7 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   check(await js(`!!document.querySelector('.float-menu [data-bar=pane-save-original]')`),'editing an embedded drawing offers Save to Original');
   await click('.float-menu [data-bar=pane-save-original]');await pause(300);
   check(await js(`document.querySelectorAll('#rich .graphics-pane').length===1&&NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===3`),'Save to Original updates the same pane and its editable strokes');
+  check(await js(`doc.meta.imageWidths[document.querySelector('#rich img[data-asset]').dataset.asset]===500`),'Save to Original retains the Notepad display width');
   check(await js(`(async()=>{const img=document.querySelector('#rich .graphics-pane.ink-only>img');if(!img)return false;await img.decode();const canvas=document.createElement('canvas');canvas.width=100;canvas.height=100;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,100,100);const pixels=ctx.getImageData(0,0,100,100).data;return pixels[3]===0&&pixels.some((value,index)=>index%4===3&&value>0)})()`),'Save to Original preserves the transparent writing and ink');
   await js(`document.querySelector('#rich').focus()`);await command('undoText');
   check(await js(`NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===2`),'a Notepad Undo restores the original pane and sidecar together');

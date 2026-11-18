@@ -392,7 +392,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       }
       // All available paper is writable. Only the viewport expands: canonical ink and its history never stretch.
       const baseView = latest.current.page.fitViewport(rect)
-      const sheetView = rect.width>0&&rect.height>0?precision.configure(baseView,rect,latest.current.page.aspect):baseView
+      const sheetView = rect.width>0&&rect.height>0?precision.configure(onDrawingZoom?latest.current.page.extent:baseView,rect,latest.current.page.aspect):baseView
       viewport.current = sheetView
       const box = { x: 0, y: 0, width: rect.width, height: rect.height, viewport: sheetView }
       size.current = { width: box.width, height: box.height }

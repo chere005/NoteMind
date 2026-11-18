@@ -17,8 +17,10 @@ test('Word round trip retains heading, styles, lists, table contents and links',
 });
 test('Markdown sidecar images survive export, reopen, and conversion to a Notepad',async()=>{
  const files=require('../src/markdown-files.cjs'),fsp=require('node:fs/promises'),path=require('node:path');const folder=await fsp.mkdtemp(path.join(require('node:os').tmpdir(),'notemind-md-'));
- const doc={text:'![Drawing](assets/image.svg)',assets:{'assets/image.svg':Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}};
+ const doc={text:'![Drawing](assets/image.svg)',assets:{'assets/image.svg':Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')},meta:{imageWidths:{'assets/image.svg':315}}};
  const file=path.join(folder,'Example.md'),out=await files.prepare(doc,file);await fsp.writeFile(file,out.text);const read=await files.read(file,out.text);assert.equal(Object.keys(read.assets).length,1);const back=files.canonical(read);assert.ok(back.text.includes('assets/'));assert.equal(Object.keys(format.decode(format.encode(back)).assets).length,1);
+ const restored=format.decode(format.encode(back)),name=Object.keys(restored.assets)[0];assert.equal(restored.meta.imageWidths[name],315);
+ assert.match(document.render(restored.text,restored.assets,restored.meta),/data-image-width style="width:315px"/);
 });
 
 test('Word export preserves underlining alongside nested emphasis',async()=>{

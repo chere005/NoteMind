@@ -131,11 +131,15 @@ app.once('browser-window-created', (_, window) => {
       })()`);
       const fitted = await scale();
       assert.equal(fitted.value, 'fit');
+      assert.equal(await js(`document.querySelector('[data-drawing-zoom] option[value=fit]').textContent`), 'Fit');
+      await setScale('100');
+      await tick();
+      assert.ok(Math.abs((await scale()).pixels - 640) < 1);
       await setScale('150');
       await tick();
       const enlarged = await scale();
       assert.equal(enlarged.value, '150');
-      assert.ok(Math.abs(enlarged.pixels / fitted.pixels - 1.5) < .01);
+      assert.ok(Math.abs(enlarged.pixels - 960) < 1);
 
       window.setContentSize(1080, 850);
       await tick();
@@ -149,7 +153,45 @@ app.once('browser-window-created', (_, window) => {
       await tick();
       const reduced = await scale();
       assert.equal(reduced.value, '50');
-      assert.ok(Math.abs(reduced.pixels / enlarged.pixels - 1 / 3) < .01);
+      assert.ok(Math.abs(reduced.pixels - 320) < 1);
+      await setScale('fit');
+      await tick();
+      assert.notEqual((await scale()).pixels, fitted.pixels, 'Fit responds to the pane width');
+      await js(`{
+        const sheet = document.querySelector('[data-tablet=surface]');
+        sheet.focus();
+        sheet.dispatchEvent(new KeyboardEvent('keydown', {key:'0', metaKey:true, bubbles:true, cancelable:true}));
+      }`);
+      await tick();
+      assert.ok(Math.abs((await scale()).pixels - 640) < 1);
+
+      await js(`{
+        const svg = btoa('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="180"><rect width="900" height="180" fill="#2288aa"/></svg>');
+        addTab({text:'Note sizing\\n\\n![Image](assets/image.svg)\\n\\n![Drawing](assets/drawing.svg)', assets:{'assets/image.svg':svg, 'assets/drawing.svg':svg},
+          meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}});
+        NoteMindFooter.setZoom(100, false);
+      }`);
+      await tick();
+      const noteSize = () => js(`(() => {
+        const text = document.createRange(), paragraph = rich.querySelector('p');
+        text.setStart(paragraph.firstChild, 0); text.setEnd(paragraph.firstChild, 4);
+        return {text:text.getBoundingClientRect().width,
+          images:[...rich.querySelectorAll('img[data-asset]')].map(img=>img.getBoundingClientRect().width),
+          available:rich.parentElement.clientWidth};
+      })()`);
+      const narrowNote = await noteSize();
+      assert.deepEqual(narrowNote.images, [640, 640]);
+      window.setContentSize(1440, 850);
+      await tick();
+      const wideNote = await noteSize();
+      assert.notEqual(wideNote.available, narrowNote.available);
+      assert.deepEqual(wideNote.images, narrowNote.images);
+      assert.equal(wideNote.text, narrowNote.text);
+      await js('void NoteMindFooter.setZoom(150, false)');
+      await tick();
+      const enlargedNote = await noteSize();
+      assert.deepEqual(enlargedNote.images, [960, 960]);
+      assert.ok(Math.abs(enlargedNote.text / wideNote.text - 1.5) < .01);
       finish();
     } catch (error) {
       finish(error);

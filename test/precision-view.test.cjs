@@ -11,3 +11,17 @@ test('same-owner stage updates are atomic and malformed updates cannot replace b
 test('separate mounted views restore a weak owner cache through portal-style remounts',()=>{
  const stateCache=new WeakMap(),owner={},a=new view.PrecisionView({stateCache});a.bind(owner,{size:{width:600,height:800}});a.change(state=>view.zoomAt(state,4));const before=view.viewport(a.state);a.dispose();const b=new view.PrecisionView({stateCache});b.bind(owner,{size:{width:600,height:800}});assert.equal(b.state.zoom,4);assert.deepEqual(view.viewport(b.state),before);assert.throws(()=>new view.PrecisionView({stateCache:new Map()}),/cache/);b.dispose();
 });
+
+test('Drawing actual size is the same from different fitted stages',()=>{
+ for(const size of [{width:320,height:720},{width:1100,height:620}]){
+  const fit=view.create({size,aspect:16/9,minZoom:.25,maxZoom:4});
+  const locked=view.lockScale(fit),actual=view.zoomAt(locked,1/locked.zoom);
+  const old=view.viewport(fit),unchanged=view.viewport(locked);
+  close(old.width,unchanged.width);
+  close(old.height,unchanged.height);
+  close(size.width/view.viewport(actual).width,view.DRAWING_WIDTH);
+  const resized=view.resize(actual,{width:420,height:900});
+  close(420/view.viewport(resized).width,view.DRAWING_WIDTH);
+  assert.equal(view.fit(resized).fixedScale,null);
+ }
+});

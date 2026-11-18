@@ -13,7 +13,14 @@ function viewport(state){const {width,height}=viewSize(state);return{x:state.cen
 function bounded(state){const {width,height}=viewSize(state),axis=(position,start,length,view)=>view>=length?start+length/2:clamp(position,start+view*(.5-state.padding),start+length-view*(.5-state.padding));const center={x:axis(state.center.x,state.frame.x,state.frame.width,width),y:axis(state.center.y,state.frame.y,state.frame.height,height)};if(!point(center)||!coordinate(center.x+width/2)||!coordinate(center.y+height/2)||width<=0||height<=0)throw Error('Precision view exceeds the numeric range.');const next=Object.freeze({...state,center:Object.freeze(center)});recognized.add(next);return next;}
 function create({frame={x:0,y:0,width:1,height:1},size={width:1,height:1},aspect=1,minZoom=1,maxZoom=64,padding=.1}={}){frame=rect(frame);if(!coordinate(aspect)||aspect<=0||!Number.isFinite(minZoom)||!Number.isFinite(maxZoom)||minZoom<.125||minZoom>1||maxZoom<1||maxZoom>256||!Number.isFinite(padding)||padding<0||padding>.5)throw Error('Invalid precision view limits.');return bounded({frame,stage:stage(size),aspect,minZoom,maxZoom,padding,zoom:1,fixedScale:null,center:{x:frame.x+frame.width/2,y:frame.y+frame.height/2}});}
 function fit(state){return bounded({...state,zoom:1,fixedScale:null,center:{x:state.frame.x+state.frame.width/2,y:state.frame.y+state.frame.height/2}});}
-function lockScale(state){return state.fixedScale?state:bounded({...state,fixedScale:state.stage.width/fitted(state.frame,state.stage,state.aspect).width});}
+const DRAWING_WIDTH=640;
+const DRAWING_ZOOM=[25,33,50,75,90,100,110,125,150,175,200,300,400];
+function lockScale(state,reference=DRAWING_WIDTH){
+ if(!Number.isFinite(reference)||reference<=0)throw Error('Invalid drawing scale.');
+ if(state.fixedScale===reference)return state;
+ const zoom=state.stage.width/viewSize(state).width/reference;
+ return bounded({...state,fixedScale:reference,zoom});
+}
 function toWorld(state,pixel){if(!point(pixel))throw Error('Invalid precision view point.');const view=viewport(state),result={x:view.x+(pixel.x/state.stage.width)*view.width,y:view.y+(pixel.y/state.stage.height)*view.height};if(!point(result))throw Error('Precision view point exceeds the numeric range.');return result;}
 function toScreen(state,world){if(!point(world))throw Error('Invalid precision view point.');const view=viewport(state),result={x:(world.x-view.x)/view.width*state.stage.width,y:(world.y-view.y)/view.height*state.stage.height};if(!point(result))throw Error('Precision view point exceeds the numeric range.');return result;}
 function zoomAt(state,factor,anchor={x:state.stage.width/2,y:state.stage.height/2}){if(!Number.isFinite(factor)||factor<=0||!point(anchor))throw Error('Invalid precision zoom.');const pixel={x:clamp(anchor.x,0,state.stage.width),y:clamp(anchor.y,0,state.stage.height)},world=toWorld(state,pixel),zoom=clamp(state.zoom*factor,state.minZoom,state.maxZoom);if(zoom===state.zoom)return state;const {width,height}=viewSize(state,zoom);return bounded({...state,zoom,center:{x:world.x+(0.5-pixel.x/state.stage.width)*width,y:world.y+(0.5-pixel.y/state.stage.height)*height}});}
@@ -27,4 +34,4 @@ class PrecisionView{
  capture(){const owner=this.owner,epoch=this.epoch,state=this.state;return{state,valid:()=>!!owner?.deref()&&this.owner===owner&&this.epoch===epoch&&this.state===state};}
  dispose(){this.owner=null;this.states=new WeakMap();this.epoch++;}
 }
-module.exports={create,fit,lockScale,viewport,toWorld,toScreen,zoomAt,pan,resize,reframe,PrecisionView};
+module.exports={DRAWING_WIDTH,DRAWING_ZOOM,create,fit,lockScale,viewport,toWorld,toScreen,zoomAt,pan,resize,reframe,PrecisionView};

@@ -1,6 +1,6 @@
 // Worker-only DOCX XML spools keep document-sized models out of the heap.
 const fs = require("node:fs"), fsp = require("node:fs/promises"), path = require("node:path"), { createHash } = require("node:crypto");
-const {resolveAssetName}=require("./document-renderer.cjs");
+const {resolveAssetName,imageWidth}=require("./document-renderer.cjs");
 const { exportWord } = require("./documents.cjs"), { readWordTemplate } = require("./word-template.cjs"), { streamMarkdown } = require("./word-markdown.cjs");
 const CHUNK = 65536, MAX = 4294967295, identity = (s) => ["dev", "ino"].map((k) => String(s[k])).join(":"), stamp = (s) => ["dev", "ino", "size", "mtimeNs", "ctimeNs"].map((k) => String(s[k])).join(":");
 class XMLSpool {
@@ -214,9 +214,10 @@ async function wordStreamPackage(doc, images, options, { spoolRoot, check = () =
       if (props) writer.write("<w:pPr>" + props + "</w:pPr>");
       paragraphs++;
     }, image2 = function(writer, name, alt, max = 560, link = null) {
-      const item = media.get(resolveAssetName(name,images)||name);
+      const assetName = resolveAssetName(name,images)||name, item = media.get(assetName);
       if (!item) throw Error("Missing document image: " + name);
-      const width = Math.min(item.info.width, max), height = width * item.info.height / item.info.width, cx = Math.round(width * 9525), cy = Math.round(height * 9525), id = ++drawing;
+      const preferred = imageWidth(doc.meta?.imageWidths?.[assetName]);
+      const width = Math.min(preferred || item.info.width, max), height = width * item.info.height / item.info.width, cx = Math.round(width * 9525), cy = Math.round(height * 9525), id = ++drawing;
       if (link) writer.write('<w:hyperlink r:id="' + link + '" w:history="1">');
       writer.write('<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:effectExtent t="0" r="0" b="0" l="0"/><wp:docPr id="' + id + '" name="');
       escaped(writer, alt, true);

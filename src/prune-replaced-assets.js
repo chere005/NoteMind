@@ -41,7 +41,7 @@ function prune(md,doc,candidates){
  if(!removed.length)return {assets,meta,removed};
  const nextAssets={...assets};for(const name of removed)delete nextAssets[name];
  let nextMeta=meta;
- if(meta.graphicsPanes&&removed.some(name=>Object.hasOwn(meta.graphicsPanes,name))){const graphicsPanes={...meta.graphicsPanes};for(const name of removed)delete graphicsPanes[name];nextMeta={...meta,graphicsPanes};}
+ for(const key of ['graphicsPanes','imageWidths'])if(meta[key]&&removed.some(name=>Object.hasOwn(meta[key],name))){const entries={...meta[key]};for(const name of removed)delete entries[name];nextMeta={...nextMeta,[key]:entries};}
  return {assets:nextAssets,meta:nextMeta,removed};
 }
 return prune;
