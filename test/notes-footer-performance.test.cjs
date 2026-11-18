@@ -1,0 +1,45 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),domino=require('@mixmark-io/domino'),renderer=require('../src/document-renderer.cjs'),{scan,countHTML}=require('../src/notes-footer.js');
+const code=fs.readFileSync(require.resolve('../src/notes-footer.js'),'utf8'),count=text=>(text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu)||[]).length;
+const view=html=>domino.createWindow('<main><article id="rich">'+html+'</article><textarea id="source"></textarea><footer><span id="modeLabel"></span></footer></main><div id="status">Ready</div>','file:///notemind/src/index.html');
+function oracle(html){const d=view(html).document,root=d.getElementById('rich');for(const node of Array.from(root.querySelectorAll('.missing-image,[data-editor-control],.heading-folded')))node.parentNode?.removeChild(node);return count(root.textContent);}
+function fixture({html='',visual=true,text=''}={}){
+ const dom=view(html),document=dom.document;Object.defineProperty(document,'baseURI',{value:'file:///notemind/src/index.html'});dom.Element.prototype.append=function(...nodes){for(const node of nodes)this.appendChild(node)};
+ const rich=document.getElementById('rich'),source=document.getElementById('source'),observers=[],listeners={},timers=new Map(),workers=[];source.value=text;let serial=0,intervals=0;
+ class Worker{constructor(url){this.url=url;this.closed=false;workers.push(this)}postMessage(value){this.input=value}terminate(){this.closed=true}reply(value){this.onmessage?.({data:value})}}
+ const c={document,rich,source,visual,activeTab:{id:'A'},URL,Worker,setInterval(){intervals++},setTimeout(fn,delay=0){const id=++serial;timers.set(id,{fn,delay});return id},clearTimeout(id){timers.delete(id)},MutationObserver:class{constructor(fn){this.fn=fn;observers.push(this)}observe(target){this.target=target}},window:{addEventListener:(type,fn)=>listeners[type]=fn,notemind:{}},$:id=>document.getElementById(id)};
+ vm.runInNewContext(code,c);const api=c.window.NoteMindFooter,flush=(limit=10000)=>{let steps=0;while(steps<limit){const next=[...timers].find(([,t])=>t.delay<30000);if(!next)break;timers.delete(next[0]);next[1].fn();steps++}return steps;},mutate=()=>observers.find(observer=>observer.target===rich).fn();
+ return{c,dom,document,rich,source,api,workers,timers,listeners,mutate,flush,get intervals(){return intervals},words:()=>document.getElementById('wordCount').textContent};
+}
+test('bounded scanner preserves the old Unicode expression across arbitrary node/chunk boundaries',()=>{
+ const texts=["alpha---beta 'ok' well–formed foo_bar o’clock 123",'𐐀𐐨a 😀 你好 café e\u0301 z','a---','--a','a\ud800\udc00z\ud800 q\udc00','\ud800\udc00','a'.repeat(8191)+'𐐀 word'];
+ for(const text of texts)for(const size of[1,2,3,17,8192]){const state={count:0,inWord:false,carry:''};for(let at=0;at<text.length;at+=size)scan(text.slice(at,at+size),state);assert.equal(state.count,count(text),JSON.stringify({text:text.slice(0,60),size}));}
+});
+test('worker escaped-rendered HTML count agrees with the actual DOM oracle across supported Markdown',()=>{
+ const corpus=['','hello **bold** <u>under</u> ==mark== &amp; &#128; &#x1F600;','![Image](assets/a.png)after ![alt](https://a/image.png)','> quote\n> next\n\n- [x] task\n- item','| A | B |\n|---|---|\n| before<br>after | x |','```javascript\nconst x = "<tag> & \'value\'";\n```','a\r\nb\r c\0d','<script>literal</script> &bogus;','𐐀\n你好 café o’clock x_y','a<!-- comment -->b','***\n\n# heading\n\n[title](https://a/?x=1&y=2 "a > b")'];
+ let seed=9;for(let i=0;i<2000;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const a=corpus[seed%11],b=corpus[(seed>>>8)%11];const html=renderer.render(a+'\n\n'+b);assert.equal(countHTML(html),oracle(html),JSON.stringify({a,b}));}
+});
+test('visual input only schedules work; a large DOM yields, keeps exact exclusions and has no idle polling',()=>{
+ const html='<p>one <b>two</b> three</p>'.repeat(3000)+'<p class="heading-folded">hidden word</p><button data-editor-control>ignored</button><span class="missing-image">missing</span>',f=fixture({html});let rootReads=0,cloneReads=0;
+ Object.defineProperty(f.rich,'textContent',{get(){rootReads++;throw Error('whole DOM text forbidden')}});Object.defineProperty(f.rich,'cloneNode',{value(){cloneReads++;throw Error('whole clone forbidden')}});
+ assert.equal(f.words(),'');assert.equal(f.flush(1),1);assert.equal(f.words(),'');assert.ok(f.timers.size);f.flush();assert.equal(f.words(),oracle(html)+' words');assert.equal(rootReads,0);assert.equal(cloneReads,0);assert.equal(f.intervals,0);assert.equal(f.timers.size,0);
+ f.rich.dispatchEvent(new f.dom.Event('input'));assert.equal(rootReads,0);assert.equal(f.timers.size,1);f.flush();assert.equal(f.words(),oracle(html)+' words');
+});
+test('same-length programmatic replacements, folds, new notes and source mode invalidate exact current counts',()=>{
+ const f=fixture({html:'<p>abc de</p>'});f.flush();assert.equal(f.words(),'2 words');f.rich.innerHTML='<p>a bcde</p>';f.mutate();f.flush();assert.equal(f.words(),'2 words');f.rich.innerHTML='<p>abcdef</p>';f.mutate();f.flush();assert.equal(f.words(),'1 word');
+ f.rich.firstChild.setAttribute('class','heading-folded');f.mutate();f.flush();assert.equal(f.words(),'0 words');f.c.activeTab={id:'B'};f.rich.innerHTML='<p>new note here</p>';f.listeners['notemind-document']({detail:{activeId:'B'}});f.flush();assert.equal(f.words(),'3 words');
+ f.c.visual=false;f.source.value='programmatic **source**';f.api.update();f.flush();const worker=f.workers.at(-1);assert.equal(worker.input.text,f.source.value);assert.match(String(worker.url),/notes-footer.js$/);worker.reply({id:worker.input.id,count:2});assert.equal(f.words(),'2 words');assert.equal(worker.closed,true);
+});
+test('newer edits, mode/tab changes and unload cannot publish an old visual or worker count',()=>{
+ const f=fixture({html:'<p>old text </p>'.repeat(5000)});f.flush(1);f.c.activeTab={id:'B'};f.rich.innerHTML='<p>current</p>';f.api.update();f.flush();assert.equal(f.words(),'1 word');
+ f.c.visual=false;f.source.value='old source';f.api.update();f.flush();const old=f.workers.at(-1);f.source.value='new source value';f.api.update();assert.equal(old.closed,true);f.flush();const current=f.workers.at(-1);old.reply({id:old.input.id,count:999});assert.equal(f.words(),'1 word');current.reply({id:current.input.id,count:3});assert.equal(f.words(),'3 words');
+ f.api.update();f.flush();const ending=f.workers.at(-1);f.listeners.unload();assert.equal(ending.closed,true);ending.reply({id:ending.input.id,count:999});assert.equal(f.words(),'3 words');assert.equal(f.timers.size,0);
+});
+test('real notes-core edit and view entry points schedule footer updates for programmatic source changes',()=>{
+ const f=require('./helpers/notes-captured-text.cjs').fixture({visual:false});let updates=0;f.c.window.NoteMindFooter={update(){updates++}};f.input({trusted:false,before:false});assert.equal(updates,1);
+ const core=fs.readFileSync(require.resolve('../src/notes-core.js'),'utf8'),line=core.split('\n').find(line=>line.startsWith(' function changedView()'));f.c.decorate=()=>{};f.c.importTargetDepth=0;vm.runInNewContext(line,f.c);f.c.changedView();assert.equal(updates,2);
+});
+test('actual isolated JavaScript worker imports the shipped renderer, returns exact source count and exits after termination',async()=>{
+ const {Worker}=require('node:worker_threads'),path=require('node:path'),{once}=require('node:events'),worker=new Worker(path.join(__dirname,'helpers/notes-footer-worker.cjs'),{workerData:{root:path.join(__dirname,'../src')}}),text=Array.from({length:2000},(_,i)=>'# Heading '+i+'\n\nText **bold** &amp; ![image](assets/image.png)\n').join('\n');
+ try{const result=once(worker,'message');worker.postMessage({id:3,text});assert.deepEqual((await result)[0],{id:3,count:oracle(renderer.render(text))});}finally{const exit=once(worker,'exit');await worker.terminate();await exit;assert.equal(worker.threadId,-1);}
+ const busy=new Worker(path.join(__dirname,'helpers/notes-footer-worker.cjs'),{workerData:{root:path.join(__dirname,'../src')}});await once(busy,'online');busy.postMessage({id:4,text:'long markdown paragraph **word** '.repeat(65536)});const exited=once(busy,'exit');await busy.terminate();await exited;assert.equal(busy.threadId,-1);
+});

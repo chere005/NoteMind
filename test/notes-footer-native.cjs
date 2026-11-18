@@ -1,0 +1,17 @@
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{app,BrowserWindow}=require('electron');
+const report={ok:false,scope:'actual hidden footer DOM and classic Worker under application CSP',rows:[],pids:[process.pid],versions:process.versions},output=path.resolve('test-results/performance-0.37/footer-native-'+process.pid+'.json'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-footer-native-'));
+require('./native-failure-exit.cjs').installNativeFailureExit({app,report:output,telemetry:report});require('./disable-native-pen.cjs');
+app.setPath('userData',profile);app.dock?.hide();app.on('window-all-closed',()=>{});app.commandLine.appendSwitch('disable-renderer-backgrounding');app.commandLine.appendSwitch('disable-background-timer-throttling');
+report.profile=profile;report.files=Object.fromEntries(['src/notes-footer.js','src/document-renderer.js','test/notes-footer-native.html','test/notes-footer-native-bootstrap.js'].map(file=>[file,crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));fs.mkdirSync(path.dirname(output),{recursive:true});let window,finished=false;const deadline=setTimeout(()=>finish(Error('Footer native deadline.')),60000);
+function finish(error){if(finished)return;finished=true;clearTimeout(deadline);if(window&&!window.isDestroyed())window.destroy();report.ok=!error;if(error)report.error=error.stack||String(error);report.finished=new Date().toISOString();fs.writeFileSync(output,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({ok:report.ok,pids:report.pids,output,profile,error:report.error}));app.exit(error?1:0);}
+app.whenReady().then(async()=>{
+ window=new BrowserWindow({show:false,focusable:false,width:800,height:600,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});window.webContents.on('console-message',event=>{if(event.level>=2)(report.errors||=[]).push(event.message)});await window.loadFile(path.resolve('test/notes-footer-native.html'));report.pids.push(window.webContents.getOSProcessId());
+ const run=expression=>window.webContents.executeJavaScript(expression);
+ report.rows.push(await run("footerFixture.wait('3 words')"));
+ report.rows.push(await run("footerFixture.visual('<p>one <b>two</b></p><p class=heading-folded>hidden words</p><button data-editor-control>skip</button>');footerFixture.wait('2 words')"));
+ report.rows.push(await run("footerFixture.markdown('# Source **title**\\n\\nWord &amp; ![image](assets/a.png)');footerFixture.wait('3 words')"));
+ report.rows.push(await run("footerFixture.markdown('Same **size**');footerFixture.wait('2 words')"));
+ report.rows.push(await run("footerFixture.markdown('onewordonly');footerFixture.wait('1 word')"));
+ report.rows.push(await run("(async()=>{footerFixture.markdown('long **source** paragraph '.repeat(65536));await new Promise(resolve=>setTimeout(resolve,90));footerFixture.visual('<p>current visible words</p>','native-B');await footerFixture.wait('3 words');await new Promise(resolve=>setTimeout(resolve,300));if(footerFixture.count()!=='3 words')throw Error('Stale worker published');return{count:footerFixture.count(),workers:{...footerWorkerStats}}})()"));
+ if(report.errors?.length||report.rows.some(row=>row.workers?.active))throw Error('Footer worker/CSP or retirement check failed.');report.memory=app.getAppMetrics().map(row=>({pid:row.pid,type:row.type,bytes:row.memory.workingSetSize*1024}));finish();
+}).catch(finish);
