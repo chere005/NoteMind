@@ -126,8 +126,10 @@ class Delimiters {
   seal() {
     let total = 0; for (let id = 1; id <= this.lists; id++) if (this.noncontiguous.get(id)) { this.offset.set(id, total); total += this.count.get(id); }
     this.order = new Uint32Array(total); const used = new Column(Uint32Array);
-    if (total) for (let row = 0; row < this.rows; row++) { const id = this.listId.get(row); if (this.noncontiguous.get(id)) { const at = used.get(id); this.order[this.offset.get(id) + at] = row; used.set(id, at + 1); } this.touch(); }
-    this.listId.release();
+    try {
+      if (total) for (let row = 0; row < this.rows; row++) { const id = this.listId.get(row); if (this.noncontiguous.get(id)) { const at = used.get(id); this.order[this.offset.get(id) + at] = row; used.set(id, at + 1); } this.touch(); }
+      this.listId.release();
+    } finally { used.release(); }
   }
   at(id, i) { this.touch(); if (i < 0 || i >= this.count.get(id)) return undefined; const row = this.noncontiguous.get(id) ? this.order[this.offset.get(id) + i] : this.first.get(id) + i; return this.cache.get(row, () => new DelimiterView(this, row)); }
   rowAt(id, i) { return this.noncontiguous.get(id) ? this.order[this.offset.get(id) + i] : this.first.get(id) + i; }
@@ -242,10 +244,10 @@ function postProcessPairs(tokens, pool, root, meta, length, kind, check) {
 function linkifyTokens(children, source, md, check) {
   const store = owners.get(children); if (!store) return false;
   if (!md.options.linkify || !md.linkify.test(source)) return true;
-  const order = new Column(Uint32Array); let count = 0, depth = 0;
+  const order = new Column(Uint32Array); let count = 0, depth = 0, adopted = false;
   const append = token => order.set(count++, store.adopt(token));
   const make = (type, tag, nesting, content, level) => { const token = store.create(type, tag, nesting); token.content = content; token.level = level; return token; };
-  for (let i = 0; i < children.length; i++) {
+  try { for (let i = 0; i < children.length; i++) {
     if (i % 4096 === 0) check();
     const token = children[i];
     if (token.type === 'link_close') { depth = Math.max(0, depth - 1); append(token); continue; }
@@ -266,7 +268,8 @@ function linkifyTokens(children, source, md, check) {
     }
     if (last < text.length) append(last ? make('text','',0,text.slice(last),token.level) : token);
   }
-  store.flushAttrs(); store.order.release(); store.order = order; store.count = count; return true;
+  store.flushAttrs(); store.order.release(); store.order = order; store.count = count; adopted = true; return true;
+  } finally { if (!adopted) order.release(); }
 }
 function joinText(children, {levels = false, normalize = false, includeChildren = true, check = () => {}} = {}) {
   const store = owners.get(children); if (!store) return false;
