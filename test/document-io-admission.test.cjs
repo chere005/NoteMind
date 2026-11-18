@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../src/document-io.cjs'),'utf8'),tick=()=>new Promise(resolve=>setImmediate(resolve)),deferred=()=>{let resolve;const promise=new Promise(yes=>resolve=yes);return{promise,resolve};};
 function fixture({writeGate,writeStarted,prepareGate}={}){
- const handlers=new Map(),calls=[],app={on(){},getPath:()=>'/virtual-owned'},output={};let publicCreates=0;
+ const handlers=new Map(),calls=[],app={on(){},getPath:()=>'/virtual-owned'},output={};let publicCreates=0,publicReads=0;
  class Window{constructor(){calls.push('window');this.webContents={executeJavaScript:async()=>{},printToPDF:async()=>Buffer.from('pdf')};}async loadFile(){}isDestroyed(){return!!this.destroyed;}destroy(){this.destroyed=true;}}
  const fileSystem={writeFile:async file=>{calls.push('write:'+file);if(file.endsWith('.tmp')){writeStarted?.resolve();await writeGate?.promise;}},rename:async()=>{calls.push('committed');},unlink:async()=>{calls.push('unlink');}};
  const requireMock=name=>{
@@ -17,13 +17,13 @@ function fixture({writeGate,writeStarted,prepareGate}={}){
   if(name==='./print-images.cjs')return{preparePrint:async doc=>{calls.push('prepare-print');await prepareGate?.promise;return doc;}};
   if(name==='./print-asset-files.cjs')return{withPrintFiles:async(_doc,run)=>{calls.push('file-stage');return run({file:'/virtual-owned/document.html',url:()=>''});}};
   if(name==='./pdf-options.cjs')return{printOptions:()=>({})};
-  if(name==='./ocr-public.cjs')return{PublicOCR:class{constructor(){publicCreates++;}begin(){return'created';}ready(){return'created';}read(){return'created';}dispose(){return Promise.resolve();}}};
+  if(name==='./ocr-public.cjs')return{PublicOCR:class{constructor(){publicCreates++;}begin(){return'created';}ready(){return'created';}read(_owner,request){publicReads++;request.data=null;return this.closed?Promise.reject(Object.assign(Error('Reading cancelled.'),{name:'AbortError'})):'created';}dispose(){this.closed=true;return Promise.resolve();}}};
   if(name==='./word-preview-ipc.cjs')return{registerWordPreviewIPC:()=>({dispose:()=>Promise.resolve()})};
   if(name==='./word-export-jobs.cjs')return{installWordShutdown(){}};
   if(name.startsWith('node:'))return require(name);
   throw Error('Unexpected dependency admission: '+name);
  };
- const context=vm.createContext({require:requireMock,module:output,exports:{},__dirname:path.resolve(__dirname,'../src'),Buffer,structuredClone,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,console,Promise,performance});vm.runInContext(source,context);return{api:output.exports,handlers,calls,get publicCreates(){return publicCreates;}};
+ const context=vm.createContext({require:requireMock,module:output,exports:{},__dirname:path.resolve(__dirname,'../src'),Buffer,structuredClone,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,console,Promise,performance});vm.runInContext(source,context);return{api:output.exports,handlers,calls,get publicCreates(){return publicCreates;},get publicReads(){return publicReads;}};
 }
 test('disposed document services reject export, print, import, preview and public OCR before external work',async()=>{
  const value=fixture();value.api.register(()=>null);await value.api.dispose();const doc={text:'',assets:{},meta:{}},owner={once(){},removeListener(){},isDestroyed:()=>false};
@@ -37,4 +37,9 @@ test('PDF preprocessing cannot start file-backed print staging after cancellatio
 test('final disposal joins an already-writing export through its final output and cleanup receipt',async()=>{
  const writeGate=deferred(),writeStarted=deferred(),value=fixture({writeGate,writeStarted}),pending=value.api.exportFile({text:'',assets:{}},'/virtual-owned/output.pdf');await writeStarted.promise;let closed=false;const closing=value.api.dispose().then(()=>{closed=true;});
  try{await tick();assert.equal(closed,false,'the output write is still pending');writeGate.resolve();assert.equal(await pending,'/virtual-owned/output.pdf');await closing;assert.equal(closed,true);assert.equal(value.calls.filter(call=>call==='committed').length,1);assert.equal(value.calls.at(-1),'unlink');}finally{writeGate.resolve();await Promise.allSettled([pending,closing]);}
+});
+test('a late OCR packet still reaches its existing cleanup owner after disposal without reopening admission',async()=>{
+ const value=fixture(),owner={};value.api.register(()=>null);assert.equal(value.handlers.get('ocr-begin')({sender:owner},{}),'created');await value.api.dispose();const arrived={data:'already serialized PNG source'};
+ await assert.rejects(value.handlers.get('ocr-read')({sender:owner},arrived),{name:'AbortError'});assert.equal(arrived.data,null);assert.equal(value.publicReads,1);assert.equal(value.publicCreates,1);
+ const unused=fixture();unused.api.register(()=>null);await unused.api.dispose();const unclaimed={data:'late unclaimed source'};assert.throws(()=>unused.handlers.get('ocr-read')({sender:owner},unclaimed),/closing/);assert.equal(unclaimed.data,null);assert.equal(unused.publicCreates,0);
 });
