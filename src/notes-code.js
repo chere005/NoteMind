@@ -30,7 +30,7 @@
  rich.addEventListener('beforeinput',e=>{if(e.isComposing)return;const code=activeCode();if(!code||!selection(code))return;if(e.inputType==='insertText'&&e.data?.includes('\n')){e.preventDefault();insert(code,e.data);}else if(['insertParagraph','insertLineBreak'].includes(e.inputType)){e.preventDefault();insert(code,'\n');}});
  rich.addEventListener('input',schedule);rich.addEventListener('compositionstart',()=>{composing=true;});rich.addEventListener('compositionend',()=>{composing=false;schedule();});
  rich.addEventListener('keydown',e=>{
-  if(e.defaultPrevented||e.isComposing)return;const code=activeCode();if(!code||!rich.contains(code)||!selection(code))return;
+  if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;const code=activeCode();if(!code||!rich.contains(code)||!selection(code))return;
   if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();const p=document.createElement('p');p.append(document.createElement('br'));code.parentElement.after(p);const r=document.createRange();r.selectNodeContents(p);r.collapse(true);getSelection().removeAllRanges();getSelection().addRange(r);richChanged=true;markDirty();return;}
   if(e.ctrlKey||e.metaKey||e.altKey)return;
   if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();insert(code,'    ');}
