@@ -31,7 +31,7 @@ async function prepareIndexSources(doc,{storage,cached={},signal,tempRoot=os.tmp
   let expected;if(raw){const info=await storage.rawAssetInfo(data);check(signal);expected=info.sha256;if(!/^[a-f0-9]{64}$/.test(expected))throw Error('Image search source digest is unavailable.');if(cached[name]?.hash===expected){rows.push({name,hash:expected,text:cached[name].text||''});continue;}}
   const duplicate=expected&&files.get(expected+'\0'+mime(name));if(duplicate){rows.push({name,hash:expected,source:duplicate,type:mime(name)});continue;}
   const claim={release:reserve(bytes),released:false};claims.push(claim);await ensureOwner();await assertDirectory();journal.check();const file=path.join(owner.directory,randomUUID()+'.raw');let handle,header;
-  try{handle=await fs.open(file,'wx',0o600);claim.handle=handle;claim.file=file;const stat=await handle.stat({bigint:true});claim.identity={dev:String(stat.dev),ino:String(stat.ino)};journal.claim(file,stat);const hash=createHash('sha256');header=Buffer.allocUnsafeSlow(Math.min(bytes,65536));
+  try{handle=await fs.open(file,'wx+',0o600);claim.handle=handle;claim.file=file;const stat=await handle.stat({bigint:true});claim.identity={dev:String(stat.dev),ino:String(stat.ino)};journal.claim(file,stat);const hash=createHash('sha256');header=Buffer.allocUnsafeSlow(Math.min(bytes,65536));
    for(let at=0;at<bytes;at+=CHUNK){check(signal);const length=Math.min(CHUNK,bytes-at);let part,owned=false;
     try{if(raw){owned=typeof storage.readOwnedRawAsset==='function';part=await (owned?storage.readOwnedRawAsset(data,{offset:at,length}):storage.readRawAsset(data,{offset:at,length}));if(!ArrayBuffer.isView(part)||part.byteLength!==length)throw Error('Image search source changed.');part=Buffer.from(part.buffer,part.byteOffset,part.byteLength);}else{const encoded=data.slice(at/3*4,Math.min(data.length,(at+CHUNK)/3*4));if(data.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)||at+CHUNK<bytes&&encoded.includes('='))throw Error('Invalid image search source encoding.');part=Buffer.from(encoded,'base64');owned=true;if(part.length!==length||part.toString('base64')!==encoded)throw Error('Image search source changed.');}
      check(signal);if(at<header.length)part.copy(header,at,0,Math.min(part.length,header.length-at));hash.update(part);await write(handle,part,signal);
@@ -39,7 +39,7 @@ async function prepareIndexSources(doc,{storage,cached={},signal,tempRoot=os.tmp
     await yieldTask();
    }
    check(signal);const actual=hash.digest('hex');if(expected&&actual!==expected)throw Error('Image search source digest changed.');expected=actual;
-   const dimensions=imageDimensions(header);claim.source=Object.freeze({file,root:owner.directory,bytes,sha256:expected,...(dimensions?{dimensions}:{}),workingBytes:imageWorkingBytes(bytes,dimensions)});
+   const dimensions=imageDimensions(header)||(header[0]===255&&header[1]===216?await require('./image-index-dimensions.cjs').jpegDimensions(handle,file,bytes,signal):null);claim.source=Object.freeze({file,root:owner.directory,bytes,sha256:expected,...(dimensions?{dimensions}:{}),workingBytes:imageWorkingBytes(bytes,dimensions),workingPlan:imageWorkingPlan(bytes,dimensions)});
   }finally{discard(header);await closeClaim(claim);}
   if(cached[name]?.hash===expected){await drop(claim);rows.push({name,hash:expected,text:cached[name].text||''});continue;}
   const existing=files.get(expected+'\0'+mime(name));if(existing){await drop(claim);rows.push({name,hash:expected,source:existing,type:mime(name)});continue;}
@@ -49,5 +49,6 @@ async function prepareIndexSources(doc,{storage,cached={},signal,tempRoot=os.tmp
  check(signal);return{rows,cleanup,get directory(){return owner?.directory}};
  }catch(error){try{await cleanup()}catch(cleanupError){error.indexCleanupError=cleanupError.message}throw error;}
 }
-function imageWorkingBytes(bytes,dimensions){const width=dimensions?.width,height=dimensions?.height,known=Number.isFinite(width)&&width>0&&Number.isFinite(height)&&height>0,scale=known?Math.min(1,2400/Math.max(width,height)):1,output=known?Math.max(1,Math.round(width*scale))*Math.max(1,Math.round(height*scale)):2400*2400,decoded=known?Math.min(128*1024*1024,width*height*4):128*1024*1024;return Math.min(384*1024*1024,Math.ceil(96*1024*1024+bytes+decoded+output*12));}
-module.exports={imageWorkingBytes,prepareIndexSources,imageInputs,sameInputs,CHUNK,abort,check};
+function imageWorkingPlan(bytes,dimensions){const width=dimensions?.width,height=dimensions?.height,known=Number.isFinite(width)&&width>0&&Number.isFinite(height)&&height>0,scale=known?Math.min(1,2400/Math.max(width,height)):1,output=known?Math.max(1,Math.round(width*scale))*Math.max(1,Math.round(height*scale)):2400*2400,decoded=known?Math.min(128*1024*1024,width*height*4):128*1024*1024,modelBytes=96*1024*1024;return{modelBytes,convertBytes:Math.ceil(32*1024*1024+bytes+decoded+output*12),ocrBytes:Math.ceil(output*12),maxOutputBytes:Math.ceil(output*4+65536)};}
+function imageWorkingBytes(bytes,dimensions){const plan=imageWorkingPlan(bytes,dimensions);return Math.max(plan.convertBytes,plan.modelBytes+plan.ocrBytes+plan.maxOutputBytes);}
+module.exports={imageWorkingPlan,imageWorkingBytes,prepareIndexSources,imageInputs,sameInputs,CHUNK,abort,check};

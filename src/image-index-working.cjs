@@ -1,0 +1,3 @@
+const {check,abort}=require('./image-index-source.cjs');
+async function waitWorking(storage,signal,bytes){for(;;){check(signal);let wake;const changed=new Promise(resolve=>wake=resolve),off=storage.subscribeRawCapacity(wake);try{return await storage.acquireScopedRawWorking(bytes,{preserve:true})}catch(error){if(error.code!=='ARCHIVE_RAW_BUSY')throw error;await new Promise((resolve,reject)=>{const stop=()=>{signal?.removeEventListener('abort',stop);reject(abort())};signal?.addEventListener('abort',stop,{once:true});changed.then(()=>{signal?.removeEventListener('abort',stop);resolve()});if(signal?.aborted)stop()})}finally{off()}}}
+module.exports={waitWorking};

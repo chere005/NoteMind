@@ -1,7 +1,7 @@
 const {randomUUID}=require('node:crypto'),{AsyncResource}=require('node:async_hooks');
 const codec=require('./archive-codec.cjs'),{releaseDocumentInputs}=require('./document-continuation.cjs');
 const {prepareIndexSources,imageInputs,sameInputs,abort,check}=require('./image-index-source.cjs');
-const {acquireImageWorking}=require('./word-export-media.cjs');
+const {waitWorking:acquireImageWorking}=require('./image-index-working.cjs');
 const {isMarkedAsUntransferable}=require('node:worker_threads');
 const sameValues=(a,b)=>{const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(name=>a[name]?.hash===b[name]?.hash&&a[name]?.text===b[name]?.text)};
 const discard=bytes=>{if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength&&!isMarkedAsUntransferable?.(bytes.buffer)&&typeof bytes.buffer.transfer==='function')try{bytes.buffer.transfer(0)}catch{}};
@@ -17,21 +17,27 @@ function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=
  function finish(state,error,value){if(state.finished)return;state.finished=true;states.delete(state);if(state.ownerStates.get(state.id)===state)state.ownerStates.delete(state.id);for(const off of state.listeners)off();state.listeners=[];state.input=null;state.job=null;if(![...states].some(other=>other.id===state.id))revisions.delete(state.id);error?state.reject(error):state.resolve(value);}
  async function finishJob(state,job){
   const values=Object.create(null);for(const row of job.sources.rows)if(row.text!==undefined)Object.defineProperty(values,row.name,{value:{hash:row.hash,text:row.text},enumerable:true,writable:true,configurable:true});
-  if(!state.cancelled&&state.job===job&&revisions.get(state.id)===job.revision&&!sameValues(state.stored,values)){await store.indexText(state.id,values);state.stored=values;if(state.job===job&&!state.cancelled)send();}
+  if(!state.cancelled&&state.job===job&&revisions.get(state.id)===job.revision&&!sameValues(state.stored,values)){const valid=()=>!closed&&!state.cancelled&&state.job===job&&revisions.get(state.id)===job.revision&&(state.owner===legacy||!state.owner.isDestroyed?.()),published=await store.indexText(state.id,values,{valid});if(published!==false&&valid()){state.stored=values;send();}}
   await cleanup(job);if(state.job===job)finish(state,null,{count:Object.keys(values).length,errors:job.errors});
  }
- async function readImage(state,job,row){
+ async function readImage(state,job,row,phase){
   const signal=job.controller.signal;check(signal);
   let converted;
-  try{if(state.owner!==legacy&&!state.owner.isDestroyed?.())state.owner.send?.('notes:index-progress',{id:state.id,name:row.name});converted=await documentIO.convertImageFile(row.source.file,row.type,{...row.source,signal,maxDimension:2400,maxRSSBytes:384*1024*1024,timeoutMs:30000});check(signal);const bytes=converted?.bytes||converted?.data;if(!ArrayBuffer.isView(bytes))throw Error('Image search conversion returned invalid pixels.');const value=await documentIO.reader.read(bytes,{id:'index-'+randomUUID(),language:'auto',priority:job.background?'background':'foreground',textOnly:true,signal});check(signal);row.text=value.text;job.byHash.set(row.hash,value.text);state.cached[row.name]={hash:row.hash,text:value.text};job.cursor++;}
+  try{if(state.owner!==legacy&&!state.owner.isDestroyed?.())state.owner.send?.('notes:index-progress',{id:state.id,name:row.name});converted=await documentIO.convertImageFile(row.source.file,row.type,{...row.source,signal,maxDimension:2400,maxRSSBytes:384*1024*1024,timeoutMs:30000});check(signal);const bytes=converted?.bytes||converted?.data;if(!ArrayBuffer.isView(bytes))throw Error('Image search conversion returned invalid pixels.');await phase?.beforeOCR(bytes.byteLength);check(signal);const value=await documentIO.reader.read(bytes,{id:'index-'+randomUUID(),language:'auto',priority:job.background?'background':'foreground',textOnly:true,signal});check(signal);row.text=value.text;job.byHash.set(row.hash,value.text);state.cached[row.name]={hash:row.hash,text:value.text};job.cursor++;}
   catch(error){if(signal.aborted)throw error;job.errors.push(row.name+': '+error.message);job.cursor++;}
-  finally{await documentIO.reader.awaitStopped?.();discard(converted?.bytes||converted?.data);converted=null;}
+  finally{await documentIO.reader.awaitStopped?.();discard(converted?.bytes||converted?.data);converted=null;await phase?.afterOCR();}
  }
  async function releaseEngine(){clearTimeout(engineTimer);engineTimer=null;if(engineDrop)return engineDrop;const held=engine;if(!held)return;held.stopping=true;engine=null;const drop=(async()=>{await documentIO.reader.retireIdle?.();await documentIO.reader.awaitStopped?.();held.off();try{await held.working()}finally{try{await held.lease.release()}finally{await storage.releaseRawAssets(held.owner)}}})();engineDrop=drop;try{await drop}catch(error){engine=held;throw error}finally{if(engineDrop===drop)engineDrop=null;}}
+ async function phasedImage(state,job,row){const signal=job.controller.signal,plan=row.source.workingPlan,owner=randomUUID(),lease=await storage.preflightRawAssets([],{owner});let working,promoted=false,off=()=>{};
+  try{return await lease.run(async()=>{if(!engine&&documentIO.reader.idleWorker)await documentIO.reader.retireIdle?.();if(engine?.stopping)await releaseEngine();try{working=await storage.acquireScopedRawWorking(plan.convertBytes,{preserve:true})}catch(error){if(error.code!=='ARCHIVE_RAW_BUSY')throw error;await releaseEngine();working=await acquireImageWorking(storage,signal,plan.convertBytes);}const lost=()=>job.controller.abort();working.signal?.addEventListener('abort',lost,{once:true});off=()=>working.signal?.removeEventListener('abort',lost);if(working.signal?.aborted)lost();check(signal);
+   return await readImage(state,job,row,{beforeOCR:async bytes=>{check(signal);if(bytes>plan.maxOutputBytes)throw Error('Image search conversion exceeded its declared pixel workspace.');await working.resize(bytes+plan.ocrBytes+(engine?0:plan.modelBytes),{preserve:true});},afterOCR:async()=>{if(!signal.aborted&&!closed&&!foreground&&now()>=activityUntil&&!engine&&documentIO.reader.idleWorker){await working.resize(plan.modelBytes,{preserve:true});off();const held={owner,lease,working,bytes:plan.modelBytes,off:null},lost=()=>{active?.job.controller?.abort();void releaseEngine().catch(()=>{});};held.off=()=>working.signal?.removeEventListener('abort',lost);engine=held;working.signal?.addEventListener('abort',lost,{once:true});promoted=true;}}});
+  });}finally{off();if(!promoted){await documentIO.reader.awaitStopped?.();try{await working?.()}finally{try{await lease.release()}finally{await storage.releaseRawAssets(owner)}}}if(signal.aborted||closed||foreground||now()<activityUntil)await releaseEngine();}
+ }
  async function step(state,job){const signal=job.controller.signal;check(signal);let row;
   while(job.cursor<job.sources.rows.length){row=job.sources.rows[job.cursor];if(row.text!==undefined){job.cursor++;continue}if(job.byHash.has(row.hash)){row.text=job.byHash.get(row.hash);job.cursor++;continue}break;}
   if(job.cursor===job.sources.rows.length)return;
   if(!storage.preflightRawAssets||!storage.acquireScopedRawWorking)return readImage(state,job,row);
+  if(row.source.workingPlan){clearTimeout(engineTimer);engineTimer=null;return phasedImage(state,job,row);}
   clearTimeout(engineTimer);engineTimer=null;
   if(!engine||engine.stopping||engine.bytes<row.source.workingBytes){await releaseEngine();const owner=randomUUID(),lease=await storage.preflightRawAssets([],{owner});let working;
    try{working=await lease.run(()=>acquireImageWorking(storage,signal,row.source.workingBytes));check(signal);const held={owner,lease,working,bytes:row.source.workingBytes,off:null},lost=()=>{active?.job.controller?.abort();void releaseEngine().catch(()=>{});};held.off=()=>working.signal?.removeEventListener('abort',lost);engine=held;working.signal?.addEventListener('abort',lost,{once:true});if(working.signal?.aborted)lost();}
