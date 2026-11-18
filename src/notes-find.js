@@ -46,7 +46,7 @@
    while((node=walker.nextNode())){if(node.nodeType===1){if(node.tagName==='BR')text+='\n';continue;}const owner=node.parentElement.closest('p,h1,h2,h3,h4,h5,h6,li,td,th,pre,blockquote,div,section')||rich;if(nodes.length&&owner!==block&&!text.endsWith('\n'))text+='\n';block=owner;nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
    let startIndex=0,endIndex=0;
    for(const [at,stop] of scan(text)){while(startIndex<nodes.length&&nodes[startIndex].end<=at)startIndex++;endIndex=Math.max(endIndex,startIndex);while(endIndex<nodes.length&&nodes[endIndex].end<stop)endIndex++;const start=nodes[startIndex],end=nodes[endIndex];if(start&&end){const range=document.createRange();range.setStart(start.node,at-start.start);range.setEnd(end.node,stop-end.start);matches.push(range);}}
-   if(CSS.highlights)CSS.highlights.set('note-find',new Highlight(...matches));
+   if(CSS.highlights){const highlight=new Highlight();for(const match of matches)highlight.add(match);CSS.highlights.set('note-find',highlight);}
   }
   index=Math.min(Math.max(index,0),matches.length-1);
   count.textContent=matches.length?(index+1)+' of '+matches.length:'No matches';button('prev').disabled=button('next').disabled=!matches.length;
