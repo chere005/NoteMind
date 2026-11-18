@@ -33,6 +33,7 @@ async function handlePacket(packet){
   else if(op==='rawRelease')value=raw.release(args[0]);
   else if(op==='rawScopedRelease'){raw.releaseScoped(args[0],rawContext);value=inspectionCleanup?{inspectionCleanup}:undefined;}
   else if(op==='rawAcquireWorking')value=raw.acquireWorking(args[0],rawContext);
+  else if(op==='rawResizeWorking')value=raw.resizeWorking(args[0]);
   else if(op==='rawReleaseWorking')value=raw.releaseWorking(args[0]);
   else if(op==='rawInfo')value=raw.info(args[0].descriptor,rawContext);
   else if(op==='rawRead'){value=raw.read(args[0],rawContext);transfers.push(value.buffer);}
