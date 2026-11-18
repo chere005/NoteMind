@@ -1,5 +1,10 @@
 // Private converter bridge. Default base64 and opt-in ACKed binary chunks are bounded; borrowed outputs stay borrowed.
-(function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory;else root.NoteMindDocumentBytes=factory()})(typeof window==='undefined'?this:window,function({limit=320*1024*1024,entryLimit=150*1024*1024,consumeOwned=false,uuid=()=>crypto.randomUUID(),decode=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0)),encode=bytes=>{let s='';for(let at=0;at<bytes.length;at+=8192)s+=String.fromCharCode(...bytes.subarray(at,at+8192));return btoa(s)}}={}){
+(function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory;else root.NoteMindDocumentBytes=factory()})(typeof window==='undefined'?this:window,function({limit=320*1024*1024,entryLimit=150*1024*1024,consumeOwned=false,decodeOwnedBase64=false,uuid=()=>crypto.randomUUID(),decode=(consumeOwned&&decodeOwnedBase64?s=>{
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',canonical=s.length%4===0&&/^[A-Za-z0-9+/]*={0,2}$/.test(s)&&(!s.endsWith('==')||alphabet.indexOf(s[s.length-3])%16===0)&&(!s.endsWith('=')||s.endsWith('==')||alphabet.indexOf(s[s.length-2])%4===0);
+  if(canonical&&typeof Uint8Array.fromBase64==='function')return Uint8Array.fromBase64(s);
+  // Noncanonical input keeps atob's accepted bytes and exact error behavior.
+  const text=atob(s),bytes=new Uint8Array(text.length);for(let at=0;at<text.length;at++)bytes[at]=text.charCodeAt(at);return bytes;
+ }:s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0))),encode=bytes=>{let s='';for(let at=0;at<bytes.length;at+=8192)s+=String.fromCharCode(...bytes.subarray(at,at+8192));return btoa(s)}}={}){
  const sessions=new Map();let used=0,cleanupFailures=0;const CHUNK=196608;
  const session=(id,allowClosing=false)=>{const item=sessions.get(id);if(!item||item.closing&&!allowClosing)throw Error('Document byte transfer is unavailable.');return item};
  function discard(buffer){if(buffer instanceof ArrayBuffer&&buffer.byteLength&&typeof buffer.transfer==='function')try{buffer.transfer(0)}catch{}}

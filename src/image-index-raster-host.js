@@ -2,7 +2,7 @@
 // framework belongs to that page; each byte/bitmap/canvas owner is acknowledged.
 function installImageIndexRasterHost(key,workerURL,makeBytes){
  if(Object.hasOwn(window,key))throw Error('Image conversion host already exists.');
- const bytes=makeBytes({entryLimit:50*1024*1024,limit:100*1024*1024,consumeOwned:true}),worker=new Worker(workerURL),jobs=new Map();let serial=0,active=null,broken=null,cancelledNonce=null;
+ const bytes=makeBytes({entryLimit:50*1024*1024,limit:100*1024*1024,consumeOwned:true,decodeOwnedBase64:true}),worker=new Worker(workerURL),jobs=new Map();let serial=0,active=null,broken=null,cancelledNonce=null;
  const error=value=>Object.assign(Error(value?.message||'Image conversion failed.'),{name:value?.name||'Error',code:value?.code});
  worker.onmessage=event=>{const packet=event.data,job=jobs.get(packet?.id);if(!job||active!==job){try{packet?.bytes?.transfer?.(0)}catch{}return;}
   if(packet.released!==true){broken=Error('Image conversion resources have not been released.');job.reject(broken);return;}
