@@ -1,7 +1,7 @@
 // Private preview files have durable exact-inode cleanup claims. A directory
 // name alone never confers authority over anything another process leaves there.
 const fs=require('node:fs/promises'),native=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=require('node:crypto');
-const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,NAME=/^[a-f0-9-]{36}\.(?:html|png|jpg|gif|svg|bin)$/i,MAX=16*1024*1024,MAX_FILES=65535,MARKER='owner.jsonl',FOLLOW=native.constants.O_NOFOLLOW||0;
+const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,NAME=/^[a-f0-9-]{36}\.(?:html|png|jpg|gif|svg|bin)$/i,MAX=16*1024*1024,MAX_FILES=65535,MARKER='owner.jsonl',FOLLOW=(native.constants.O_NOFOLLOW||0)|(native.constants.O_NONBLOCK||0);
 const digest=value=>createHash('sha256').update(value).digest('hex'),identity=stat=>({dev:String(stat.dev),ino:String(stat.ino)}),same=(a,b)=>a&&b&&a.dev===b.dev&&a.ino===b.ino,row=value=>JSON.stringify({value,sha256:digest(JSON.stringify(value))})+'\n',changed=()=>Object.assign(Error('Word preview file ownership changed.'),{code:'WORD_PREVIEW_OWNER_CHANGED'});
 const discard=bytes=>{if(bytes?.buffer&&bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function')try{bytes.buffer.transfer(0)}catch{}};
 async function write(handle,bytes,at){for(let offset=0;offset<bytes.length;){const result=await handle.write(bytes,offset,bytes.length-offset,at+offset);if(!result.bytesWritten)throw Error('Word preview ownership write stopped.');offset+=result.bytesWritten;}}
