@@ -38,7 +38,8 @@ app.on('will-quit',event=>{
  if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRetry?.();return;}
  const invoke=run=>Promise.resolve().then(run),settle=async runs=>{const results=await Promise.allSettled(runs.map(invoke)),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(errors.length)throw new AggregateError(errors,'Core cleanup could not finish.');},retry=runs=>{void Promise.allSettled(runs.map(invoke));};
  coreQuitWaiting=Promise.resolve().then(async()=>{
-  const producers=[()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
+  const producers=[()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
+  const noteAssets=[()=>notesIPC.dispose()];coreQuitRetry=()=>retry(noteAssets);await settle(noteAssets);
   coreQuitRetry=null;
   await settle([()=>sheetWrite,()=>cameraWrite]);
   const persistence=[()=>sheetPersistenceService?.dispose(),()=>cameraPersistenceService?.dispose()];coreQuitRetry=()=>retry(persistence);await settle(persistence);
