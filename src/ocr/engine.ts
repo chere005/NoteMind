@@ -3,9 +3,10 @@
 import { existsSync, promises as fs } from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { isMarkedAsUntransferable } from "node:worker_threads"
 import type * as Ort from "onnxruntime-web"
 import { ctcAlphabet } from "./onnxMeta"
-import type { Engine, Recogniser, RecogniserSource, SessionLike } from "./pipeline"
+import type { Engine, Recogniser, RecogniserSource, SessionLike, TensorLike } from "./pipeline"
 
 
 export const MODEL_FILES = {
@@ -46,13 +47,33 @@ export function loadEngine(ort: typeof Ort, models: string, options?: LoadOption
 export function loadEngine(ort: typeof Ort, models: string, options: LoadOptions): Promise<Engine<RecogniserSource>>
 export async function loadEngine(ort: typeof Ort, models: string, options: LoadOptions = {}): Promise<Engine<RecogniserSource>> {
   configure(ort, options)
-  const session = async (bytes: Uint8Array): Promise<SessionLike> =>
-    await ort.InferenceSession.create(bytes, { graphOptimizationLevel: "all" }) as unknown as SessionLike
+  const retire = (data: Uint8Array | Float32Array | Int32Array): void => {
+    const backing = data.buffer
+    if (data.byteLength && backing instanceof ArrayBuffer && data.byteOffset === 0 && data.byteLength === backing.byteLength && !isMarkedAsUntransferable(backing)) {
+      ;(backing as ArrayBuffer & { transfer(size: number): ArrayBuffer }).transfer(0)
+    }
+  }
+  const readModel = async (name: string): Promise<Uint8Array> => {
+    const bytes = await fs.readFile(path.join(models, name))
+    return bytes.buffer instanceof ArrayBuffer && !bytes.byteOffset && bytes.byteLength === bytes.buffer.byteLength && !isMarkedAsUntransferable(bytes.buffer) ? new Uint8Array(bytes.buffer) : Uint8Array.from(bytes)
+  }
+  const created: Ort.InferenceSession[] = []
+  const session = async (bytes: Uint8Array): Promise<SessionLike> => {
+    try {
+      const value = await ort.InferenceSession.create(bytes, { graphOptimizationLevel: "all" })
+      created.push(value)
+      return value as unknown as SessionLike
+    // Pinned ORT1.30 copies external model bytes into WASM before create()
+    // settles; the session retains no borrow of this private file backing.
+    } finally { retire(bytes) }
+  }
   const recogniser = async (name: string): Promise<Recogniser> => {
-    const bytes = new Uint8Array(await fs.readFile(path.join(models, name)))
-    const alphabet = ctcAlphabet(bytes)
-    if (!alphabet) throw new Error(`${name} carries no character list`)
-    return { session: await session(bytes), alphabet }
+    const bytes = await readModel(name)
+    try {
+      const alphabet = ctcAlphabet(bytes)
+      if (!alphabet) throw new Error(`${name} carries no character list`)
+      return { session: await session(bytes), alphabet }
+    } finally { retire(bytes) }
   }
   const lazyRecogniser = (name: string): (() => Promise<Recogniser>) => {
     let pending: Promise<Recogniser> | undefined
@@ -67,12 +88,30 @@ export async function loadEngine(ort: typeof Ort, models: string, options: LoadO
       return pending
     }
   }
-  const det = await session(new Uint8Array(await fs.readFile(path.join(models, MODEL_FILES.det))))
+  try { const det = await session(await readModel(MODEL_FILES.det))
   const rec = options.lazyRecognisers ? lazyRecogniser(MODEL_FILES.rec) : await recogniser(MODEL_FILES.rec)
   const japanese = modelsIn(models).japanese ?
     (options.lazyRecognisers ? lazyRecogniser(MODEL_FILES.recJapanese) : await recogniser(MODEL_FILES.recJapanese)) : undefined
+  const inputs = new WeakSet<TensorLike>(), released = new WeakSet<TensorLike>()
   return {
     det, rec, ...(japanese ? { japanese } : {}),
-    tensor: (data, dims) => new ort.Tensor("float32", data, dims),
+    tensor: (data, dims) => { const tensor = new ort.Tensor("float32", data, dims); inputs.add(tensor); return tensor },
+    releaseOwnedData: retire,
+    releaseTensor: tensor => {
+      if (released.has(tensor) || !(tensor instanceof ort.Tensor)) return
+      const value = tensor as unknown as Ort.Tensor
+      // Default ORT1.30 WASM outputs are fresh CPU copies; inputs lend the
+      // strip's data until both language sessions have finished using it.
+      const data = !inputs.has(tensor) && value.location === "cpu" ? value.data : undefined
+      value.dispose?.()
+      if (data instanceof Float32Array) retire(data)
+      released.add(tensor)
+    },
+  }
+  } catch (error) {
+    const cleanup = await Promise.allSettled(created.map(async value => { await value.release() }))
+    const failed = cleanup.find(result => result.status === "rejected")
+    if (failed?.status === "rejected") throw Object.assign(new Error("OCR partial initialization cleanup failed: " + String(failed.reason)), { cause: error })
+    throw error
   }
 }

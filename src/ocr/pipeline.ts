@@ -23,6 +23,10 @@ export interface Engine<R extends RecogniserSource = Recogniser> {
   
   japanese?: R
   tensor: TensorMaker
+  // Supplied only by the owned runtime adapter. A generic engine may lend its
+  // tensors or scratch arrays and retains the original borrowing contract.
+  releaseTensor?: (tensor: TensorLike) => void
+  releaseOwnedData?: (data: Float32Array | Int32Array) => void
 }
 
 
@@ -84,13 +88,13 @@ function sampler(image: Rgba): (x: number, y: number, out: Float32Array) => void
 }
 
 
-function sampleQuad(image: Rgba, origin: Point, u: Point, v: Point, outW: number, outH: number): Float32Array {
+function sampleQuad(image: Rgba, origin: Point, u: Point, v: Point, outW: number, outH: number, release?: (data: Float32Array) => void): Float32Array {
   const take = sampler(image)
   const spanU = Math.hypot(u.x, u.y) / outW, spanV = Math.hypot(v.x, v.y) / outH
   const k = Math.max(1, Math.min(4, Math.ceil(Math.max(spanU, spanV))))
   const out = new Float32Array(outW * outH * 3)
   const rgb = new Float32Array(3)
-  for (let j = 0; j < outH; j += 1) {
+  try { for (let j = 0; j < outH; j += 1) {
     for (let i = 0; i < outW; i += 1) {
       let r = 0, g = 0, b = 0
       for (let sj = 0; sj < k; sj += 1) {
@@ -105,6 +109,7 @@ function sampleQuad(image: Rgba, origin: Point, u: Point, v: Point, outW: number
     }
   }
   return out
+  } finally { release?.(rgb) }
 }
 
 // MARK: - Detection
@@ -138,8 +143,9 @@ export function detectorSize(width: number, height: number, tuning: ReadTuning =
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225]
 
 
-export function detectorInput(image: Rgba, size: { width: number; height: number }): Float32Array {
-  const rgb = sampleQuad(image, { x: 0, y: 0 }, { x: image.width, y: 0 }, { x: 0, y: image.height }, size.width, size.height)
+export function detectorInput(image: Rgba, size: { width: number; height: number }, release?: (data: Float32Array) => void): Float32Array {
+  const rgb = sampleQuad(image, { x: 0, y: 0 }, { x: image.width, y: 0 }, { x: 0, y: image.height }, size.width, size.height, release)
+  try {
   const plane = size.width * size.height
   const out = new Float32Array(plane * 3)
   for (let p = 0; p < plane; p += 1) {
@@ -149,6 +155,7 @@ export function detectorInput(image: Rgba, size: { width: number; height: number
     }
   }
   return out
+  } finally { release?.(rgb) }
 }
 
 const cross = (o: Point, a: Point, b: Point): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
@@ -202,12 +209,12 @@ export function minAreaRect(points: Point[]): Omit<LineBox, "score"> {
 }
 
 
-export function linesInMap(map: Float32Array, width: number, height: number, tuning: ReadTuning = DEFAULT_TUNING): LineBox[] {
+export function linesInMap(map: Float32Array, width: number, height: number, tuning: ReadTuning = DEFAULT_TUNING, release?: (data: Int32Array) => void): LineBox[] {
   const label = new Int32Array(width * height)
   const lines: LineBox[] = []
   const stack: number[] = []
   let next = 0
-  for (let start = 0; start < map.length; start += 1) {
+  try { for (let start = 0; start < map.length; start += 1) {
     if (label[start] !== 0 || map[start]! <= tuning.threshold) continue
     next += 1
     label[start] = next
@@ -249,6 +256,7 @@ export function linesInMap(map: Float32Array, width: number, height: number, tun
     lines.push({ ...rect, halfWidth: rect.halfWidth + distance, halfHeight: rect.halfHeight + distance, score })
   }
   return lines
+  } finally { release?.(label) }
 }
 
 // MARK: - Recognition
@@ -274,7 +282,7 @@ export interface Strip {
 }
 
 
-export function cutStrip(image: Rgba, box: LineBox): Strip {
+export function cutStrip(image: Rgba, box: LineBox, release?: (data: Float32Array) => void): Strip {
   let u = box.u, v = box.v, hw = box.halfWidth, hh = box.halfHeight
   if (hh * 2 >= hw * 2 * 1.5) {
     // Paddle's np.rot90: the top of the line becomes its left, the right its top.
@@ -285,7 +293,8 @@ export function cutStrip(image: Rgba, box: LineBox): Strip {
   const origin = { x: box.center.x - u.x * hw - v.x * hh, y: box.center.y - u.y * hw - v.y * hh }
   const width = Math.max(1, Math.min(REC_MAX_WIDTH, Math.ceil((REC_HEIGHT * hw) / Math.max(1e-6, hh))))
   const padded = Math.max(REC_MIN_WIDTH, width)
-  const rgb = sampleQuad(image, origin, along, across, width, REC_HEIGHT)
+  const rgb = sampleQuad(image, origin, along, across, width, REC_HEIGHT, release)
+  try {
   const plane = padded * REC_HEIGHT
   const data = new Float32Array(plane * 3)  // padding is 0 after normalising, as Paddle's is
   for (let y = 0; y < REC_HEIGHT; y += 1) {
@@ -295,6 +304,7 @@ export function cutStrip(image: Rgba, box: LineBox): Strip {
     }
   }
   return { data, width, padded, origin, along, across }
+  } finally { release?.(rgb) }
 }
 
 
@@ -374,12 +384,27 @@ async function recognise(engine: Engine<RecogniserSource>, source: RecogniserSou
   const recogniser = typeof source === "function" ? await source() : source
   checkStop(shouldStop)
   const { session, alphabet } = recogniser
-  const out = await session.run({ [session.inputNames[0]!]: engine.tensor(strip.data, [1, 3, REC_HEIGHT, strip.padded]) })
+  const input = engine.tensor(strip.data, [1, 3, REC_HEIGHT, strip.padded])
+  let out: Record<string, TensorLike> | undefined
+  try { out = await session.run({ [session.inputNames[0]!]: input })
   const probabilities = out[session.outputNames[0]!]!
   const [, steps, classes] = probabilities.dims as [number, number, number]
   if (classes !== alphabet.length) throw new Error(`the recogniser has ${classes} classes and its dictionary ${alphabet.length}`)
   const emitted = ctcDecode(probabilities.data as Float32Array, steps, classes, alphabet)
   return lineFrom(emitted, steps, strip, image.width, image.height)
+  } finally { releaseTensors(engine, input, out) }
+}
+
+function releaseTensors(engine: Engine<RecogniserSource>, input: TensorLike | undefined, outputs?: Record<string, TensorLike>): void {
+  if (!engine.releaseTensor) return
+  let failure: unknown
+  const seen = new Set<TensorLike>()
+  for (const tensor of [input, ...Object.values(outputs ?? {})]) {
+    if (!tensor || seen.has(tensor)) continue
+    seen.add(tensor)
+    try { engine.releaseTensor(tensor) } catch (error) { failure ??= error }
+  }
+  if (failure) throw failure
 }
 
 // MARK: - The whole read
@@ -404,14 +429,16 @@ export async function readPicture(engine: Engine<RecogniserSource>, image: Rgba,
   const japanese = choices.japanese !== false ? engine.japanese : undefined
   const started = Date.now()
   const size = detectorSize(image.width, image.height, tuning)
-  const input = engine.tensor(detectorInput(image, size), [1, 3, size.height, size.width])
+  const inputData = detectorInput(image, size, engine.releaseOwnedData)
+  let input: TensorLike | undefined, detOut: Record<string, TensorLike> | undefined, boxes: LineBox[]
+  try { input = engine.tensor(inputData, [1, 3, size.height, size.width])
   checkStop(shouldStop)
-  const detOut = await engine.det.run({ [engine.det.inputNames[0]!]: input })
+  detOut = await engine.det.run({ [engine.det.inputNames[0]!]: input })
   checkStop(shouldStop)
   const map = detOut[engine.det.outputNames[0]!]!
   const [mapH, mapW] = [map.dims[2]!, map.dims[3]!]
   const scaleX = image.width / mapW, scaleY = image.height / mapH
-  const boxes = linesInMap(map.data as Float32Array, mapW, mapH, tuning).map((box): LineBox => {
+  boxes = linesInMap(map.data as Float32Array, mapW, mapH, tuning, engine.releaseOwnedData).map((box): LineBox => {
     // Back into picture pixels. The two scales are equal up to the rounding to 32, near enough for a box.
     const toPicture = (p: Point) => ({ x: p.x * scaleX, y: p.y * scaleY })
     const ends = [
@@ -428,15 +455,19 @@ export async function readPicture(engine: Engine<RecogniserSource>, image: Rgba,
     const v = { x: (sides[1]!.x - sides[0]!.x) / (2 * halfHeight || 1), y: (sides[1]!.y - sides[0]!.y) / (2 * halfHeight || 1) }
     return { center: toPicture(box.center), u, v, halfWidth, halfHeight, score: box.score }
   })
+  } finally {
+    try { releaseTensors(engine, input, detOut) } finally { engine.releaseOwnedData?.(inputData) }
+  }
   const detect = Date.now() - started
 
   const lines: BundledLine[] = []
   for (const box of boxes) {
     checkStop(shouldStop)
-    const strip = cutStrip(image, box)
-    const english = await recognise(engine, engine.rec, strip, image, shouldStop)
-    const line = japanese ? pickReading(english, await recognise(engine, japanese, strip, image, shouldStop)) : english
-    if (line && line.confidence >= tuning.minConfidence) lines.push(line)
+    const strip = cutStrip(image, box, engine.releaseOwnedData)
+    try { const english = await recognise(engine, engine.rec, strip, image, shouldStop)
+      const line = japanese ? pickReading(english, await recognise(engine, japanese, strip, image, shouldStop)) : english
+      if (line && line.confidence >= tuning.minConfidence) lines.push(line)
+    } finally { engine.releaseOwnedData?.(strip.data) }
   }
   // Reading order: top to bottom, then left to right (textRecognition's tidyReading refines this into bands).
   lines.sort((a, b) => (a.y + a.height / 2) - (b.y + b.height / 2) || a.x - b.x)
