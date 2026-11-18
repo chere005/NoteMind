@@ -22,9 +22,21 @@ function prune(md,doc,candidates){
  function retain(value){const names=wanted.get(key(value));if(!names)return;for(const name of names){live.add(name);const pair=name.endsWith('.json')?name.slice(0,-5):name+'.json';if(eligible.has(pair))live.add(pair);}}
  const pending=[md.parse(String(doc?.text||''),{})];
  while(pending.length){for(const token of pending.pop()||[]){if(token.type==='image')retain(token.attrGet?.('src'));else if(token.type==='link_open')retain(token.attrGet?.('href'));if(token.children?.length)pending.push(token.children);}}
- // Attachment records own their source and thumbnail even when their card is
- // temporarily absent from Markdown. A graphicsPanes decoration alone does not.
- for(const [name,info]of Object.entries(meta.attachments||{})){retain(name);retain(info?.thumbnail);}
+ // Attachment records also own portable PDF ink, independently of body links.
+ // Ambiguous metadata cannot prove an asset unused; leave this cleanup intact.
+ const attachments=meta.attachments;
+ if(attachments!=null&&(typeof attachments!=='object'||Array.isArray(attachments)))return {assets,meta,removed:[]};
+ for(const [name,info]of Object.entries(attachments||{})){
+  if(info!=null&&(typeof info!=='object'||Array.isArray(info)))return {assets,meta,removed:[]};
+  retain(name);retain(info?.thumbnail);
+  const reference=info?.reference;if(reference==null)continue;
+  if(typeof reference!=='object'||Array.isArray(reference)||!reference.pages||typeof reference.pages!=='object'||Array.isArray(reference.pages))return {assets,meta,removed:[]};
+  for(const page of Object.values(reference.pages)){
+   if(!page||typeof page!=='object'||typeof page.asset!=='string'||!page.asset)return {assets,meta,removed:[]};
+   retain(page.asset);
+  }
+ }
+ if(live.has('assets/drawing.svg'))retain('assets/drawing.json');
  const removed=[...eligible].filter(name=>Object.hasOwn(assets,name)&&!live.has(name));
  if(!removed.length)return {assets,meta,removed};
  const nextAssets={...assets};for(const name of removed)delete nextAssets[name];
