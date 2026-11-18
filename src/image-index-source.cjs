@@ -39,7 +39,7 @@ async function prepareIndexSources(doc,{storage,cached={},signal,tempRoot=os.tmp
     await yieldTask();
    }
    check(signal);const actual=hash.digest('hex');if(expected&&actual!==expected)throw Error('Image search source digest changed.');expected=actual;
-   const dimensions=imageDimensions(header)||(header[0]===255&&header[1]===216?await require('./image-index-dimensions.cjs').jpegDimensions(handle,file,bytes,signal):null);claim.source=Object.freeze({file,root:owner.directory,bytes,sha256:expected,...(dimensions?{dimensions}:{}),workingBytes:imageWorkingBytes(bytes,dimensions),workingPlan:imageWorkingPlan(bytes,dimensions)});
+   const dimensions=imageDimensions(header)||(header[0]===255&&header[1]===216?await require('./image-index-dimensions.cjs').jpegDimensions(handle,file,bytes,signal):mime(name)==='image/svg+xml'?await require('./image-index-dimensions.cjs').svgDimensions(handle,file,bytes,signal):null);claim.source=Object.freeze({file,root:owner.directory,bytes,sha256:expected,...(dimensions?{dimensions}:{}),workingBytes:imageWorkingBytes(bytes,dimensions),workingPlan:imageWorkingPlan(bytes,dimensions)});
   }finally{discard(header);await closeClaim(claim);}
   if(cached[name]?.hash===expected){await drop(claim);rows.push({name,hash:expected,text:cached[name].text||''});continue;}
   const existing=files.get(expected+'\0'+mime(name));if(existing){await drop(claim);rows.push({name,hash:expected,source:existing,type:mime(name)});continue;}
