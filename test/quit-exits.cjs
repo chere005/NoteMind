@@ -3,13 +3,45 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app } = require('electron');
+const { randomUUID } = require('node:crypto');
+const { app, nativeImage } = require('electron');
 
-const scenarios = ['open-window', 'closed-window', 'unsaved-stroke', 'open-pdf'];
+const scenarios = ['open-window', 'closed-window', 'unsaved-stroke', 'open-pdf', 'restored-images'];
 const scenario = process.env.NOTEMIND_QUIT_SCENARIO;
 const simulatedPad = process.env.NOTEMIND_QUIT_TEST_PAD === '1';
 const requestMarker = 'Quit test requested shutdown';
 const sessionPath = profile => path.join(profile, 'note-recovery', 'session.json');
+
+function seedImageNotes(profile) {
+  const { encode } = require('../src/notepad-format.cjs');
+  const width = 896, height = 896;
+  const pixels = Buffer.alloc(width * height * 4);
+  let seed = 340763031;
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    pixels.writeUInt32LE((seed | 0xff000000) >>> 0, offset);
+  }
+  const photo = nativeImage.createFromBitmap(pixels, { width, height }).toJPEG(90);
+  const recovery = path.dirname(sessionPath(profile));
+  fs.mkdirSync(recovery);
+  const tabs = [24, 1].map((count, index) => {
+    const id = randomUUID(), file = path.join(profile, `Pictures ${index + 1}.nm`);
+    const images = Array.from({ length: count }, (_, number) => {
+      const name = `assets/photo-${number}.jpg`;
+      const distinct = Buffer.concat([photo.subarray(0, 2), Buffer.from([255, 254, 0, 3, number]), photo.subarray(2)]);
+      return [name, distinct.toString('base64')];
+    });
+    const text = images.map(([name]) => `![Photo](${name})`).join('\n\n');
+    const archive = encode({ id, title: 'Pictures', text, assets: Object.fromEntries(images) });
+    fs.writeFileSync(file, archive);
+    fs.writeFileSync(path.join(recovery, `${id}.wm`), archive);
+    fs.writeFileSync(path.join(recovery, `${id}.json`), JSON.stringify({ path: file, dirty: false }));
+    return { id, path: file, visual: true, scroll: null };
+  });
+  fs.writeFileSync(sessionPath(profile), JSON.stringify({ tabs, active: tabs[0].id }));
+}
 
 function simulatePenDisplay() {
   const Module = require('node:module');
@@ -51,6 +83,7 @@ function startWorkspace() {
   app.setPath('documents', profile);
   app.disableHardwareAcceleration();
   if (simulatedPad) simulatePenDisplay();
+  if (scenario === 'restored-images') seedImageNotes(profile);
   app.on('before-quit', () => console.log('before-quit'));
   app.on('will-quit', () => console.log('will-quit'));
   app.on('quit', (_, code) => {
@@ -75,6 +108,10 @@ function startWorkspace() {
       await drawingContents.executeJavaScript(`(async () => {
         while (!document.querySelector('[data-tablet=surface]')) await new Promise(resolve => setTimeout(resolve, 25));
       })()`);
+      if (scenario === 'restored-images') {
+        const count = await js(`document.querySelectorAll('#rich img[data-asset]').length`);
+        assert.equal(count, 24, 'The restored note contains all 24 image references at Quit');
+      }
       if (scenario === 'unsaved-stroke') {
         await drawingContents.executeJavaScript(`(() => {
           const surface = document.querySelector('[data-tablet=surface]');
@@ -166,7 +203,9 @@ async function runScenario(root, name) {
     assert.ok(stdout.includes(requestMarker) && stdout.includes('Workspace window closed'), output);
     assert.ok(stdout.includes('Recovery session exists at quit'), output);
     if (name === 'open-pdf') assert.ok(stdout.includes('PDF worker remains open during workspace flush'), output);
-    assert.ok(Array.isArray(JSON.parse(fs.readFileSync(sessionPath(profile))).tabs));
+    const recovered = JSON.parse(fs.readFileSync(sessionPath(profile)));
+    assert.ok(Array.isArray(recovered.tabs));
+    if (name === 'restored-images') assert.equal(recovered.tabs.length, 2);
     if (name === 'unsaved-stroke') {
       assert.ok(fs.existsSync(path.join(profile, 'sheets-v2.json')), 'The unsaved sheet reached disk');
       const { SheetPersistence } = require('../src/sheet-persistence.cjs');
