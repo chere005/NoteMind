@@ -17,11 +17,11 @@ function packOutput(doc,known,context){
  return assets.pack(doc,known);
 }
 async function handlePacket(packet){
- let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup}=packet;packet=null;let rawPacket;
+ let {id,op,args,assetPacket,knownAssets=[],assetLimits,rawLimits,rawContext,codecEpoch,inspectionCleanup,externalWorking}=packet;packet=null;let rawPacket;
  const cleanup=()=>{let failure;try{releaseArchiveInput(op,args)}catch(error){failure=error;}const scope=rawPacket;rawPacket=null;try{raw?.endPacket(scope)}catch(error){failure ||=error;}try{assets?.trim()}catch(error){failure ||=error;}try{raw?.trim()}catch(error){failure ||=error;}if(failure)throw failure;};
  try{
   assets ||= new ArchiveAssetWorker(assetLimits);raw ||= new RawAssetStore({epoch:codecEpoch,...rawLimits,legacy:assets});assets.raw=raw;
-  if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');rawPacket=raw.beginPacket();
+  if(codecEpoch!==raw.epoch)throw Error('Invalid archive worker epoch.');if(externalWorking===undefined&&(raw.externalWorkingAuthority?.size||raw.externalDebtBytes))throw Object.assign(Error('External raw capacity authority is missing.'),{code:'ARCHIVE_RAW_BUSY'});if(externalWorking!==undefined)raw.reconcileExternalWorking(externalWorking);rawPacket=raw.beginPacket();
   const transfers=[],known=new Set(knownAssets);let value,output,received={accepted:{},refs:{}};
   if(op==='rawBegin')value=raw.begin(args[0]);
   else if(op==='rawAppend')value=raw.append(args[0]);
