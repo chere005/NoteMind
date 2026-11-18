@@ -4,7 +4,8 @@ function createInputReceiver(port,{key,write,onBroken=()=>{}}){
  const broken=error=>{try{onBroken(error)}catch{}};
  const post=value=>{try{port.postMessage({key,...value});return true}catch(error){broken(error);return false}};
  const retire=async data=>{const backing=data.buffer;debts.add(backing);try{while(backing.byteLength){try{backing.transfer(0)}catch{await new Promise(resolve=>setTimeout(resolve,25));}}}finally{debts.delete(backing);}};
- port.onmessage=event=>{const value=event.data;if(value?.key!==key)return;if(value.type==='hello'){post({type:'ready'});return;}if(value.type!=='data')return;
+ const rejectEnvelope=(value,message)=>{if(value?.data&&typeof value.data==='object')debts.add(value.data);broken(Error(message));};
+ port.onmessage=event=>{const value=event.data;if(value?.key!==key){rejectEnvelope(value,'Private DATA input key changed.');return;}if(value.type==='hello'&&!value.data){post({type:'ready'});return;}if(value.type!=='data'){rejectEnvelope(value,'Private DATA input control changed.');return;}
   const data=value.data,valid=ArrayBuffer.isView(data)&&data.BYTES_PER_ELEMENT===1&&data.buffer instanceof ArrayBuffer&&!data.byteOffset&&data.byteLength===data.buffer.byteLength&&data.byteLength>0&&data.byteLength<=LIMIT;
   if(!valid){if(data&&typeof data==='object')debts.add(data);broken(Error('Invalid private DATA input receiver.'));post({type:'ack',sequence:value.sequence,released:false});return;}
   const end=value.offset+data.byteLength;let record;
