@@ -18,3 +18,8 @@ module.exports.cleanupDeadPreviewFiles=cleanupDeadPreviewFiles;
 
 async function removePreviewFile(authority,entry){const packet=await read(authority),claimed=packet.claims.get(entry.name);if(!same(claimed,entry.identity))throw changed();await directory(authority);const file=path.join(authority.directory,entry.name);let stat;try{stat=await fs.lstat(file,{bigint:true});}catch(error){if(error.code==='ENOENT')return;throw error;}if(!stat.isFile()||stat.isSymbolicLink()||!same(identity(stat),entry.identity))throw changed();await fs.unlink(file);}
 module.exports.removePreviewFile=removePreviewFile;
+
+// Closing a session cannot add new claims. Parse its exact durable journal once,
+// then retain the marker/directory proof around each independent owned unlink.
+async function preparePreviewRemoval(authority){const packet=await read(authority);if(packet.tail)throw changed();const verify=async()=>{await directory(authority);const marker=await fs.lstat(path.join(authority.directory,MARKER),{bigint:true});if(!marker.isFile()||marker.isSymbolicLink()||['dev','ino','size','mtimeNs','ctimeNs'].some(key=>marker[key]!==packet.stat[key]))throw changed();};await verify();return{async remove(entry){const name=entry.name,inode={...entry.identity},claimed=packet.claims.get(name);if(!same(claimed,inode))throw changed();await verify();const file=path.join(authority.directory,name);let stat;try{stat=await fs.lstat(file,{bigint:true});}catch(error){if(error.code==='ENOENT')return;throw error;}if(!stat.isFile()||stat.isSymbolicLink()||!same(identity(stat),inode))throw changed();await fs.unlink(file);},finish:verify};}
+module.exports.preparePreviewRemoval=preparePreviewRemoval;
