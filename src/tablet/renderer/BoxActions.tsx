@@ -59,15 +59,16 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
     // The native feed's pen decides this itself (penFeed.ts holds its contact back); touch and other mouse buttons stay clicks.
     if (down.pointerId === SYNTH_POINTER_ID || down.pointerType === "touch" || (down.pointerType === "mouse" && down.button !== 0)) return
     const sheet = row.current?.parentElement?.querySelector<HTMLElement>('[data-tablet="surface"]')
-    if (!sheet) return
+    const view = sheet?.ownerDocument.defaultView as (Window & typeof globalThis) | null
+    if (!sheet || !view) return
     const start = { x: down.clientX, y: down.clientY }
     const moves: PointerEvent[] = []
-    const again = (type: "pointerdown" | "pointermove", from: PointerEvent): PointerEvent => new PointerEvent(type, {
+    const again = (type: "pointerdown" | "pointermove", from: PointerEvent): PointerEvent => new view.PointerEvent(type, {
       pointerId: down.pointerId, pointerType: down.pointerType, isPrimary: down.isPrimary, width: from.width, height: from.height,
       pressure: from.pressure, tiltX: from.tiltX, tiltY: from.tiltY, clientX: from.clientX, clientY: from.clientY,
       screenX: from.screenX, screenY: from.screenY, button: type === "pointerdown" ? down.button : -1, buttons: from.buttons,
       ctrlKey: from.ctrlKey, altKey: from.altKey, shiftKey: from.shiftKey, metaKey: from.metaKey,
-      bubbles: true, cancelable: true, composed: true, view: window,
+      bubbles: true, cancelable: true, composed: true, view,
     })
     const move = (event: PointerEvent): void => {
       if (event.pointerId !== down.pointerId) return
@@ -78,20 +79,20 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
       // reaches the sheet by itself when it is already over it.
       sheet.dispatchEvent(again("pointerdown", down))
       for (const one of moves) {
-        if (one === event && event.target instanceof Node && sheet.contains(event.target)) continue
+        if (one === event && event.target instanceof view.Node && sheet.contains(event.target)) continue
         sheet.dispatchEvent(again("pointermove", one))
       }
     }
     const end = (event: PointerEvent): void => { if (event.pointerId === down.pointerId) stop() }
     const stop = (): void => {
-      window.removeEventListener("pointermove", move, true)
-      window.removeEventListener("pointerup", end, true)
-      window.removeEventListener("pointercancel", end, true)
+      view.removeEventListener("pointermove", move, true)
+      view.removeEventListener("pointerup", end, true)
+      view.removeEventListener("pointercancel", end, true)
       if (watching.current === stop) watching.current = null
     }
-    window.addEventListener("pointermove", move, true)
-    window.addEventListener("pointerup", end, true)
-    window.addEventListener("pointercancel", end, true)
+    view.addEventListener("pointermove", move, true)
+    view.addEventListener("pointerup", end, true)
+    view.addEventListener("pointercancel", end, true)
     watching.current = stop
   }
 
