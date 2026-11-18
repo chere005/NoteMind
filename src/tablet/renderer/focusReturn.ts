@@ -13,7 +13,7 @@
  */
 
 /** The document's editable surface. */
-const EDITOR = ".cm-content"
+const EDITOR = ".cm-content, #rich, #source"
 
 /**
  * Where a click is chrome: the bars, the tab row, the sidebar and the page's own menus. The video pane's header is a
@@ -53,10 +53,10 @@ export function openTakesKeyboard(byApp: boolean, active: Element | null): boole
 export function returnFocus(): void {
   const active = document.activeElement
   if (keyboardElsewhere(active)) return
-  const editor = document.querySelector<HTMLElement>(EDITOR)
+  const editor = Array.from(document.querySelectorAll<HTMLElement>(EDITOR)).find(element => element.offsetParent !== null && !element.closest("[hidden],[inert]"))
   // A hidden pane cannot take focus (Hide Notes Pane); nothing to return to.
   if (!editor || editor.offsetParent === null) return
-  if (editor.contains(active) && active === editor) return
+  if (active && editor.contains(active)) return
   editor.focus({ preventScroll: true })
 }
 
