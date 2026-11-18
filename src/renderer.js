@@ -86,7 +86,7 @@ function assetUrl(name) { const data = doc.assets[name]; if (!data) return ''; c
 function render(text) { NoteMindImagePreviews.retainMany(tabs.map(tab => tab.doc.assets));return NoteMindDocument.render(text,doc.assets,doc.meta,NoteMindImagePreviews.url,NoteMindImagePreviews.size); }
 function visualAccess(){rich.contentEditable='true';$('toolbar').querySelectorAll('button').forEach(b=>b.disabled=false);return true;}
 function currentText(){return !visual?source.value:richChanged?NoteMindDocument.toMarkdown(rich.innerHTML):doc.text;}
-function sourceCaret(){const caret=sourceCarets.get(activeTab);if(caret&&caret.document.deref()===doc&&caret.text===doc.text)return caret;sourceCarets.delete(activeTab);return null;}
+function sourceCaret(tab=activeTab){const caret=sourceCarets.get(tab),owner=tab===activeTab?doc:tab?.doc;if(caret&&caret.document.deref()===owner&&caret.text===owner.text)return caret;sourceCarets.delete(tab);return null;}
 function rememberSourceCaret(){if(activeTab)sourceCarets.set(activeTab,{document:new WeakRef(doc),text:doc.text,start:source.selectionStart,end:source.selectionEnd,direction:source.selectionDirection});}
 function refreshEditor({contentChanged=true}={}){
  // The inactive view is disposable; currentText() and doc.text own the text.
