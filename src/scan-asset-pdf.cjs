@@ -4,9 +4,14 @@ const WORKING_BYTES=256*1024*1024,MAX_THUMB=512*1024;
 const abortError=()=>Object.assign(Error('Scan preparation cancelled.'),{name:'AbortError'}),check=signal=>{if(signal?.aborted)throw abortError();};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function acquireWorking(codec,signal){
- let revision=0,wake=null;const changed=()=>{revision++;wake?.();wake=null},off=codec.subscribeRawCapacity?.(changed),abort=()=>changed();signal?.addEventListener('abort',abort,{once:true});
- try{for(;;){check(signal);const observed=revision;try{return await codec.acquireScopedRawWorking(WORKING_BYTES)}catch(error){if(error?.code!=='ARCHIVE_RAW_BUSY'||!off)throw error;}check(signal);codec.hasRawAssetScope?.();if(observed!==revision)continue;await new Promise(resolve=>{wake=resolve;if(observed!==revision||signal?.aborted){wake=null;resolve();}});}}
- finally{off?.();signal?.removeEventListener('abort',abort);}
+ for(;;){
+  check(signal);if(typeof codec.subscribeRawCapacity!=='function')return codec.acquireScopedRawWorking(WORKING_BYTES);
+  const {changed,off,blocked}=require('./raw-capacity-wait.cjs').capacityChange(codec);
+  try{try{return await codec.acquireScopedRawWorking(WORKING_BYTES)}catch(error){if(error?.code!=='ARCHIVE_RAW_BUSY')throw error;blocked(error);}
+   check(signal);codec.hasRawAssetScope?.();
+   await new Promise((resolve,reject)=>{let settled=false;const finish=error=>{if(settled)return;settled=true;signal?.removeEventListener('abort',stop);error?reject(error):resolve();},stop=()=>finish(abortError());signal?.addEventListener('abort',stop,{once:true});changed.then(()=>finish());if(signal?.aborted)stop();});
+  }finally{off();}
+ }
 }
 function scanPages(doc){
  const pages=doc?.meta?.scanPages;limits.assertPageCount(pages?.length,{allowEmpty:false});if(!Array.isArray(pages)||!doc.assets||typeof doc.assets!=='object')throw Error('Invalid scan pages.');let chars=0,textBytes=0;
