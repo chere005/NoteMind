@@ -33,11 +33,11 @@ class RawAssetStore{
   this.owner(owner);const state=this.uploads.get(upload);if(epoch!==this.epoch||!state)throw rawMissing([upload]);if(state.owner!==owner)throw Error('Raw archive upload belongs to another owner.');if(state.offset!==state.bytes)throw Error('Raw archive upload is incomplete.');const lease=context?this.context(context):undefined;if(lease&&lease.owner!==owner)throw Error('Raw archive upload belongs to another owner.');const hash=state.hash.digest('hex');this.uploads.delete(upload);this.reserved-=state.bytes;try{const descriptor=this.add(state.data,{owner,chars:state.chars,hash,copy:false,lease});if(this.entries.get(descriptor.rawAssetToken).payload.bytes?.buffer!==state.data.buffer)this.discardBacking(state.data);return descriptor;}catch(error){this.discardBacking(state.data);throw error;}
  }
  cancel({upload,owner,epoch}){this.owner(owner);const state=this.uploads.get(upload);if(!state)return false;if(state.owner!==owner)throw Error('Raw archive upload belongs to another owner.');if(epoch!==this.epoch)return false;this.uploads.delete(upload);this.reserved-=state.bytes;this.discardBacking(state.data);return true;}
- add(bytes,{owner,chars=4*Math.ceil(bytes.length/3),hash,copy=true,lease}={}){
+ add(bytes,{owner,chars=4*Math.ceil(bytes.length/3),hash,copy=true,lease,reusable=true}={}){
   this.owner(owner);if(!hash)hash=createHash('sha256').update(bytes).digest('hex');const backing=bytes.buffer;let payload,scratch;this.protectedBuffers.add(backing);
   try{payload=this.payloads.get(hash);if(payload&&payload.length!==bytes.length)throw Error('Raw archive digest has conflicting lengths.');this.claim(payload?0:bytes.length,1);payload=this.payloads.get(hash);if(!payload)this.claim(bytes.length,1);
    if(!payload){const data=copy?(scratch=Buffer.from(Uint8Array.from(bytes).buffer)):bytes,spool=this.spool&&data.length>=this.spillBytes?this.spool.put(data,{sha256:hash}):null;payload={hash,length:data.length,bytes:spool?null:data,spool,tokens:new Set(),borrows:0,graphicsValid:false};this.payloads.set(hash,payload);this.bytes+=data.length;}else this.reuses++;
-   const key=this.uuid(),descriptor={rawAssetToken:key,bytes:bytes.length,chars,epoch:this.epoch},entry={owner,descriptor,payload,leases:new Set(),released:false};this.entries.set(key,entry);payload.tokens.add(key);if(lease)this.pinEntry(entry,lease);return descriptor;
+   const key=this.uuid(),descriptor={rawAssetToken:key,bytes:bytes.length,chars,epoch:this.epoch},entry={owner,descriptor,payload,leases:new Set(),released:false,reusable};this.entries.set(key,entry);payload.tokens.add(key);if(lease)this.pinEntry(entry,lease);return descriptor;
   }catch(error){if(payload&&!payload.tokens.size)this.discardPayload(payload);throw error;}finally{if(scratch&&payload?.bytes!==scratch)this.discardBacking(scratch);this.protectedBuffers.delete(backing);}
  }
  entry(descriptor,owner){
@@ -71,9 +71,11 @@ class RawAssetStore{
   catch(error){if(error.code==='ARCHIVE_RAW_SPOOL_CHANGED')this.invalidatePayload(payload);throw error;}
   finally{this.working-=reserved;payload.borrows--;this.activeSources--;this.discardPayload(payload);this.trim();}
  }
- decoded(bytes,info,context){
-  const lease=this.context(context);for(const key of lease.tokens){const entry=this.entries.get(key);if(entry&&entry.payload.hash===info.sha256&&entry.payload.length===bytes.length&&entry.descriptor.chars===4*Math.ceil(bytes.length/3)){this.reuses++;return entry.descriptor;}}
-  return this.add(bytes,{owner:lease.owner,hash:info.sha256,lease,copy:bytes.byteOffset!==0||bytes.byteLength!==bytes.buffer.byteLength});
+ decoded(bytes,info,context,{reuse=true}={}){
+  const lease=this.context(context);if(reuse)for(const key of lease.tokens){const entry=this.entries.get(key);if(entry&&entry.reusable!==false&&entry.payload.hash===info.sha256&&entry.payload.length===bytes.length&&entry.descriptor.chars===4*Math.ceil(bytes.length/3)){this.reuses++;return entry.descriptor;}}
+  // Transactional producers need their own token so a rejected publication
+  // cannot invalidate another output; add still deduplicates physical payloads.
+  return this.add(bytes,{owner:lease.owner,hash:info.sha256,lease,reusable:reuse,copy:bytes.byteOffset!==0||bytes.byteLength!==bytes.buffer.byteLength});
  }
  releaseLease(context){const lease=this.leases.get(context?.lease);if(!lease)return false;if(context.epoch!==this.epoch||context.owner!==lease.owner)throw Error('Invalid raw archive lease release.');for(const id of [...lease.reads])this.releaseRead({read:id,owner:lease.owner,lease:lease.id,epoch:this.epoch});for(const id of [...lease.workClaims])this.releaseWorking({working:id,owner:lease.owner,lease:lease.id,epoch:this.epoch});for(const key of lease.tokens){const entry=this.entries.get(key);if(entry){entry.leases.delete(lease.id);if(entry.released)this.drop(key);}}this.leases.delete(lease.id);this.trim();return true;}
  retain({owner,tokens}){this.owner(owner);if(!Array.isArray(tokens)||tokens.length>this.maxEntries||tokens.some(value=>!token(value)))throw Error('Invalid retained raw archive assets.');const keep=new Set(tokens);for(const [key,entry]of this.entries)if(entry.owner===owner&&!keep.has(key)){entry.released=true;this.drop(key);}this.trim();return true;}
