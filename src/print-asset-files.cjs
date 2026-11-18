@@ -5,7 +5,7 @@ const pendingWork=new Set(),failedCleanups=new Set();
 function track(promise){pendingWork.add(promise);promise.finally(()=>pendingWork.delete(promise)).catch(()=>{});return promise;}
 async function retryPrintCleanup(){const results=await Promise.allSettled([...failedCleanups].map(release=>release())),failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw new AggregateError(failures,'Printable image cleanup could not finish.');}
 async function drainPrintFiles(){do{while(pendingWork.size)await Promise.allSettled([...pendingWork]);await retryPrintCleanup();}while(pendingWork.size||failedCleanups.size);}
-function referencedImages(doc){return new Set(require('./word-markdown.cjs').imageNames(doc));}
+function referencedImages(doc){return new Set(require('./word-markdown.cjs').appImageNames(doc));}
 function createPrintFiles(doc,options){return track(createFiles(doc,options));}
 async function createFiles(doc,{storage=require('./archive-codec.cjs'),filesystem=fs,tempRoot=os.tmpdir()}={}){
  await retryPrintCleanup();

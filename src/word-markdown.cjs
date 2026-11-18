@@ -103,8 +103,8 @@ function streamMarkdown(text, onToken, { check = () => {
   check();
   onStats?.({ blockTokens: sink.count, blockLedgerBytes: sink.typedBytes, sourceLines: state.lineMax });
 }
-function imageNames(doc, options) {
-  if (typeof doc?.text !== "string" || Buffer.byteLength(doc.text) > MAX_TEXT) throw Error("Invalid Word export text.");
+function imageNamesAtLimit(doc, options, maximumTextBytes) {
+  if (typeof doc?.text !== "string" || Buffer.byteLength(doc.text) > maximumTextBytes) throw Error("Invalid Word export text.");
   if (!Object.keys(doc.assets || {}).length) return [];
   const names = /* @__PURE__ */ new Set();
   streamMarkdown(doc.text, (token) => {
@@ -116,7 +116,9 @@ function imageNames(doc, options) {
         if (thumb && mime(thumb) && Object.hasOwn(doc.assets || {}, thumb)) names.add(thumb);
       }
     }
-  }, {...options, consumeInline: true});
+  }, {...options, maximumTextBytes, consumeInline: true});
   return [...names];
 }
-module.exports = { streamMarkdown, imageNames, BlockSink };
+function imageNames(doc, options) { return imageNamesAtLimit(doc, options, MAX_TEXT); }
+function appImageNames(doc, options) { return imageNamesAtLimit(doc, options, APP_TEXT_BYTES); }
+module.exports = { streamMarkdown, imageNames, appImageNames, BlockSink };
