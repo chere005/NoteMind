@@ -10,7 +10,7 @@ const set=(key,value)=>{try{cp.execFileSync('/usr/bin/plutil',['-replace',key,'-
 // Electron's macOS packaged-mode test uses the executable basename, not the
 // branded bundle name. Rename before publishing the entry and sealing the app.
 const brandedExecutable='NoteMind',brandedPath=path.join(bundle,'Contents/MacOS',brandedExecutable);
-if(executable!==brandedExecutable){if(fs.existsSync(brandedPath))throw Error('The branded NoteMind executable already exists.');fs.renameSync(path.join(bundle,'Contents/MacOS',executable),brandedPath);}
+if(executable!==brandedExecutable){try{fs.lstatSync(brandedPath);throw Error('The branded NoteMind executable already exists.');}catch(error){if(error.code!=='ENOENT')throw error;}fs.renameSync(path.join(bundle,'Contents/MacOS',executable),brandedPath);}
 set('CFBundleExecutable',brandedExecutable);
 const version=require('../package.json').version;
 set('CFBundleName','NoteMind');set('CFBundleDisplayName','NoteMind');set('CFBundleIdentifier','com.seancheren.notemind');set('CFBundleShortVersionString',version);set('CFBundleVersion',version);
