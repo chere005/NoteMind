@@ -52,6 +52,10 @@ function extendIndexDriver(source){const canonicalSHA=createHash('sha256').updat
  code=once(code,"require('./native-failure-exit.cjs').install",`report.extendedDriver={canonicalSHA:${JSON.stringify(canonicalSHA)},all100:true,hardware:true,integrated:true,positiveControlAdditional:true,observationCountsInsideGuard:true,hardDeadlineMs:900000};\nrequire('./native-failure-exit.cjs').install`);
  code=once(code,'report.archiveAssetCache=archiveStats();','report.archiveAssetCache=archiveStats();report.ocrLifecycle=indexObserver.snapshot();report.indexOperationResults=indexResults;');
  code=once(code,"180000);app.on('window-all-closed'","900000);app.on('window-all-closed'");
+ code=once(code,'mainHeartbeatMax:Math.max(0,...measured)','mainHeartbeatMax:Math.max(0,measured.at(-1)||0)');
+ code=once(code,'mainHeartbeatMax:Math.max(...measuredHeartbeats.map(v=>v.gap))','mainHeartbeatMax:measuredHeartbeats.reduce((maximum,value)=>Math.max(maximum,value.gap),-Infinity)');
+ code=once(code,'clearInterval(memoryTimer);','clearInterval(memoryTimer);clearInterval(indexProgressTimer);');
+ code=once(code,'const memoryTimer=',"const indexProgressTimer=setInterval(()=>{const scalar=indexObserver.snapshot({includeRows:false});console.log(JSON.stringify({kind:'index-progress',phase:currentPhase,displayPhases:report.phases.filter(value=>/^scroll-/.test(value.name)).length,ocr:scalar.totals,liveModels:scalar.liveWorkers,raw:archiveStats()?.externalWorking||null}));},30000);\nconst memoryTimer=");
  code=once(code,' const gpuInfoStarted=',` await (${exerciseIndexCompletion.toString()})({js,phase,pause,sampleMemory,win,report,sourceRoot,workingFile,observer:indexObserver,indexers,indexResults,stores:indexStores,waitForIndexDrain,hash});\n const gpuInfoStarted=`);
  return{code,canonicalSHA};
 }
