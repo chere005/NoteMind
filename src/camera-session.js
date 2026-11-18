@@ -30,6 +30,7 @@ class CameraSession {
     this.saveChain = Promise.resolve();
     this.loadPromise = null;
     this.shutdownPromise = null;
+    this.retirementTasks = null;
     this.view = null;
     this.getSnapshot = () => this.state;
     this.subscribe = (listener) => {
@@ -212,7 +213,7 @@ class CameraSession {
     return this.loadPromise;
   }
   scheduleSave(delay = this.saveDelay) {
-    if (this.closed || !this.state.cameraLoaded || this.state.cameraLoadError) return;
+    if (this.closed && !this.retirementTasks || !this.state.cameraLoaded || this.state.cameraLoadError) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -261,18 +262,22 @@ class CameraSession {
     return this.save();
   }
   shutdown() {
-    if (this.closed) return Promise.resolve();
+    if (this.closed && !this.retirementTasks) return Promise.resolve();
     if (this.shutdownPromise) return this.shutdownPromise;
     this.closing = true;
     retainedShutdowns.add(this);
     const closing = this.shutdownPromise = (async () => {
       try {
-        await this.flush();
-        await this.drain();
+        if (!this.closed) {
+          await this.flush();
+          await this.drain();
+        }
         await this.disposeAfterSave();
         retainedShutdowns.delete(this);
       } catch (error) {
-        this.set("error", "Could not save camera pages: " + (error.message || error));
+        const message="Could not save camera pages: " + (error.message || error);
+        if(this.closed){this.state={...this.state,error:message};this.emit();}
+        else this.set("error",message);
         this.scheduleSave(this.retryDelay);
         throw error;
       } finally {
@@ -282,29 +287,28 @@ class CameraSession {
     return closing;
   }
   async disposeAfterSave() {
-    if (this.closed) return;
+    if (this.closed && !this.retirementTasks) return;
     this.closed = true;
     clearTimeout(this.timer);
     this.timer = null;
     this.view = null;
-    this.media.stop();
-    this.processorRef.current?.dispose();
-    this.processorRef.current = null;
-    this.pictures.dispose();
-    this.unsubscribeModels();
-    this.unsubscribeMutations();
-    for (const unsubscribe of this.ownerSubscriptions.values()) unsubscribe();
-    this.ownerSubscriptions.clear();
-    for (const actions of this.actionSet) actions.detach();
-    this.actionSet.clear();
-    const store = this.storeRef.current;
-    if (store) await store.dispose();
-    else await Promise.all(this.models.current.map((row) => row.page.disposeAsync()));
-    const held = this.state.held;
-    if (held) {
-      held.width = 1;
-      held.height = 1;
+    if(!this.retirementTasks){
+      const store=this.storeRef.current,processor=this.processorRef.current,held=this.state.held;
+      this.retirementTasks=new Set([
+        ()=>this.media.stop(),
+        ()=>{processor?.dispose();if(this.processorRef.current===processor)this.processorRef.current=null;},
+        ()=>this.pictures.dispose(),
+        ()=>this.unsubscribeModels(),
+        ()=>this.unsubscribeMutations(),
+        ...[...this.ownerSubscriptions].map(([owner,unsubscribe])=>()=>{unsubscribe();this.ownerSubscriptions.delete(owner);}),
+        ...[...this.actionSet].map(actions=>()=>{actions.detach();this.actionSet.delete(actions);}),
+        ...(store?[()=>store.dispose()]:[...new Set(this.models.current.map(row=>row.page))].map(page=>()=>page.disposeAsync())),
+        ()=>{if(held){held.width=1;held.height=1;}},
+      ]);
     }
+    const pending=this.retirementTasks,results=await Promise.allSettled([...pending].map(async run=>{await run();pending.delete(run);})),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);
+    if(errors.length)throw errors.length===1?errors[0]:new AggregateError(errors,'Camera session cleanup could not finish.');
+    this.retirementTasks=null;
     this.listeners.clear();
   }
 }
