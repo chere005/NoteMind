@@ -1,5 +1,15 @@
 # Continuation
 
+## November 18, 1:25 AM Central checkpoint
+
+Root `f5ea732` closes unhandled asynchronous Main-window document/PDF cleanup; 26 affected checks pass. Root independently reran the title/history/retention leaf: 41 focused checks pass. Both actual public OCR reports are now copied into Root's `test-results/performance-0.37/`. Captured PIDs are kernel ESRCH; only their exact disposable profiles were removed. The failed native full-mixed profile was also removed after all four captured PIDs were ESRCH and all 651 source/runtime hashes still matched its receipt; reports and cleanup receipts remain.
+
+The isolated native lifecycle batch establishes a critical experimental-backend defect: ordinary `reader.cancel` terminating a Node Worker during synchronous native inference causes C++ `Napi::Error`/SIGABRT, despite a 361,660,416 B peak and no guard shutdown. Idle/pre-binding/post-binding cases pass, but this Worker architecture is rejected. Exact summary/log live under `ocr-native-runtime/test-results/native-ort-deps/lifecycle-f5c6ce40-1794986294710/actual-lifecycle-1794986337356/`; controller 64428 and child PIDs 64430/64435/64436/64441 all actually exited. The native owner is implementing a NEW test-only binding-free-parent/owned-helper-process adapter with exact binary receive ACK, private sender retention, captured-handle cancellation and actual child-exit join. No product dependency/backend/OS-minimum change is authorized by these diagnostics.
+
+Architecture's binary-output candidate `03f2a18` has 45 pinned-runtime focused passes but is NOT merged or native-qualified. Root found that manually ACKed lost-reply tests did not establish autonomous recovery; exact idempotent read/ACK reconciliation, timer cleanup and late Main-clone retirement are now assigned before native execution. After its paired bridge and original 14 pixel proofs, FIRST repeat the original full 100-image workload with the production Web backend. Lower renderer/bridge retention may remove the need for native adoption. Native process exploration remains independent test-only work; do not run its old unsafe Worker cancellation again.
+
+Heavy/native lane is free; architecture holds the next proposed slot pending Root independent read. One nice15 hidden/nonfocusable run, original bytes/pixels/limits and 2 GiB disk floor remain mandatory. Next hourly report is 2 AM; final three fresh whole-app audits still have not started. The 8 AM handoff target and unchanged installed 0.35.0 remain in force.
+
 ## November 18, 1 AM Central checkpoint
 
 Whole-timeline1AM update and CoreMind beat delivered; next report2AM. Installed0.35.0 remains untouched; no full suite/main push/release/install. Root source4f11397 includes the independent11-leaf UI report, public OCR source/decode/model ownership and independent late-transport receipt fix207cb1f, PNG private scratch/tRNS, typed capacity wake4d238be, exact preprocessing37f9200 and fresh-history-text title reuse4f11397. The title leaf is not in the frozen candidate yet. Public transport independent read/tiny tests passed; Root33 source/real-worker checks passed after transport+capacity integration.
