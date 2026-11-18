@@ -1,0 +1,5 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{ScanPdfRequests}=require('../src/scan-pdf-requests.cjs'),tick=()=>new Promise(setImmediate);
+function deferred(){let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}}
+test('scan request disposal joins actual cleanup after its prompt cancellation receipt',async()=>{
+ const requests=new ScanPdfRequests(),owner=Object.assign(new EventEmitter(),{isDestroyed:()=>false}),entered=deferred(),cleanup=deferred();let finalized=false;const job=requests.run(owner,'private-request',async({signal})=>{entered.resolve();await cleanup.promise;assert.equal(signal.aborted,true);finalized=true;}),rejected=assert.rejects(job,{name:'AbortError'});await entered.promise;let disposed=false;const disposing=Promise.resolve(requests.dispose()).then(()=>disposed=true);await rejected;await tick();assert.equal(disposed,false);assert.equal(requests.total,1);await assert.rejects(requests.run(owner,'late',()=>{}),/closed/);cleanup.resolve();await disposing;assert.equal(finalized,true);assert.equal(requests.total,0);await requests.dispose();
+});
