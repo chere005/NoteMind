@@ -28,12 +28,12 @@ async function write(handle, bytes) {
 async function waitWorking(storage, signal, bytes=WORKING) {
   for (; ; ) {
     check(signal);
-    let wake;
-    const changed = new Promise((resolve) => wake = resolve), off = storage.subscribeRawCapacity(wake);
+    const {changed,off,blocked}=require('./raw-capacity-wait.cjs').capacityChange(storage);
     try {
       return await storage.acquireScopedRawWorking(bytes);
     } catch (error) {
       if (error.code !== "ARCHIVE_RAW_BUSY") throw error;
+      blocked(error);
       await new Promise((resolve, reject) => {
         const stop = () => {
           signal?.removeEventListener("abort", stop);
