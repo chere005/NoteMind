@@ -23,3 +23,10 @@
 - The same OCR command with `NOTEMIND_LIMITS_TEN_PHOTOS=1` exited 0 on retry with 10 completed pages. The first run reached 10 replies before a test still expected a count of 100.
 - The same editor command with `NOTEMIND_LIMITS_ONE_MIB=1` exited 0 with the 1 MiB source.
 - All four rows and verdicts are in `docs/audit/LIMITS-IN-PRACTICE.md`.
+
+## Task 4 — Native OCR
+- Imported the diagnostic tests and prepared them against the current app source, with the same native model ownership and original guard.
+- `node_modules/.bin/electron test/hidden-runner.cjs ocr-native-process-mixed-native` ran once and exited 1 at 1,046.1 MiB, with 0/100 native OCR replies and the child exit confirmed.
+- The isolated four-input quality pair completed. Text and geometry matched on all four inputs. Confidence checks accounted for the native pair's exit 1.
+- The six focused Node test files passed all 33 cases.
+- The dated result with timings and corpus details is in `docs/OCR-NATIVE-FEASIBILITY.md`.
