@@ -6,7 +6,7 @@ async function fixture({paths=true,count=2}={}){
  const makeTab=(id,text)=>({id,doc:{id,path:paths?'/fixture/'+id+'.nm':null,text,assets:{},meta:{},revision:'old-'+id},dirty:id==='A',visual:false});
  const a=makeTab('A','Latest A'),b=makeTab('B','Other B'),cTab=makeTab('C','Other C'),elements={status:{}},events=[],sessions=[],stored=new Map(),hooks={};let generation=0;
  const source={value:a.doc.text,selectionStart:0,selectionEnd:0},rich={innerHTML:'',contains:()=>false};
- const api={recover:async()=>null,onIndexProgress:noop,indexImages:async()=>({count:0,errors:[]}),
+ const api={recover:async()=>null,onIndexProgress:fn=>{hooks.indexProgress=fn},indexImages:async()=>({count:0,errors:[]}),
   async draft(doc){const snap=copy(doc);events.push({type:'draft-start',doc:snap});const override=await hooks.draft?.(snap);const kept={...(override||{...snap,id:snap.id||'assigned',created:snap.created||'created-'+(snap.id||'assigned')}),recoveryId:'generation-'+(++generation)};stored.set(kept.id,copy(kept));events.push({type:'draft-done',doc:copy(kept)});return copy(kept);},
   async autosave(doc){const snap=copy(doc);events.push({type:'autosave-start',doc:snap});const saved=await hooks.autosave?.(snap)||{...snap,revision:'new-'+snap.id};stored.set(saved.id,{...copy(saved),dirty:false});events.push({type:'clean-draft',doc:copy(saved)});return copy(saved);},
   async session(value){const snap=copy(value);sessions.push(snap);await hooks.session?.(snap);}
