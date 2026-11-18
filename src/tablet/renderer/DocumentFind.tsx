@@ -29,7 +29,7 @@ export function FindStrip({ query, onQuery, label, canStep, onNext, onPrevious, 
              data-doc-find="input"
              onChange={(event) => onQuery(event.target.value)}
              onKeyDown={(event) => {
-               if (event.nativeEvent.isComposing) return
+               if (event.nativeEvent.isComposing || event.keyCode === 229) return
                if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (event.shiftKey) onPrevious(); else onNext() }
                else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose() }
              }} />
@@ -78,7 +78,7 @@ export function PageField({ page, pages, parse, onGo, onClose, onInvalid, autoFo
              data-doc-page="input" spellCheck={false} autoComplete="off"
              onChange={(event) => setText(event.target.value)}
              onKeyDown={(event) => {
-               if (event.nativeEvent.isComposing) return
+               if (event.nativeEvent.isComposing || event.keyCode === 229) return
                if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); finish(true) }
                else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false) }
              }}
