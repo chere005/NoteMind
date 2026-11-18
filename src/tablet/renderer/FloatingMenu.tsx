@@ -75,7 +75,7 @@ export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,lab
   },[])
   const tab=(event:React.KeyboardEvent)=>{
     event.preventDefault();restore.current=false
-    const controls=[...doc.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex],[contenteditable=true]')].filter(el=>!el.closest('.float-menu')&&!el.matches(':disabled,[tabindex="-1"]')&&el.getClientRects().length)
+    const controls=[...doc.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex],[contenteditable=true]')].filter(el=>!el.closest('.float-menu,[hidden],[inert]')&&!el.matches(':disabled,[tabindex="-1"]')&&el.getClientRects().length)
     const at=controls.indexOf(back.current as HTMLElement),next=controls[at+(event.shiftKey?-1:1)]
     onClose("dismiss");window.setTimeout(()=>next?.focus({preventScroll:true}),0)
   }
