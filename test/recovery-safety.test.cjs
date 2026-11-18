@@ -6,7 +6,7 @@ function fixture(recover,openPath=async()=>null){
  c.activateTab=tab=>{assert.ok(tab);c.activeTab=tab;c.doc=tab.doc;c.source.value=tab.doc.text};
  c.addTab=next=>{if(next.preview||next.workspace)return;c.rememberCurrent();const tab={doc:{...next,id:next.id||'blank',meta:next.meta||{}},dirty:!!next.dirty,visual:next.visual!==false};c.tabs.push(tab);c.activateTab(tab);if(next.id==='render-failure')throw Error('Cannot render recovered content')};
  c.window={notemind:{notes:{recover,onIndexProgress:no,draft:async doc=>{saved.push(doc);return {...doc,created:'now'}},session:async state=>state},openPath,dirty:no},addEventListener:no,dispatchEvent:no};
- vm.runInNewContext(source,c);return {c,notes:c.window.NoteMindNotes,initial,saved,elements};
+ c.window.NoteMindNoteTitle=require('../src/notes-title.js'); vm.runInNewContext(source,c);return {c,notes:c.window.NoteMindNotes,initial,saved,elements};
 }
 const recovered=(id,text='Recovered')=>({id,path:null,text,assets:{},meta:{},dirty:false});
 
