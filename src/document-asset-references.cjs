@@ -45,8 +45,8 @@ class DocumentAssetReferences{
  restore(owner,ids,rawOwner){
   const before=this.restoreTails.get(rawOwner)?.promise||Promise.resolve(),work=before.then(()=>this.restoreOwned(owner,ids,rawOwner)),promise=work.then(()=>{},()=>{}),record={owner,promise};this.restoreTails.set(rawOwner,record);void promise.then(()=>{if(this.restoreTails.get(rawOwner)===record)this.restoreTails.delete(rawOwner);});return work;
  }
- async restoreOwned(owner,ids,rawOwner){return this.withSources(owner,ids,async entries=>{
-  await this.rollbackRestore(rawOwner);const pending={owner,uploads:new Map(),tokens:new Set(),working:null};this.restoreRollbacks.set(rawOwner,pending);let lease,result,failure;
+ async restoreOwned(owner,ids,rawOwner){let pending;try{const result=await this.withSources(owner,ids,async entries=>{
+  await this.rollbackRestore(rawOwner);pending={owner,uploads:new Map(),tokens:new Set(),working:null};this.restoreRollbacks.set(rawOwner,pending);let lease,result,failure;
   try{lease=await this.raw.preflightRawAssets([],{owner:rawOwner});if(lease.missing?.length)throw Error('Could not prepare immutable document sources.');result=await lease.run(async()=>{
    pending.working=await this.raw.acquireScopedRawWorking(3*CHUNK,{preserve:true});const restored=new Map();for(const entry of entries){this.check(this.state(owner));const opened=await this.raw.beginRawAsset({owner:rawOwner,bytes:entry.facts.bytes,chars:entry.facts.chars});pending.uploads.set(opened.upload,opened.epoch);let offset=0;
     for await(const part of this.files.read(entry.source.record,{check:()=>this.check(this.state(owner))})){await this.raw.appendRawAsset(opened.upload,part,{owner:rawOwner,epoch:opened.epoch,offset});offset+=part.byteLength;}
@@ -58,8 +58,8 @@ class DocumentAssetReferences{
   try{await lease?.release?.();}catch(error){if(failure)failure.restoreLeaseError=error.message;else failure=error;}
   if(!failure)try{this.check(this.state(owner));}catch(error){failure=error;}
   if(failure){try{await this.rollbackRestore(rawOwner);}catch(error){failure.restoreCleanupError=error.message;}throw failure;}
-  this.restoreRollbacks.delete(rawOwner);return result;
- });}
+  return result;
+ });this.restoreRollbacks.delete(rawOwner);return result;}catch(error){if(pending&&this.restoreRollbacks.get(rawOwner)===pending)try{await this.rollbackRestore(rawOwner);}catch(cleanup){error.restoreCleanupError=cleanup.message;}throw error;}}
 
  async open(owner,id,{requestId,mode='stream',rawOwner,receiverBytes}={}){
   if(!(token(id)||id===null&&mode==='materialize'&&Number.isSafeInteger(receiverBytes)&&receiverBytes>=0&&receiverBytes<=MAX_BYTES)||!token(requestId)||!['stream','materialize'].includes(mode))throw Error('Invalid immutable asset read.');const state=this.state(owner);let job,initialized;const ready=new Promise(resolve=>initialized=resolve);
