@@ -18,7 +18,7 @@ let win, padController;
 const projectHome=process.env.NOTEMIND_HOME||app.getPath('userData'),projectService=require('./projects.cjs')(projectHome,process.env.NOTEMIND_WORKSPACES||path.join(projectHome,'workspaces'),path.join(process.env.NOTEMIND_DATA&&!process.env.NOTEMIND_HOME?projectHome:app.getPath('documents'),'NoteMind Projects'));
 const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
 const pdfReferences=require('./pdf-reference-service.cjs').register();
-const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc));
+const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc),(event,run,{signal}={})=>notesIPC.scope(event,()=>run(async doc=>{signal?.throwIfAborted();await notesStore.preflightDraft({...doc,visual:true,dirty:true,manualTitle:true},{signal});signal?.throwIfAborted();})));
 const notepadFormat=require('./notepad-format.cjs');
 const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO,pdfReferences});
 
