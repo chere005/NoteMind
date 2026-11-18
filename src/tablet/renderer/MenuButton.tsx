@@ -130,9 +130,9 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
               if (disabled||event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229) return
               if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
             }}
-            onClick={() => {
+            onClick={(event) => {
               if (disabled || mainOff) return
-              if (held.current) { held.current = false; return }
+              if (held.current) { held.current = false; if (event?.detail !== 0) return }
               if (!split) {
                 // The second press on a menu button is the way to put its menu away.
                 toggle()
