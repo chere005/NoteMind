@@ -29,6 +29,9 @@ export interface LoadOptions {
   lazyRecognisers?: boolean
 }
 
+interface OwnedWasmBinary { binary: ArrayBuffer; holders: number; hadProperty: boolean }
+const ownedWasmBinaries = new WeakMap<object, OwnedWasmBinary>()
+
 
 function configure(ort: typeof Ort, options: LoadOptions): void {
   ort.env.wasm.numThreads = Math.max(1, options.threads ?? 1)
@@ -57,15 +60,68 @@ export async function loadEngine(ort: typeof Ort, models: string, options: LoadO
     const bytes = await fs.readFile(path.join(models, name))
     return bytes.buffer instanceof ArrayBuffer && !bytes.byteOffset && bytes.byteLength === bytes.buffer.byteLength && !isMarkedAsUntransferable(bytes.buffer) ? new Uint8Array(bytes.buffer) : Uint8Array.from(bytes)
   }
+  const wasmFlags = ort.env.wasm
+  let wasmBinary: OwnedWasmBinary | undefined
+  const joinWasmBinary = (): void => {
+    const existing = ownedWasmBinaries.get(wasmFlags)
+    if (!wasmBinary && existing && wasmFlags.wasmBinary === existing.binary) {
+      existing.holders++
+      wasmBinary = existing
+    }
+  }
+  const retireWasmBinary = (): void => {
+    if (!wasmBinary) return
+    const owner = wasmBinary
+    wasmBinary = undefined
+    if (--owner.holders) return
+    if (ownedWasmBinaries.get(wasmFlags) === owner) ownedWasmBinaries.delete(wasmFlags)
+    try {
+      const current = wasmFlags.wasmBinary
+      // A caller may explicitly adopt a view over the exposed backing. Its
+      // replacement then owns the source, just like an original override.
+      if (current !== owner.binary && ArrayBuffer.isView(current) && current.buffer === owner.binary) return
+      if (current === owner.binary) {
+        if (owner.hadProperty) wasmFlags.wasmBinary = undefined
+        else delete wasmFlags.wasmBinary
+      }
+    } catch (error) { retire(new Uint8Array(owner.binary)); throw error }
+    retire(new Uint8Array(owner.binary))
+  }
+  const eligibleWasmBinary = () => options.wasmFolder && wasmFlags.wasmBinary === undefined && (wasmFlags.initTimeout === undefined || wasmFlags.initTimeout === 0)
+  const readWasmBinary = async (): Promise<Uint8Array | undefined> => {
+    // A timeout can reject create() while module initialization still reads its
+    // source. Preserve that caller's loader, as well as any borrowed override.
+    if (!eligibleWasmBinary()) return
+    const source = await fs.readFile(path.join(options.wasmFolder!, "ort-wasm-simd-threaded.wasm"))
+    return source.buffer instanceof ArrayBuffer && !source.byteOffset && source.byteLength === source.buffer.byteLength && !isMarkedAsUntransferable(source.buffer) ? new Uint8Array(source.buffer) : Uint8Array.from(source)
+  }
   const created: Ort.InferenceSession[] = []
   const session = async (bytes: Uint8Array): Promise<SessionLike> => {
+    let binarySource: Uint8Array | undefined
     try {
+      if (!created.length) binarySource = await readWasmBinary()
+      // No await separates publication from create(): the pinned backend
+      // captures its initialization flags synchronously on that call. Join
+      // again here because another caller may have installed during file IO.
+      joinWasmBinary()
+      if (!wasmBinary && binarySource && eligibleWasmBinary()) {
+        const owner = { binary: binarySource.buffer as ArrayBuffer, holders: 1, hadProperty: Object.hasOwn(wasmFlags, "wasmBinary") }
+        wasmFlags.wasmBinary = owner.binary
+        ownedWasmBinaries.set(wasmFlags, owner)
+        wasmBinary = owner
+      }
+      if (binarySource && binarySource.buffer !== wasmBinary?.binary) { retire(binarySource); binarySource = undefined }
       const value = await ort.InferenceSession.create(bytes, { graphOptimizationLevel: "all" })
       created.push(value)
       return value as unknown as SessionLike
     // Pinned ORT1.30 copies external model bytes into WASM before create()
     // settles; the session retains no borrow of this private file backing.
-    } finally { retire(bytes) }
+    } finally {
+      try { retire(bytes) } finally {
+        try { if (binarySource && binarySource.buffer !== wasmBinary?.binary) retire(binarySource) }
+        finally { retireWasmBinary() }
+      }
+    }
   }
   const recogniser = async (name: string): Promise<Recogniser> => {
     const bytes = await readModel(name)
@@ -113,5 +169,5 @@ export async function loadEngine(ort: typeof Ort, models: string, options: LoadO
     const failed = cleanup.find(result => result.status === "rejected")
     if (failed?.status === "rejected") throw Object.assign(new Error("OCR partial initialization cleanup failed: " + String(failed.reason)), { cause: error })
     throw error
-  }
+  } finally { retireWasmBinary() }
 }
