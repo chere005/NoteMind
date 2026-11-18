@@ -1,19 +1,20 @@
 // Close acknowledges one quiet durable boundary; input stays live while a pass saves.
 const same=(a,b)=>a.length===b.length&&a.every((value,index)=>Object.is(value,b[index]));
 class SheetActions{
- constructor(){this.owners=new Map();this.metadataPending=new Set();this.metadataVersion=0}
+ constructor(){this.owners=new Map();this.metadataPending=new Set();this.metadataVersion=0;this.writePending=new Set();this.writeVersion=0}
  get size(){return this.owners.size}
  has(owner){return this.owners.has(owner)}
  add(owner){this.owners.set(owner,(this.owners.get(owner)||0)+1);return this}
  delete(owner){const count=this.owners.get(owner)||0;if(count>1)this.owners.set(owner,count-1);else this.owners.delete(owner);return count>0}
  [Symbol.iterator](){return this.owners.keys()}
+ write(owner,run){this.add(owner);this.writeVersion++;let work;try{work=Promise.resolve(run())}catch(error){work=Promise.reject(error)}const pending=work.finally(()=>{this.writePending.delete(pending);this.delete(owner);this.writeVersion++});this.writePending.add(pending);void pending.catch(()=>{});return pending}
  metadata(owner,run){this.add(owner);this.metadataVersion++;let work;try{work=Promise.resolve(run())}catch(error){this.delete(owner);this.metadataVersion++;throw error}const pending=work.finally(()=>{this.metadataPending.delete(pending);this.delete(owner);this.metadataVersion++});this.metadataPending.add(pending);return pending}
 }
 function syncClosePaper(sheets,owner,mode,persistence,value){if(!persistence?.loaded||persistence.loadFailed||mode?.source!=='tablet'||mode.documentId)return;const row=sheets.find(row=>row.page===owner);if(row&&row.loaded!==false)row.paper=value;}
 function closeFlushState({sheets=[],sheetSnapshot=value=>value,camera=null,cameraSnapshot=value=>value,pdfs=null,notes=null,sheetActions=null,pendingInk=()=>false}={}){
  const state=[];
  const rows=(values,snapshot)=>{state.push(values.length);for(const row of values){const value=snapshot(row),{strokes,backdrop,...metadata}=value;state.push(row.page,value.pageId,strokes,strokes?.length||0,backdrop||null,pendingInk(row.page),row.page?.metadataVersion||0,!!row.page?.hasPendingMetadata,JSON.stringify(metadata));}};
- state.push(sheetActions?.metadataVersion||0,...(sheetActions?.metadataPending||[]));rows(sheets,sheetSnapshot);rows(camera?.models?.current||[],cameraSnapshot);state.push(camera?.state?.revision||0);const work=camera?.workRef?.current;state.push(work?.size||0,...(work||[]));
+ state.push(sheetActions?.metadataVersion||0,...(sheetActions?.metadataPending||[]),sheetActions?.writeVersion||0,...(sheetActions?.writePending||[]));rows(sheets,sheetSnapshot);rows(camera?.models?.current||[],cameraSnapshot);state.push(camera?.state?.revision||0);const work=camera?.workRef?.current;state.push(work?.size||0,...(work||[]));
  state.push(pdfs?.values?.size||0);for(const[key,view]of pdfs?.values||[]){state.push(key,view,view.snapshot?.version||0);const models=view.refs?.models?.current;state.push(models?.size||0);for(const[number,value]of models||[]){const model=value.model;state.push(number,model,model?.strokes,model?.strokes?.length||0,model?.backdrop||null,model?.aspect,JSON.stringify(model?.extent),pendingInk(model),model?.metadataVersion||0,!!model?.hasPendingMetadata);}const pending=view.refs?.pendingActions?.current;state.push(pending?.size||0,...(pending||[]));}
  state.push(...(notes?.flushRevision?.()||[]));return state;
 }
