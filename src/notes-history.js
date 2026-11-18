@@ -27,9 +27,9 @@
  function prune(){const open=new Set(typeof tabs==='undefined'?[]:tabs);for(const record of records){const tab=record.owner.deref();if(tab&&open.has(tab))continue;clear(record,'past');clear(record,'future');if(record.history.last)hold(record.history.last,'current',-1);if(tab){delete tab.textHistory;byTab.delete(tab);}records.delete(record);}trim();}
  function initialize(tab){if(!tab||byTab.has(tab))return;prune();const history={past:[],future:[],last:null},record={owner:new WeakRef(tab),history,revision:tab.editVersion||0};tab.textHistory=history;byTab.set(tab,record);records.add(record);last(record,capture(tab));}
  const isTextInput=tab=>!batching&&inputHint?.tab===tab&&inputHint.event.eventPhase===2&&(inputHint.event.currentTarget===source||inputHint.event.currentTarget===rich);
- function record(tab,force=false){
+ function record(tab,force=false,{onCapture}={}){
   initialize(tab);if(!tab||batching)return;const textOnly=!force&&isTextInput(tab);if(inputHint?.tab===tab)inputHint=null;
-  const item=byTab.get(tab),history=item.history,next=capture(tab,textOnly),previous=history.last,a=info.get(previous),b=info.get(next),differs=previous.text!==next.text||a.assets!==b.assets||a.meta!==b.meta;
+  const item=byTab.get(tab),history=item.history,next=capture(tab,textOnly),previous=history.last,a=info.get(previous),b=info.get(next),differs=previous.text!==next.text||a.assets!==b.assets||a.meta!==b.meta;if(typeof onCapture==='function')onCapture(next.text);
   if(!differs){a.assetSource=b.assetSource;a.metaSource=b.metaSource;item.revision=tab.editVersion||0;return;}
   if(!restoring){push(item,'past',previous);clear(item,'future');}last(item,next);item.revision=tab.editVersion||0;trim();
  }
