@@ -40,7 +40,7 @@
  let cached=null,richRevision=0,observedRich=rich;
  const invalidate=()=>{richRevision++;cached=null;};
  const observer=typeof MutationObserver==='function'?new MutationObserver(invalidate):null;
- const observe=()=>observer?.observe(rich,{subtree:true,childList:true,characterData:true,attributes:true});
+ const observe=()=>observer?.observe(rich,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['data-editor-control']});
  observe();
  function stamp(){
   if(observedRich!==rich){observer?.disconnect();observedRich=rich;invalidate();observe();}

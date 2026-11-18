@@ -46,3 +46,11 @@ test('source navigation reuses scans but exact programmatic value and mode chang
  h.c.visual=true;h.api.move(0);assert.equal(h.scans,3);assert.equal(h.created,2);h.c.visual=false;h.api.refresh();assert.equal(h.scans,4);
 });
 test('lost highlight publication is restored without rebuilding and unload drops its owner',()=>{const h=fixture(),all=h.c.CSS.highlights.get('note-find');h.c.CSS.highlights.delete('note-find');h.api.move(1);assert.equal(h.c.CSS.highlights.get('note-find'),all);assert.equal(h.created,2);h.handlers.unload();assert.equal(h.observer.connected,false);assert.equal(h.api.matches,0);assert.equal(h.c.CSS.highlights.size,0)});
+test('lazy image attributes and fold classes keep exact cached ranges while text, controls and children rebuild',()=>{
+ const h=fixture('<p>cat <span>cat</span><img></p>'),image=h.c.rich.querySelector('img'),span=h.c.rich.querySelector('span'),attribute=(target,name,value)=>{target.setAttribute(name,value);if(!h.observer.options.attributeFilter||h.observer.options.attributeFilter.includes(name))h.observer.records.push({type:'attributes',attributeName:name,target});};
+ const initial=h.created;for(const [name,value]of[['src','blob:owned'],['width','1800'],['height','2400'],['loading','eager'],['alt','ignored image words'],['style','width:300px']]){attribute(image,name,value);h.api.move(1);assert.equal(h.created,initial,name);assert.equal(h.api.matches,2);}
+ attribute(h.c.rich.firstChild,'class','heading-folded');h.api.move(1);assert.equal(h.created,initial);assert.equal(h.api.matches,2,'Find includes folded text before its existing unfold action');
+ attribute(span,'data-editor-control','toolbar');h.api.move(1);assert.equal(h.api.matches,1);assert.equal(h.created,initial+1);assert.equal(h.current().startContainer,h.c.rich.firstChild.firstChild);
+ h.c.rich.firstChild.firstChild.data='dog cat';h.queue();h.api.move(1);assert.equal(h.api.matches,1);assert.equal(h.created,initial+2);assert.equal(h.current().startOffset,4);assert.equal(h.current().endOffset,7);
+ h.mutate('<p>cat cat cat</p>');h.api.move(1);assert.equal(h.api.matches,3);assert.equal(h.created,initial+5);assert.equal(h.c.CSS.highlights.get('note-find').size,3);assert.equal(h.current().startOffset,4);
+});
