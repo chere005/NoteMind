@@ -4,7 +4,7 @@ Reviewed on 2026-11-18, starting from exact source `9532d9004d2d1861695171f2705f
 
 ## Result and integration boundary
 
-Eleven confirmed defects were repaired in seven explicitly owned commits. Thirty-four new regression cases passed together, serially, in the pinned Electron-as-Node runtime: **34 passed, 0 failed, 0 skipped**, 1077.30 ms. Those are focused source/fault checks, not the full application suite or a packaged release test.
+Eleven confirmed defects were repaired in eight explicitly owned commits. Thirty-six new regression cases passed together, serially, in the pinned Electron-as-Node runtime: **36 passed, 0 failed, 0 skipped**. Those are focused source/fault checks, not the full application suite or a packaged release test.
 
 | Commit | Owned product paths | Confirmed defects |
 | --- | --- | --- |
@@ -15,6 +15,7 @@ Eleven confirmed defects were repaired in seven explicitly owned commits. Thirty
 | `1223f22` | `src/word-preview-sessions.cjs` | F8 |
 | `f8c2350` | `src/word-preview-files.cjs` | F9 |
 | `d30a08c` | `src/word-inline.cjs` | F10, F11 |
+| `c6093e3` | `src/word-preview-sessions.cjs` | F8 integrated quit follow-up |
 
 No Root, candidate, installed-app, or user-profile files were changed by this reviewer. These commits need Root's combined-source gate; no package/native/device readiness follows from this isolated branch. Root reported an actual full preflight exit 0 at the older frozen source (3254 passed, 0 failed, 1 skipped); this reviewer did not run or independently observe that suite.
 
@@ -66,7 +67,11 @@ Retirement retains the exact affected session identities and cleanup phase. A la
 
 A first controlled `terminate()` rejected EAGAIN without emitting exit. Another dispose never issued a second termination attempt (`1 !== 2` in the pre-fix proof), so retirement remained pending even after the transient fault was repairable.
 
-A settled failed termination attempt is retained separately. A later disposal retries only that attempt; concurrent requests join it. The original single actual-exit cleanup continuation remains authoritative. The proof preserves exact owned HTML through the first failure and a subsequent fulfilled `terminate()` result; only an actual exit permits cleanup. It verifies two attempts total for concurrent retry, zero remaining sessions after exit, and no replacement worker. Existing rejected-but-alive and fulfilled-but-alive barriers remain intact. The three new retirement cases plus affected sessions/shutdown checks passed 14 cases in the final focused run for this leaf.
+A settled failed termination attempt is retained separately. A later disposal retries only that attempt; concurrent requests join it. The original single actual-exit cleanup continuation remains authoritative. The proof preserves exact owned HTML through the first failure and a subsequent fulfilled `terminate()` result; only an actual exit permits cleanup. It verifies two attempts total for concurrent retry, zero remaining sessions after exit, and no replacement worker.
+
+A further actual-source Core + documentIO + Word IPC proof at integrated Root `9dcab99` exposed a missing integration condition in the first isolated repair: leaving the first failed stop pending let both wrapper layers memoize that promise, so repeated user quit still never reached a second terminate call. Commit `c6093e3` surfaces `WORD_PREVIEW_RETIREMENT_UNCONFIRMED`, `resourcesReleased: false`, and the original error cause on a settled termination failure. Existing wrapper rejection paths reset their attempt without changes. The original actual-exit cleanup promise remains independent; a fulfilled termination result never substitutes for actual exit.
+
+Two integrated cases cover completed-open and held-active plus queued-read states, including concurrent repeated quits. Both assert first typed retained-ownership failure, exact original journal/HTML/authority before exit, exactly two termination attempts, no early archive release, then exactly one archive checkpoint and permitted quit after actual exit. The former pending-dispose test was strengthened to require a typed rejection while exact marker bytes and session ownership remain intact, then actual-exit cleanup. The affected service/IPC/Core/document quit run passed **31 cases**. This is closure of F8, not an additional inflated finding count.
 
 ### F9 — Final Word directory removal lost authority after retiring its marker (P2)
 
@@ -105,7 +110,7 @@ Recent frozen integration re-read included missing-lease union handling `138c14f
 
 ## Verification and limits
 
-The final 34-case check used the six new files: `feature-archive-retirement.test.cjs`, `pdf-close-admission.test.cjs`, `notes-index-byte-retirement.test.cjs`, `word-preview-retirement-retry.test.cjs`, `word-preview-files-retirement-retry.test.cjs`, and `word-inline-scratch-retirement.test.cjs`, with `--test-concurrency=1`, `nice -n 15`, `ELECTRON_RUN_AS_NODE=1`, and the stable candidate's pinned Electron/runtime dependency directory. No full suite, build, native helper, large stress workload, model load, or desktop interaction was run by this reviewer. Development affected-group counts overlap and must not be added into a unique aggregate.
+The final 36-case check used the seven new files: `feature-archive-retirement.test.cjs`, `pdf-close-admission.test.cjs`, `notes-index-byte-retirement.test.cjs`, `word-preview-retirement-retry.test.cjs`, `word-preview-files-retirement-retry.test.cjs`, `word-inline-scratch-retirement.test.cjs`, and `word-preview-core-retirement-retry.test.cjs`, with `--test-concurrency=1`, `nice -n 15`, `ELECTRON_RUN_AS_NODE=1`, and the stable candidate's pinned Electron/runtime dependency directory. No full suite, build, native helper, large stress workload, model load, or desktop interaction was run by this reviewer. Development affected-group counts overlap and must not be added into a unique aggregate.
 
 No cap, input fixture, thread count, heap setting, or resource threshold was reduced. No forced GC or cache flush was used. Product resource requirements remain 1 GiB aggregate / 900 MiB renderer / 384 MiB raw / 2 GiB disk floor.
 
