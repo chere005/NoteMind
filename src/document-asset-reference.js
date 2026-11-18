@@ -5,12 +5,13 @@
  const noCoercion=()=>{throw Error('Resolve document assets through the document transfer API.');};
  function create(info){
   if(!info||typeof info.id!=='string'||!UUID.test(info.id)||!Number.isSafeInteger(info.bytes)||info.bytes<0||info.bytes>LIMIT||info.chars!==4*Math.ceil(info.bytes/3)||typeof info.sha256!=='string'||!HASH.test(info.sha256)||typeof info.mime!=='string'||info.mime.length>128||typeof info.binaryGraphics!=='boolean')throw Error('Invalid immutable document asset reference.');
-  const metadata=Object.freeze({kind:'notemind-asset-reference-v1',id:info.id,bytes:info.bytes,chars:info.chars,sha256:info.sha256,mime:info.mime,binaryGraphics:info.binaryGraphics}),value={...metadata};
+  const dimensions=info.width!==undefined||info.height!==undefined;if(dimensions&&(!Number.isFinite(info.width)||info.width<=0||info.width>Number.MAX_SAFE_INTEGER||!Number.isFinite(info.height)||info.height<=0||info.height>Number.MAX_SAFE_INTEGER))throw Error('Invalid immutable document asset dimensions.');
+  const metadata=Object.freeze({kind:'notemind-asset-reference-v1',id:info.id,bytes:info.bytes,chars:info.chars,sha256:info.sha256,mime:info.mime,binaryGraphics:info.binaryGraphics,...(dimensions?{width:info.width,height:info.height}:{})}),value={...metadata};
   Object.defineProperties(value,{toJSON:{value:noCoercion},[Symbol.toPrimitive]:{value:noCoercion}});Object.freeze(value);known.set(value,{metadata,key:Object.freeze({})});return value;
  }
  const is=value=>!!value&&typeof value==='object'&&known.has(value);
  const describe=value=>known.get(value)?.metadata||null;
  const identity=value=>known.get(value)?.key||null;
- const same=(left,right)=>{if(left===right)return true;const a=describe(left),b=describe(right);return !!a&&!!b&&a.id===b.id&&a.bytes===b.bytes&&a.chars===b.chars&&a.sha256===b.sha256&&a.mime===b.mime&&a.binaryGraphics===b.binaryGraphics;};
+ const same=(left,right)=>{if(left===right)return true;const a=describe(left),b=describe(right);return !!a&&!!b&&a.id===b.id&&a.bytes===b.bytes&&a.chars===b.chars&&a.sha256===b.sha256&&a.mime===b.mime&&a.binaryGraphics===b.binaryGraphics&&a.width===b.width&&a.height===b.height;};
  return{create,is,describe,identity,same};
 });
