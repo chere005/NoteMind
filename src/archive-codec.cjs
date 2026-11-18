@@ -67,7 +67,7 @@ function inputBytes(op,args,limit){
 }
 class ArchiveCodec{
  constructor({workerFactory=file=>new Worker(file),maxPending=8,maxBytes=384*1024*1024,maxAssetBytes=256*1024*1024,maxAssetEntries=20000,maxWorkerBytes=512*1024*1024,maxRawBytes=384*1024*1024,idleMs=30000,timeoutMs=120000}={}){
-  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.rawCapacityListeners=new Set();this.externalRawWorking=new Map();this.retireRequested=false;this.spoolOwners=new Map();this.retirements=new WeakMap();this.cleanupFailures=0;this.lastCleanupFailure=null;
+  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.rawCapacityListeners=new Set();this.externalRawWorking=new Map();this.retireRequested=false;this.spoolOwners=new Map();this.retirements=new WeakMap();this.exitedWorkers=new WeakSet();this.retiredStates=new WeakSet();this.disposal=null;this.cleanupFailures=0;this.lastCleanupFailure=null;
  }
  run(op,...args){
   if(this.disposed)return Promise.reject(Error('Archive tools are closing.'));
@@ -203,7 +203,7 @@ class ArchiveCodec{
    }catch(error){this.assets.trim();if(job.inspectionCancel)this.quarantineInspectionWorker(worker,job,error);else this.finish(job,error);}
   });
   worker.on('error',error=>this.workerFailed(worker,error));
-  worker.on('exit',code=>{if(this.stoppingWorker===worker)return;if(this.worker===worker)this.workerFailed(worker,Error('Archive worker stopped ('+code+').'),true);});
+  worker.on('exit',code=>{this.exitedWorkers.add(worker);if(this.stoppingWorker===worker)return;if(this.worker===worker)this.workerFailed(worker,Error('Archive worker stopped ('+code+').'),true);});
   return worker;
  }
  pump(){
@@ -246,13 +246,16 @@ class ArchiveCodec{
  }
  rejectStoppedQueue(){for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.args=null;job.reject(Error('Archive tools could not stop their previous worker.'));}}
  retireWorker(worker){
-  if(this.retirements.has(worker))return this.retirements.get(worker);if(this.stoppingWorker!==worker)return Promise.resolve();
-  const pending=(async()=>{const owner=this.spoolOwners.get(worker);try{await owner?.cleanup();}catch(error){this.cleanupFailures++;this.lastCleanupFailure={directory:owner?.directory,code:error.code,message:error.message};throw error;}finally{this.spoolOwners.delete(worker);this.rawUploads.clear();this.rawDescriptors.clear();for(const context of this.rawLeases.values())context.lost=true;this.workerRawStats=null;this.notifyRawCapacity();this.stoppingWorker=null;this.stopFailure=null;}})();this.retirements.set(worker,pending);return pending;
+  if(this.retirements.has(worker))return this.retirements.get(worker);
+  if(!this.exitedWorkers.has(worker))return Promise.reject(Error('Archive worker exit has not been confirmed.'));
+  if(!this.retiredStates.has(worker)){this.retiredStates.add(worker);this.rawUploads.clear();this.rawDescriptors.clear();for(const context of this.rawLeases.values())context.lost=true;this.workerRawStats=null;this.notifyRawCapacity();}
+  const owner=this.spoolOwners.get(worker),pending=Promise.resolve().then(()=>owner?.cleanup()).then(()=>{if(this.spoolOwners.get(worker)===owner)this.spoolOwners.delete(worker);if(this.stoppingWorker===worker){this.stoppingWorker=null;this.stopFailure=null;}},error=>{this.cleanupFailures++;this.lastCleanupFailure={directory:owner?.directory,code:error.code,message:error.message};if(this.retirements.get(worker)===pending)this.retirements.delete(worker);if(this.stoppingWorker===worker)this.stoppingWorker=null;throw error;});this.retirements.set(worker,pending);return pending;
  }
- async dispose(){
-  this.disposed=true;clearTimeout(this.idleTimer);for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.reject(Error('Archive tools are closing.'));}
-  if(this.active?.inspectionCancel&&this.worker)this.quarantineInspectionWorker(this.worker,this.active,Error('Archive tools are closing.'));else if(this.active)this.finish(this.active,Error('Archive tools are closing.'));this.stopWorker(true);await this.stopping;if(this.stopFailure)throw this.stopFailure;
-  this.assets.clear();this.workerAssetStats=null;this.rawCapacityListeners.clear();
+ dispose(){
+  if(this.disposal)return this.disposal;this.disposed=true;clearTimeout(this.idleTimer);for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.reject(Error('Archive tools are closing.'));}
+  if(this.active?.inspectionCancel&&this.worker)this.quarantineInspectionWorker(this.worker,this.active,Error('Archive tools are closing.'));else if(this.active)this.finish(this.active,Error('Archive tools are closing.'));
+  const stopping=this.stopWorker(true),attempts=stopping?[stopping]:[];for(const worker of this.spoolOwners.keys())if(worker!==this.stoppingWorker)attempts.push(this.retireWorker(worker));
+  const run=Promise.allSettled(attempts).then(results=>{const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'Archive cleanup could not finish.');if(this.stoppingWorker||this.worker||this.spoolOwners.size)throw Error('Archive cleanup still owns a worker or private files.');this.stopFailure=null;this.assets.clear();this.workerAssetStats=null;this.rawCapacityListeners.clear();});this.disposal=run.catch(error=>{this.disposal=null;throw error;});return this.disposal;
  }
 }
 const codec=new ArchiveCodec();
