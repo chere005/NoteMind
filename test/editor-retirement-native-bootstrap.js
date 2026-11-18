@@ -1,0 +1,15 @@
+const rich=document.getElementById('rich'),source=document.getElementById('source'),$=id=>document.getElementById(id),sourceCarets=new WeakMap();
+let doc={text:'',assets:{},meta:{}},tabs=[],activeTab=null,visual=true,dirty=false,richChanged=false;
+const NoteMindImagePreviews={retainMany(){},url:()=>'',size:()=>null};let viewChanges=0;
+window.NoteMindNotes={changedView(){viewChanges++;}};function updateTitle(){}
+window.editorRetirementFixture=()=>{
+ const assert=(value,message)=>{if(!value)throw Error(message)},text='**alpha** beta `code`\n\n'.repeat(1000),a={doc:{text,assets:{},meta:{}},visual:false,dirty:false},b={doc:{text:'Other note',assets:{},meta:{}},visual:true,dirty:false};tabs=[a,b];
+ assert(source.spellcheck===false&&rich.contentEditable==='true','Actual source/rich attributes changed.');
+ activateTab(a);assert(source.value===text&&rich.childNodes.length===0&&rich.hidden&&!source.hidden,'Source activation retained hidden DOM or changed canonical text.');
+ source.setSelectionRange(2,7,'backward');switchMode(true);assert(source.value===''&&source.hidden&&!rich.hidden&&currentText()===text,'Visual transition changed text or retained hidden native value.');const expected=NoteMindDocument.render(text,{});assert(rich.innerHTML===expected,'Active visual rendering changed.');
+ switchMode(false);assert(source.value===text&&rich.childNodes.length===0&&source.selectionStart===2&&source.selectionEnd===7&&source.selectionDirection==='backward','Actual native source selection did not restore exactly.');
+ source.setRangeText('INSERT',2,7,'end');const edited=source.value;source.setSelectionRange(4,9,'backward');refreshEditor({contentChanged:false});assert(source.value===edited&&source.selectionStart===4&&source.selectionEnd===9&&source.selectionDirection==='backward','Unchanged publication disturbed the active native control.');
+ activateTab(b);assert(a.doc.text===edited&&source.value==='','Tab activation lost edited canonical text or filled hidden source.');activateTab(a);assert(source.value===edited&&rich.childNodes.length===0,'Tab return changed source text or retained hidden rich DOM.');
+ switchMode(true);const node=rich.firstChild;refreshEditor({contentChanged:false});assert(rich.firstChild===node&&source.value==='','Unchanged visual publication replaced the live editing node.');rich.innerHTML='<p>visual <em>edit</em></p>';richChanged=true;const markdown=NoteMindDocument.toMarkdown(rich.innerHTML);switchMode(false);assert(source.value===markdown&&doc.text===markdown&&rich.childNodes.length===0,'Visual edit did not reach exact canonical source before retirement.');
+ return{ok:true,initialCharacters:text.length,sourceModeHiddenRichNodes:rich.childNodes.length,visualModeHiddenSourceCharacters:0,canonicalText:markdown,sourceSelectionRestored:{start:2,end:7,direction:'backward'},unchangedSourceSelection:{start:4,end:9,direction:'backward'},unchangedVisualNodeIdentity:true,viewChanges};
+};
