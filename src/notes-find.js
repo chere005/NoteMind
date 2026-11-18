@@ -64,7 +64,7 @@
  // Escape gives the caret back where the match was.
  function close(){bar.hidden=true;clearHighlights();(visual?rich:source).focus();if(visual&&matches[index]){const selection=getSelection();selection.removeAllRanges();selection.addRange(matches[index]);}}
  const selectedText=()=>visual?getSelection().toString():source.value.slice(source.selectionStart,source.selectionEnd);
- function useSelection(){const text=selectedText();if(!text||text.includes('\n'))return;if(bar.hidden)open();input.value=text;index=-1;refresh();move(0);}
+ function useSelection(){const text=selectedText();if(!text||text.includes('\n'))return;if(bar.hidden)open();input.value=text;index=-1;move(0);}
  // One match replaced; the next one comes forward.
  function replaceCurrent(){
   refresh();if(!matches.length)return;if(index<0)index=0;const m=matches[index],text=replacement.value;let after;
@@ -82,12 +82,12 @@
   });
   index=-1;refresh();$('status').textContent='Replaced '+total+(total===1?' match':' matches');
  }
- input.oninput=()=>{index=-1;refresh();move(0);};
+ input.oninput=()=>{index=-1;move(0);};
  input.onkeydown=e=>{if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;if(e.key==='Enter'){e.preventDefault();move(e.shiftKey?-1:1);}if(e.key==='Escape'){e.preventDefault();close();}};
  replacement.onkeydown=e=>{if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;if(e.key==='Enter'){e.preventDefault();if(e.ctrlKey||e.metaKey)replaceAll();else replaceCurrent();}if(e.key==='Escape'){e.preventDefault();close();}};
  button('prev').onclick=()=>move(-1);button('next').onclick=()=>move(1);button('close').onclick=close;button('replace').onclick=replaceCurrent;button('all').onclick=replaceAll;
- button('case').onclick=()=>{options.matchCase=!options.matchCase;syncToggles();saveOptions();index=-1;refresh();move(0);};
- button('word').onclick=()=>{options.wholeWord=!options.wholeWord;syncToggles();saveOptions();index=-1;refresh();move(0);};
+ button('case').onclick=()=>{options.matchCase=!options.matchCase;syncToggles();saveOptions();index=-1;move(0);};
+ button('word').onclick=()=>{options.wholeWord=!options.wholeWord;syncToggles();saveOptions();index=-1;move(0);};
  rich.addEventListener('input',refresh);source.addEventListener('input',refresh);
  window.addEventListener('notemind-command',e=>{
   if(e.detail==='findNote')open({replace:bar.hidden?false:undefined});
