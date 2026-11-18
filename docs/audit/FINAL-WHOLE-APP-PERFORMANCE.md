@@ -50,6 +50,10 @@ The subsequent **matched browser-bundle pair** at `47d7cb9` executes both paths 
 
 This proves a 423,804,928-byte sampled peak reduction in this isolated matched stage, with a substantial latency tradeoff (about 9.86 times the count wall time). It does not establish whole-App memory or typing gains. The candidate is near the newly introduced 30-second footer Worker timeout, so an actual hidden native 16 MiB count/CSP check is prepared with that product timeout unchanged; the fixture wait alone is 45 seconds. Latency qualification remains active until that run completes. No source content, input size, admission cap, heap limit or resource guard was lowered.
 
+Two expanded native attempts are retained as **failed fixture diagnostics**, not counter or legal-source product defects. `cc77ac8` used an unstyled always-visible default textarea and crossed 1,135,427,584 B. `4aa33e3` corrected CSS, shell and mode visibility but still omitted production control attributes; it crossed 1,267,253,248 B. The second run preserved the exact 16 MiB source SHA and showed growth during `source-value-installed`, before any 16 MiB Worker-create/post receipt. Main/GPU/network stayed about 165.5/89.2/49.6 MB while the tab grew from about 305 to 963 MB. All ordinary six phases completed, with zero console errors; neither run reached a large counter reply or measured its timeout. Both wrappers exited one, and every captured PID is kernel ESRCH.
+
+Test-only `231f461` now gives the rich/source controls their exact application attributes, including `spellcheck=false` on the source textarea, and adds a literal source-tag/style/shell parity assertion. That focused check passes. The faithful native repeat remains queued behind Root's candidate build/original100 Web gate. No counter, source-layout or whole-App memory closure is inferred from the mismatched fixtures, and the product timeout/input/guard remain unchanged.
+
 ## Focused verification
 
 Checks were scoped to changed or causally implicated behavior, without a development full-suite run:
@@ -60,7 +64,7 @@ Checks were scoped to changed or causally implicated behavior, without a develop
 - Print/Word: 22 checks, including exact files, references/aliases/thumbnails, cleanup failure/retry, admission and active consumer shutdown.
 - Scan/admission: 29 checks, including the new self-wake faults, actual small PNG/JPEG Worker exits, exact source bytes and cancellation cleanup.
 
-The integrated affected group on Root `1f82ba2` passes 102/102 serial pinned-runtime checks; the later explicit extension fallback contract adds one targeted check. Counts overlap and must not be summed into a fictitious independent total. Actual large App/package/stroke/PDF/Word/import/export/soak evidence remains separate.
+The integrated affected group on Root `1f82ba2` passes 102/102 serial pinned-runtime checks; the later explicit extension fallback contract and literal native-fixture parity assertion add one targeted check each. Counts overlap and must not be summed into a fictitious independent total. Actual large App/package/stroke/PDF/Word/import/export/soak evidence remains separate.
 
 ## Three costs per pipeline stage: honest ranking boundary
 
