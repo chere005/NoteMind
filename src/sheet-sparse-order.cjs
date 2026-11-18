@@ -2,7 +2,7 @@
 // record is checked once; no persisted range summary is trusted as an ID proof.
 const {LEAF,FANOUT,MAX_STROKES,MAX_POINTS,descriptor,empty,validRecord,strokeBytes}=require('./sheet-order-index.cjs');
 const {isPrivateSheetIds,sheetIdAt,SheetPrivateIdBuilder,releasePrivateSheetIds}=require('./sheet-private-ids.js');
-const notOrdered=Symbol('unordered previous drawing');
+const notOrdered=Symbol('unproven ordered drawing merge');
 async function spliceOrdered(index,root,input,added,{onRecord=()=>{},signal,check=()=>{},yieldControl=()=>new Promise(setImmediate)}={}){
  descriptor(root);if(!(Array.isArray(input)||input instanceof Float64Array||isPrivateSheetIds(input))||input.length>MAX_STROKES)throw Error('Invalid drawing stroke identities.');
  const verify=()=>{if(signal?.aborted)throw Object.assign(Error('Drawing edit cancelled.'),{name:'AbortError'});check();};
@@ -30,7 +30,7 @@ async function spliceOrdered(index,root,input,added,{onRecord=()=>{},signal,chec
      while(current()<record.id){changed=true;const next=added.get(current());if(!next)throw notOrdered;const waiting=emit(next);if(waiting)await waiting;position++;}
      if(current()===record.id){const waiting=emit(record,true);if(waiting)await waiting;position++;}else changed=true;
     }
-    if(last)while(position<ids.length){changed=true;const next=added.get(current());if(!next)throw Error('Unknown drawing stroke identity.');const waiting=emit(next);if(waiting)await waiting;position++;}
+    if(last)while(position<ids.length){changed=true;const next=added.get(current());if(!next)throw notOrdered;const waiting=emit(next);if(waiting)await waiting;position++;}
     if(!changed){stats.reusedLeaves++;return[nodeRoot];}await flush();return result;
    }
    const children=[];let changed=false;
@@ -39,7 +39,7 @@ async function spliceOrdered(index,root,input,added,{onRecord=()=>{},signal,chec
    const result=[];for(let at=0;at<children.length;at+=FANOUT){result.push(await publish('branch',children.slice(at,at+FANOUT)));stats.writtenBranches++;verify();}return result;
   };
   let roots;if(root.count)roots=await walk(root,true,new Set());else{
-   const records=[];roots=[];for(;position<ids.length;position++){const record=added.get(current());if(!record)throw Error('Unknown drawing stroke identity.');const waiting=consume(record);if(waiting)await waiting;records.push(record);if(records.length===LEAF){roots.push(await publish('leaf',records));stats.writtenLeaves++;records.length=0;}}
+   const records=[];roots=[];for(;position<ids.length;position++){const record=added.get(current());if(!record)throw notOrdered;const waiting=consume(record);if(waiting)await waiting;records.push(record);if(records.length===LEAF){roots.push(await publish('leaf',records));stats.writtenLeaves++;records.length=0;}}
    if(records.length){roots.push(await publish('leaf',records));stats.writtenLeaves++;}
   }
   verify();if(position!==ids.length||count!==ids.length)throw Error('Invalid drawing edit count.');
