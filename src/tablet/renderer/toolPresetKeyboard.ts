@@ -10,7 +10,7 @@ export function installToolPresetKeyboard(view:KeyOwner,controller:ToolPresetCon
  if(!record){
   let composing=false;const sources=new Set<()=>boolean>(),doc=view.document;
   const keydown=(event:KeyboardEvent)=>{
-   const focused=doc.activeElement as HTMLElement|null,slot=toolPresetSlotKey(event,{visible:[...sources].some(shown=>shown())&&doc.visibilityState!=='hidden',canvasFocused:!!focused?.closest?.('[data-tablet="surface"]'),composing,modalOpen:!!doc.querySelector('dialog[open],.float-menu,.pen-sheet')});
+   const focused=doc.activeElement as HTMLElement|null,slot=toolPresetSlotKey(event,{visible:[...sources].some(shown=>shown())&&doc.visibilityState!=='hidden',canvasFocused:!!focused?.closest?.('[data-tablet="surface"]'),composing,modalOpen:!!doc.querySelector('dialog[open],.float-menu,[data-pen="sheet"]')});
    if(slot===null)return;const preset=presetAtSlot(controller.getSnapshot(),slot);if(!preset)return;
    try{controller.activate(preset.id);}catch{return;}event.preventDefault();event.stopPropagation();
   };

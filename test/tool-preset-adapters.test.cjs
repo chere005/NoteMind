@@ -44,6 +44,12 @@ test('actual keyboard adapter respects IME, hidden surfaces, fields, menus and u
  for(const patch of [{repeat:true},{ctrlKey:true},{metaKey:true},{altKey:true},{shiftKey:true},{isComposing:true},{keyCode:229}])assert.equal(v.key('2',patch).defaultPrevented,false);
  v.dispatch('compositionstart');assert.equal(v.key('2').defaultPrevented,false);v.dispatch('compositionend');v.doc.activeElement=v.input;assert.equal(v.key('2').defaultPrevented,false);v.doc.activeElement=v.surface;v.doc.modal=true;assert.equal(v.key('2').defaultPrevented,false);v.doc.modal=false;visible=false;assert.equal(v.key('2').defaultPrevented,false);visible=true;assert.equal(v.key('9').defaultPrevented,false);assert.equal(v.key('2').defaultPrevented,true);off();
 });
+test('the actual pen settings popover owns number keys while the drawing canvas retains focus',()=>{
+ const h=fixture(),v=viewFixture(),markup=fs.readFileSync('src/tablet/renderer/PenMenu.tsx','utf8').match(/className="([^"]+)" data-pen="sheet"/);assert.ok(markup);
+ const dom=require('@mixmark-io/domino').createWindow('<div class="'+markup[1]+'" data-pen="sheet"></div>').document;v.doc.querySelector=selector=>dom.querySelector(selector);
+ h.controller.add('Blue',settings({colour:'#123456'}));const off=installToolPresetKeyboard(v.view,h.controller,()=>true);assert.equal(v.doc.activeElement,v.surface);assert.equal(v.key('2').defaultPrevented,false);assert.equal(h.controller.current().colour,'#1C1C1E');
+ const popover=dom.querySelector('[data-pen="sheet"]');popover.parentNode.removeChild(popover);assert.equal(v.key('2').defaultPrevented,true);assert.equal(h.controller.current().colour,'#123456');off();
+});
 test('real mirror bridge forwards preset keys only for focused drawing and consumes only handled slots',()=>{
  const h=fixture(),v=viewFixture();h.controller.add('Blue',settings({colour:'#123456',width:5}));const offKeys=installToolPresetKeyboard(v.view,h.controller,()=>true),offMirror=mirror.registerPadMirrorInput(v.view,fn=>fn()),packet={type:'keydown',key:'2',code:'Digit2',repeat:false,ctrlKey:false,altKey:false,shiftKey:false,metaKey:false};
  assert.equal(mirror.forwardPadMirrorKey(packet),true);assert.equal(h.controller.current().colour,'#123456');assert.equal(mirror.forwardPadMirrorKey({...packet,key:'9',code:'Digit9'}),false);assert.equal(mirror.forwardPadMirrorKey({...packet,type:'keyup'}),false);
