@@ -178,7 +178,7 @@ class ArchiveCodec{
  stringifyJson(value){return this.run('stringifyJson',value);}
  ensureWorker(){
   if(this.worker)return this.worker;
-  if(!this.spoolJanitorStarted){this.spoolJanitorStarted=true;setImmediate(()=>{void cleanupDeadSpoolDirectories().catch(()=>{});});}const spool=createSpoolDirectory();let worker;try{worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));}catch(error){this.unstartedSpools.add(spool);void this.cleanupUnstartedSpool(spool).catch(()=>{});throw error;}this.spoolOwners.set(worker,spool);this.worker=worker;this.epoch++;
+  if(!this.spoolJanitorStarted){this.spoolJanitorStarted=true;setImmediate(()=>{void cleanupDeadSpoolDirectories().catch(()=>{});});}let spool;try{spool=createSpoolDirectory();}catch(error){if(error?.archiveSpoolCleanup){this.unstartedSpools.add(error.archiveSpoolCleanup);void this.cleanupUnstartedSpool(error.archiveSpoolCleanup).catch(()=>{});}throw error;}let worker;try{worker=this.workerFactory(path.join(__dirname,'archive-worker.cjs'));}catch(error){this.unstartedSpools.add(spool);void this.cleanupUnstartedSpool(spool).catch(()=>{});throw error;}this.spoolOwners.set(worker,spool);this.worker=worker;this.epoch++;
   worker.on('message',packet=>{const job=this.active;if(this.worker!==worker||!job||packet?.id!==job.id)return;if(packet.rawStats)this.observeRawStats(packet.rawStats);if(packet.assetStats)this.workerAssetStats=packet.assetStats;if(packet.validationStats)this.workerValidationStats=packet.validationStats;
    try{
     // Keep the active slot until cancellation has released newly issued output.
