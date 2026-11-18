@@ -113,3 +113,14 @@
 }
 .document-workspace.camera{flex:1;min-height:0;width:100%;min-width:0;border:0}.document-workspace[hidden]{display:none}.document-workspace canvas{touch-action:none}.document-workspace .doc-content{overflow:visible}.document-workspace .pdf-page,.document-workspace .pic-sheet{touch-action:none}
 .docx-paper img{display:inline-block;max-width:100%;height:auto;vertical-align:middle}.docx-paper table{border-collapse:collapse;max-width:100%}.docx-paper td,.docx-paper th{border:1px solid #c5c7cf;padding:4px 8px}.docx-paper a{color:#1a55b8;text-decoration:underline;pointer-events:none}
+
+/* A single-fragment document retains the existing paper layout exactly. */
+.word-page { position: relative; }
+.docx-paper[data-first="0"] { padding-top: 0; min-height: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.docx-paper[data-last="0"] { padding-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.docx-paper li[data-word-continuation] { list-style-type: none; }
+.docx-paper :is(p,h1,h2,h3,h4,h5,h6)[data-word-continuation] { margin-top: 0; }
+.docx-paper[data-to-next="1"] :is(p,h1,h2,h3,h4,h5,h6):last-child { margin-bottom: 0; }
+.word-fragment-error { color: #8a2b22; padding: 12px; }
+.word-fragment-error button { display: block; margin-top: 8px; }
+.docx-paper .docx-picture:not([src]):not([width]) { width: 100%; aspect-ratio: 1; }
