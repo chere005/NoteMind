@@ -32,9 +32,17 @@ module.exports=function projects(home,root,migrationDir){
   const source=await registry.prepareRename(project),target=path.join(path.dirname(source.file),name+'.wmpr');let renamed=false;
   if(!workspaces.sameFile(target,source.file)){
    try{await fs.lstat(target);throw Error('A project named '+name+' already exists.');}catch(error){if(error.code!=='ENOENT')throw error;}
-   await source.check();let linked=false;
-   try{await fs.link(source.file,target);linked=true;await source.check();await fs.unlink(source.file);renamed=true;}
-   catch(error){if(linked)try{const named=await fs.lstat(target,{bigint:true});if(named.isFile()&&!named.isSymbolicLink()&&named.dev===source.stat.dev&&named.ino===source.stat.ino)await fs.unlink(target);}catch(cleanup){if(cleanup.code!=='ENOENT')error.renameCleanupError=cleanup.message;}throw error;}
+   await source.check();let prepared=false,owned=source.stat;
+   const sameOwner=named=>named.isFile()&&!named.isSymbolicLink()&&named.dev===owned.dev&&named.ino===owned.ino,hash=bytes=>require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+   try{
+    try{await fs.link(source.file,target);prepared=true;}
+    catch(error){
+     if(!['ENOTSUP','EOPNOTSUPP','ENOSYS','EPERM','EXDEV'].includes(error.code))throw error;
+     const handle=await fs.open(target,'wx');try{owned=await handle.stat({bigint:true});prepared=true;const bytes=await fs.readFile(source.file);if(hash(bytes)!==source.revision.hash)throw Error('This project changed outside NoteMind. Reopen it before renaming.');await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
+    }
+    const named=await fs.lstat(target,{bigint:true});if(!sameOwner(named)||hash(await fs.readFile(target))!==source.revision.hash||!sameOwner(await fs.lstat(target,{bigint:true})))throw Error('The rename destination changed outside NoteMind. Try again.');
+    await source.check();await fs.unlink(source.file);renamed=true;
+   }catch(error){if(prepared)try{const named=await fs.lstat(target,{bigint:true});if(sameOwner(named))await fs.unlink(target);}catch(cleanup){if(cleanup.code!=='ENOENT')error.renameCleanupError=cleanup.message;}throw error;}
   }
   const next={...project,...source.project,name,file:target,fileRevision:{path:require('./path-key.cjs').keyPath(target),hash:source.revision.hash}},warnings=[];
   try{await registry.put(next);}catch(error){if(!renamed)throw error;warnings.push('Project registry: '+error.message);}
