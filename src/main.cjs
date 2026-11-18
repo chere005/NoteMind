@@ -14,6 +14,7 @@ if (process.env.NOTEMIND_DATA) app.setPath('userData', path.resolve(process.env.
 const {NotesStore,digest,resolveTitleOf}=require('./notes-store.cjs');
 const notesStore=new NotesStore(path.join(process.env.NOTEMIND_HOME||app.getPath('userData'),'notes-library'),path.join(app.getPath('userData'),'note-recovery'));
 const fileActions=require('./file-actions.cjs')(path.join(app.getPath('userData'),'file-history'),async file=>{const item=await notesStore.captureDeleted(file);await shell.trashItem(file);await notesStore.finishDeleted(item);});
+const fileOperationRequests=new(require('./file-operation-requests.cjs').FileOperationRequests)();
 let win, padController;
 const projectHome=process.env.NOTEMIND_HOME||app.getPath('userData'),projectService=require('./projects.cjs')(projectHome,process.env.NOTEMIND_WORKSPACES||path.join(projectHome,'workspaces'),path.join(process.env.NOTEMIND_DATA&&!process.env.NOTEMIND_HOME?projectHome:app.getPath('documents'),'NoteMind Projects'));
 const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
@@ -38,7 +39,7 @@ app.on('will-quit',event=>{
  if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRetry?.();return;}
  const invoke=run=>Promise.resolve().then(run),settle=async runs=>{const results=await Promise.allSettled(runs.map(invoke)),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(errors.length)throw new AggregateError(errors,'Core cleanup could not finish.');},retry=runs=>{void Promise.allSettled(runs.map(invoke));};
  coreQuitWaiting=Promise.resolve().then(async()=>{
-  const producers=[()=>features.dispose(),()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
+  const producers=[()=>fileOperationRequests.dispose(),()=>features.dispose(),()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
   const noteAssets=[()=>notesIPC.dispose()];coreQuitRetry=()=>retry(noteAssets);await settle(noteAssets);
   coreQuitRetry=null;
   await settle([()=>sheetWrite,()=>cameraWrite]);
@@ -301,15 +302,15 @@ ipcMain.on('sheets:flush-done',(event,packet)=>{if(!closeFlush.complete(event.se
 
 const validName = name => typeof name === 'string' && name.trim() === name && name.length > 0 && name !== '.' && name !== '..' && !/[\\/:*?"<>|]/.test(name);
 
-ipcMain.handle('create-folder', async (_, parent, name) => { if (!validName(name)) throw Error('Choose a valid folder name.'); const target = path.join(parent, name); return fileActions.create(target); });
+ipcMain.handle('create-folder', (_, parent, name) => fileOperationRequests.run(async()=>{ if (!validName(name)) throw Error('Choose a valid folder name.'); const target = path.join(parent, name); return fileActions.create(target); }));
 
-ipcMain.handle('rename-entry', async (_, source, name) => { if (!validName(name)) throw Error('Choose a valid name.'); const target = path.join(path.dirname(source), name); if (source === target) return target; try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(source);await fileActions.rename(source,target);await notesStore.rename(source,target);notesIPC.send();return target; });
+ipcMain.handle('rename-entry', (_, source, name) => fileOperationRequests.run(async()=>{ if (!validName(name)) throw Error('Choose a valid name.'); const target = path.join(path.dirname(source), name); if (source === target) return target; try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(source);await fileActions.rename(source,target);await notesStore.rename(source,target);notesIPC.send();return target; }));
 
-ipcMain.handle('duplicate-entry', async (_, source) => { const ext = path.extname(source), stem = path.basename(source, ext); for (let i = 1; i < 10000; i++) { const target = path.join(path.dirname(source), `${stem} copy${i === 1 ? '' : ` ${i}`}${ext}`); try { return await fileActions.duplicate(source,target); } catch (error) { if (error.code !== 'EEXIST') throw error; } } throw Error('Could not find an available name.'); });
+ipcMain.handle('duplicate-entry', (_, source) => fileOperationRequests.run(async()=>{ const ext = path.extname(source), stem = path.basename(source, ext); for (let i = 1; i < 10000; i++) { const target = path.join(path.dirname(source), `${stem} copy${i === 1 ? '' : ` ${i}`}${ext}`); try { return await fileActions.duplicate(source,target); } catch (error) { if (error.code !== 'EEXIST') throw error; } } throw Error('Could not find an available name.'); }));
 
-ipcMain.handle('move-entry', async (_, source, folder) => { const src = path.resolve(source), dir = path.resolve(folder), target = path.join(dir, path.basename(src)); const key = p => process.platform === 'win32' ? p.toLowerCase() : p; if (key(src) === key(target)) return src; const stat = await fs.lstat(src); if (stat.isDirectory() && (key(dir) === key(src) || key(dir).startsWith(key(src) + path.sep))) throw Error('A folder cannot be moved inside itself.'); try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(src);await fileActions.rename(src,target);await notesStore.rename(src,target);notesIPC.send();return target; });
+ipcMain.handle('move-entry', (_, source, folder) => fileOperationRequests.run(async()=>{ const src = path.resolve(source), dir = path.resolve(folder), target = path.join(dir, path.basename(src)); const key = p => process.platform === 'win32' ? p.toLowerCase() : p; if (key(src) === key(target)) return src; const stat = await fs.lstat(src); if (stat.isDirectory() && (key(dir) === key(src) || key(dir).startsWith(key(src) + path.sep))) throw Error('A folder cannot be moved inside itself.'); try { await fs.access(target); throw Error('An item with that name already exists.'); } catch (error) { if (error.code !== 'ENOENT') throw error; } await settleDocumentWrites(src);await fileActions.rename(src,target);await notesStore.rename(src,target);notesIPC.send();return target; }));
 
-ipcMain.handle('trash-entry', async (_, source) => {await settleDocumentWrites(source);await fileActions.trash(source);notesIPC.send();});
+ipcMain.handle('trash-entry', (_, source) => fileOperationRequests.run(async()=>{await settleDocumentWrites(source);await fileActions.trash(source);notesIPC.send();}));
 const ownsPadEvent=event=>!!win&&!win.isDestroyed()&&event.sender===win.webContents;
 ipcMain.handle('pad:request-access',async event=>{if(!ownsPadEvent(event))return null;const result=await inputMonitoring.request();if(result.access==='granted')pen?.displayRetry?.();return result;});
 ipcMain.handle('pad:retry',event=>{if(ownsPadEvent(event))pen?.displayRetry?.();});
@@ -343,7 +344,7 @@ ipcMain.handle('quick-reference',async()=>{
   return file;
 });
 ipcMain.handle('project-history',(_,label,before,after)=>fileActions.project(String(label),before,after));
-ipcMain.handle('file-history',async(_,which)=>{if(!['undo','redo'].includes(which))throw Error('Invalid action');const result=await fileActions.step(which);if(result?.change)await notesStore.rename(result.change.from,result.change.to);await notesStore.reconcileDeleted(result?.restored);notesIPC.send();return result;});
+ipcMain.handle('file-history',(_,which)=>fileOperationRequests.run(async()=>{if(!['undo','redo'].includes(which))throw Error('Invalid action');const result=await fileActions.step(which);if(result?.change)await notesStore.rename(result.change.from,result.change.to);await notesStore.reconcileDeleted(result?.restored);notesIPC.send();return result;}));
 
 ipcMain.handle('reveal-path', (_, source) => shell.showItemInFolder(source));
 

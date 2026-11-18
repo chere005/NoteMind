@@ -1,0 +1,8 @@
+const{test}=require('node:test'),assert=require('node:assert/strict'),{FileOperationRequests}=require('../src/file-operation-requests.cjs');
+const gate=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}},tick=()=>new Promise(setImmediate);
+test('stop joins every already accepted handler including caller failure and keeps closed admission without replay',async()=>{
+ const requests=new FileOperationRequests(),first=gate(),second=gate();let calls=0;const failing=requests.run(async()=>{calls++;return first.promise}),failed=assert.rejects(failing,/file failed/),successful=requests.run(async()=>{calls++;return second.promise}),stopping=requests.dispose();assert.equal(requests.dispose(),stopping);let stopped=false;void stopping.then(()=>stopped=true);await tick();assert.equal(calls,2);assert.equal(stopped,false);await assert.rejects(requests.run(()=>{calls++;}),/closing/);first.reject(Error('file failed'));await failed;assert.equal(stopped,false);assert.equal(requests.pending.size,1);second.resolve('committed');assert.equal(await successful,'committed');await stopping;assert.equal(calls,2);assert.equal(requests.pending.size,0);assert.equal(requests.dispose(),stopping);
+});
+test('synchronous handler failure settles only its caller and an immediate stop retains the accepted invocation',async()=>{
+ const requests=new FileOperationRequests();let calls=0;const failing=requests.run(()=>{calls++;throw Error('validation failed')}),failure=assert.rejects(failing,/validation failed/),stopping=requests.dispose();await failure;await stopping;assert.equal(calls,1);assert.equal(requests.pending.size,0);await assert.rejects(requests.run(()=>{}),/closing/);
+});
