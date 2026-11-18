@@ -112,15 +112,20 @@ export function decodePng(bytes: Uint8Array): Rgba {
   const max = (1 << Math.min(depth, 8)) - 1
 
   
-  const sample = (rows: Uint8Array, row: number, x: number, c: number): number => {
+  const rawSample = (rows: Uint8Array, row: number, x: number, c: number): number => {
     if (depth === 8) return rows[row + x * channels + c]!
-    if (depth === 16) return rows[row + (x * channels + c) * 2]!
+    if (depth === 16) { const at = row + (x * channels + c) * 2; return rows[at]! * 256 + rows[at + 1]! }
     const bit = (x * channels + c) * depth
-    const value = (rows[row + (bit >> 3)]! >> (8 - depth - (bit & 7))) & max
-    return colour === 3 ? value : Math.round((value * 255) / max)
+    return (rows[row + (bit >> 3)]! >> (8 - depth - (bit & 7))) & max
+  }
+  const sample = (rows: Uint8Array, row: number, x: number, c: number): number => {
+    const value = rawSample(rows, row, x, c)
+    return depth === 16 ? value >>> 8 : depth === 8 || colour === 3 ? value : Math.round((value * 255) / max)
   }
   const transparentGray = alphaTable && colour === 0 && alphaTable.length >= 2
     ? new DataView(alphaTable.buffer, alphaTable.byteOffset).getUint16(0) : -1
+  const transparentRGB = alphaTable && colour === 2 && alphaTable.length >= 6
+    ? [0, 2, 4].map(offset => new DataView(alphaTable!.buffer, alphaTable!.byteOffset).getUint16(offset)) : null
 
   const place = (rows: Uint8Array, w: number, h: number, put: (x: number, y: number) => number) => {
     const stride = Math.ceil((w * bitsPerPixel) / 8)
@@ -138,12 +143,13 @@ export function decodePng(bytes: Uint8Array): Rgba {
           const g = sample(rows, row, x, 0)
           out[o] = out[o + 1] = out[o + 2] = g
           out[o + 3] = channels === 2 ? sample(rows, row, x, 1)
-            : transparentGray >= 0 && depth <= 8 && Math.round((transparentGray * 255) / max) === g ? 0 : 255
+            : transparentGray >= 0 && rawSample(rows, row, x, 0) === transparentGray ? 0 : 255
         } else {
           out[o] = sample(rows, row, x, 0)
           out[o + 1] = sample(rows, row, x, 1)
           out[o + 2] = sample(rows, row, x, 2)
-          out[o + 3] = channels === 4 ? sample(rows, row, x, 3) : 255
+          out[o + 3] = channels === 4 ? sample(rows, row, x, 3)
+            : transparentRGB && transparentRGB.every((value, c) => rawSample(rows, row, x, c) === value) ? 0 : 255
         }
       }
     }
