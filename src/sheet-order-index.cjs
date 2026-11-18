@@ -49,7 +49,8 @@ class SheetOrderIndex{
  }
  async node(root,options={}){
   options.work?.check();descriptor(root);if(!root.count)return null;let value=this.cache.get(root.ref.sha256)?.node;
-  if(!value){const bytes=await this.packs.read(root.ref,MAX_NODE,options);options.work?.check();if(bytes.subarray(0,8).equals(MAGIC))value=decodeLeaf(bytes);else{
+  if(options.requireBranch&&value&&value.kind!=='branch')throw Error('Invalid drawing order branch.');
+  if(!value){const bytes=await this.packs.read(root.ref,MAX_NODE,options);options.work?.check();if(bytes.subarray(0,8).equals(MAGIC)){if(options.requireBranch)throw Error('Invalid drawing order branch.');value=decodeLeaf(bytes);}else{
    value=JSON.parse(bytes.toString('utf8'));if(!value||value.format!=='notemind-sheet-index'||value.version!==1||value.kind!=='branch'||!Array.isArray(value.children)||!value.children.length||value.children.length>FANOUT)throw Error('Invalid drawing order branch.');
    let count=0,points=0;for(const child of value.children){descriptor(child);if(child.height!==value.height-1)throw Error('Invalid drawing index height.');count+=child.count;points+=child.points;}if(count!==value.count||points!==value.points)throw Error('Invalid drawing index totals.');
   }this.remember(root.ref,value);}
@@ -89,7 +90,7 @@ class SheetOrderIndex{
     check();for(let at=leaf.offset;at<bytes.length;at+=32){check();visit(bytes.readUInt32LE(at+8),bytes.readUInt32LE(at+12));}
     work+=leaf.count;if(work>=8192||options.work?.poll()){work=0;await(options.work?.pause?options.work.pause():options.yieldControl?options.yieldControl():new Promise(setImmediate));check();}return;
    }
-   const node=await this.node(current,options);check();for(const child of node.children)await walk(child,path);
+   const node=await this.node(current,{...options,requireBranch:true});check();for(const child of node.children)await walk(child,path);
   };
   await walk(root,new Set());check();
  }
