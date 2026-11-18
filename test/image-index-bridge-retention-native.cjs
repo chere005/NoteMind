@@ -1,0 +1,40 @@
+// Synthetic byte-bridge stage diagnostic only. No canvas, bitmap, OCR or App.
+require('./disable-native-pen.cjs');
+const{app,BrowserWindow}=require('electron'),fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{execFileSync}=require('node:child_process');
+const{executeBytes}=require('../src/document-worker-bytes.cjs'),makeBytes=require('../src/document-byte-tools.js'),{observeImageBridge}=require('./helpers/image-index-bridge-probe.cjs'),{ArchiveSource}=require('../src/archive-version-source.cjs');
+const root=path.resolve('src'),source=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),out=path.resolve('test-results/performance/image-index-bridge-'+source.slice(0,7)+'.json'),fixture=path.resolve(process.env.NOTEMIND_BRIDGE_FIXTURE||'/Users/example/GIT/NoteMind/test-results/performance-0.37/real-raster-fixture'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-index-bridge-'));
+const report={source,pid:process.pid,profile,scope:'Synthetic bridge-stage only: eight fresh varied17,280,000B owned outputs, original first8 canonical JPEG input traffic; no canvas/bitmap/OCR/App acceptance',versions:process.versions,limit:1024**3,rows:[],memory:[],files:{},ok:false};
+for(const file of['document-worker-bytes.cjs','document-byte-tools.js'])report.files[file]=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex');
+fs.mkdirSync(path.dirname(out),{recursive:true});app.setPath('userData',profile);app.dock?.hide();app.on('window-all-closed',()=>{});
+require('./native-failure-exit.cjs').installNativeFailureExit({app,report:out,telemetry:report});
+let win,probe,timer,deadline,archive,finished=false;
+const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex'),discard=bytes=>{if(bytes?.byteLength){if(bytes.byteOffset||bytes.byteLength!==bytes.buffer.byteLength)throw Error('Probe tried to consume borrowed bytes.');bytes.buffer.transfer(0);if(bytes.byteLength)throw Error('Private probe bytes did not detach.');}};
+function memory(){const processes=app.getAppMetrics().map(row=>({pid:row.pid,type:row.type,bytes:row.memory.workingSetSize*1024})),total=processes.reduce((sum,row)=>sum+row.bytes,0);const value={at:performance.now(),processes,total,main:process.memoryUsage()};report.memory.push(value);if(total>report.limit)throw Error('Original1GiB owned aggregate guard exceeded.');return value;}
+function expected(seed){let random=seed;const hash=crypto.createHash('sha256'),chunk=Buffer.allocUnsafeSlow(196608);try{for(let at=0;at<17280000;){const size=Math.min(chunk.length,17280000-at);for(let n=0;n<size;n++){random^=random<<13;random^=random>>>17;random^=random<<5;chunk[n]=random&255;}hash.update(chunk.subarray(0,size));at+=size;}return hash.digest('hex');}finally{discard(chunk);}}
+async function finish(error){if(finished)return;finished=true;clearInterval(timer);clearTimeout(deadline);try{await archive?.close();}catch(failure){error ||=failure;}probe?.detach();if(win&&!win.isDestroyed())win.destroy();report.ok=report.passed=!error;if(error)report.error=error.stack||String(error);report.peak=Math.max(0,...report.memory.map(row=>row.total));report.finished=new Date().toISOString();fs.writeFileSync(out,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({event:'complete',pid:process.pid,ok:report.ok,rows:report.rows.length,peak:report.peak,error:report.error,artifact:out}));app.exit(error?1:0);}
+app.whenReady().then(async()=>{
+ const space=await fsp.statfs(profile,{bigint:true});if(space.bavail*space.bsize<2n*1024n**3n)throw Error('Original2GiB disk floor not available.');
+ const info=JSON.parse(fs.readFileSync(path.join(fixture,'fixture.json'),'utf8'));if(info.count!==100)throw Error('Original fixture changed.');report.fixture={archiveSHA:info.archiveSha256,sourceImages:info.images.slice(0,8)};
+ archive=await ArchiveSource.open(path.join(fixture,'images.nm'));const manifest=await archive.manifest();
+ win=new BrowserWindow({show:false,focusable:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,partition:'notemind-index-bridge-'+crypto.randomUUID()}});
+ win.webContents.on('console-message',event=>{if(event.level>=2)(report.errors||=[]).push(event.message)});
+ await win.loadFile(path.join(root,'image-conversion-worker.html'));win.webContents.debugger.attach('1.3');
+ await win.webContents.executeJavaScript(`(()=>{const original=ArrayBuffer.prototype.transfer;window.__bridgeRetired={calls:0,bytes:0};ArrayBuffer.prototype.transfer=function(...args){const size=this.byteLength,result=Reflect.apply(original,this,args);if(!this.byteLength&&result.byteLength===0){__bridgeRetired.calls++;__bridgeRetired.bytes+=size;}return result;};const bytes=(${makeBytes.toString()})({consumeOwned:true});window.fixture={bytes,tools:()=>({imagePixels:async input=>{const value=bytes.take(input),source=value.bytes;source.buffer.transfer(0);const output=new Uint8Array(17280000);let random=window.__bridgeSeed;for(let n=0;n<output.length;n++){random^=random<<13;random^=random>>>17;random^=random<<5;output[n]=random&255;}return{data:bytes.publishOwned(value.owner,output.buffer),width:1800,height:2400,pixels:true};}}),drain:async()=>{},stats:()=>({bytes:bytes.stats(),retired:{...__bridgeRetired}})};return true;})()`);
+ probe=observeImageBridge(win.webContents,{limit:56,sample:async row=>{row.memory=memory();row.heap=await win.webContents.debugger.sendCommand('Runtime.getHeapUsage');row.renderer=await win.webContents.executeJavaScript('window.fixture.stats()');}});
+ timer=setInterval(()=>{try{memory()}catch(error){void finish(error)}},50);deadline=setTimeout(()=>void finish(Error('Bridge diagnostic deadline exceeded.')),90000);
+ console.log(JSON.stringify({event:'start',pid:process.pid,source,artifact:out}));
+ for(let at=0;at<8;at++){
+  let input,output;const image=info.images[at],seed=(0x12345678+at*0x9e3779b9)>>>0;
+  try{const entry=archive.files.get(image.name),value=await archive.read(entry);archive.verifyEntry(entry,value,manifest);input=value.bytes;if(input.length!==image.bytes||sha(input)!==image.sha256)throw Error('Canonical input bytes changed.');
+   await win.webContents.executeJavaScript('window.__bridgeSeed='+seed);const authority=expected(seed),start=performance.now();
+   output=await executeBytes(code=>win.webContents.executeJavaScript(code.replaceAll('window.NoteMindDocumentBytes','window.fixture.bytes').replaceAll('window.documentTools','window.fixture.tools("synthetic")')), 'imagePixels',[input,'image/jpeg',false,2400,{width:1800,height:2400}]);
+   await win.webContents.executeJavaScript('window.fixture.drain("synthetic")');
+   const actual=sha(output.data),stats=await win.webContents.executeJavaScript('window.fixture.stats()'),row={at,inputSHA:image.sha256,inputBytes:input.length,outputBytes:output.data.length,actual,authority,wallMs:performance.now()-start,stats};report.rows.push(row);
+   const retiredExpected=report.rows.reduce((sum,item)=>sum+2*item.inputBytes+item.outputBytes,0);if(stats.retired.bytes!==retiredExpected)throw Error('Renderer private backing retirement receipt changed.');
+   if(actual!==authority||output.data.length!==17280000||stats.bytes.bytes||stats.bytes.sessions)throw Error('Byte bridge output or drain changed.');
+  }finally{const receipt={at,inputBefore:input?.byteLength||0,outputBefore:output?.data?.byteLength||0};discard(input);discard(output?.data);receipt.inputAfter=input?.byteLength||0;receipt.outputAfter=output?.data?.byteLength||0;(report.mainRetirement||=[]).push(receipt);}
+  report.probe={rows:probe.rows,totals:probe.snapshot()};memory();fs.writeFileSync(out,JSON.stringify({...report,inProgress:true},null,2)+'\n');
+ }
+ if(report.rows.length!==8||report.errors?.length)throw Error('Bridge diagnostic was incomplete or raised renderer errors.');
+ report.probe={rows:probe.rows,totals:probe.snapshot()};const pid=win.webContents.getOSProcessId();await require('../src/document-helper-lifetime.cjs').stopConverter(win,{pid});report.rendererExit={pid,confirmed:true};win=null;memory();await finish();
+}).catch(finish);
