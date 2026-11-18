@@ -1,0 +1,19 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),raw=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm'),{createRequire}=require('node:module'),{createHash}=require('node:crypto'),{PDFDocument}=require('pdf-lib');
+const file=require.resolve('../src/pdf-reference-jobs-worker.cjs'),source=raw.readFileSync(file,'utf8'),relative=createRequire(file),guard=relative('./guarded-write.cjs'),hash=bytes=>createHash('sha256').update(bytes).digest('hex'),deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+async function fixture(t){
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'notemind-pdf-publication-')));t.after(()=>fs.rm(root,{recursive:true,force:true}));const target=path.join(root,'Annotated.pdf'),pdf=await PDFDocument.create();pdf.addPage([400,600]).drawText('Original vector reference');const bytes=Buffer.from(await pdf.save());await fs.writeFile(target,bytes);let handler;const packets=[];
+ class Store{exportPage(){return[{colorHex:'#123456',width:5,points:[{x:.1,y:.2},{x:.8,y:.7}],pressures:[.2,.8]}]}}
+ vm.runInNewContext(source,{Buffer,AbortController,Map,require:name=>name==='node:worker_threads'?{parentPort:{on:(_name,fn)=>handler=fn,postMessage:packet=>packets.push(packet)},workerData:{root}}:name==='./pdf-ink-store.cjs'?{PDFInkStore:Store}:relative(name)});
+ const packet={id:17,operation:'export',args:{sourceBytes:bytes,sourceHash:hash(bytes),pageCount:1,lease:{id:'private-lease'},file:target,expectedRevision:await guard.fingerprintFile(target)}};
+ return{root,target,bytes,packet,packets,run:()=>handler(packet),cancel:()=>handler({cancel:packet.id}),result:()=>packets.findLast(value=>value.value||value.error)};
+}
+function syncFailure(t,selected){const open=fs.open;t.mock.method(fs,'open',async(file,...args)=>{const handle=await open(file,...args);if(selected(file))handle.sync=async()=>{throw Object.assign(Error('fixture durability failure'),{code:'EIO'})};return handle;});}
+test('annotated PDF export returns its committed receipt after target directory sync failure',async t=>{
+ if(process.platform==='win32')return;const f=await fixture(t);syncFailure(t,file=>file===f.root);await f.run();const packet=f.result();assert.equal(packet.error,undefined);assert.equal(packet.value.file,f.target);assert.equal(packet.value.pageCount,1);assert.equal(packet.value.strokesWritten,1);assert.equal(packet.value.committed,true);assert.equal(packet.value.warnings.length,1);assert.match(packet.value.warnings[0],/durability failure/);const saved=await fs.readFile(f.target);assert.notDeepEqual(saved,f.bytes);assert.equal((await PDFDocument.load(saved)).getPageCount(),1);assert.equal(hash(f.packet.args.sourceBytes),hash(f.bytes));assert.deepEqual(await fs.readdir(f.root),['Annotated.pdf']);
+});
+test('annotated PDF export rejects a failed temporary sync without replacing existing output',async t=>{
+ const f=await fixture(t);syncFailure(t,file=>String(file).endsWith('.tmp'));await f.run();assert.equal(f.result().error.code,'EIO');assert.deepEqual(await fs.readFile(f.target),f.bytes);assert.deepEqual(await fs.readdir(f.root),['Annotated.pdf']);
+});
+test('annotated PDF cancellation during temporary sync cannot publish the new target',async t=>{
+ const f=await fixture(t),started=deferred(),gate=deferred(),open=fs.open;t.mock.method(fs,'open',async(file,...args)=>{const handle=await open(file,...args);if(String(file).endsWith('.tmp')){const sync=handle.sync.bind(handle);handle.sync=async()=>{started.resolve();await gate.promise;return sync()};}return handle;});const run=f.run();await started.promise;await f.cancel();gate.resolve();await run;assert.equal(f.result().error?.name,'AbortError');assert.deepEqual(await fs.readFile(f.target),f.bytes);assert.deepEqual(await fs.readdir(f.root),['Annotated.pdf']);
+});
