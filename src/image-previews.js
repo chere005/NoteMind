@@ -75,7 +75,7 @@
   function sourceForVisible(img,entry){
     if(!canOwn(entry)){const src=materialize(entry);img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;return;}
     void materializeAsync(entry).then(src=>{if(bound.get(img)===entry&&entry.visible?.has(img)&&host?.contains(img)&&assetsFor?.()?.[img.dataset.asset]===entry.data){img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;}}).catch(error=>{
-      if(error.name==='AbortError')return;if(entry.retired||bound.get(img)!==entry||!entry.visible?.has(img))return;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}const src=materialize(entry);img.loading='eager';img.src=src;
+      if(error.name==='AbortError')return;if(entry.retired||bound.get(img)!==entry||!entry.visible?.has(img)||!host?.contains(img)||assetsFor?.()?.[img.dataset.asset]!==entry.data)return;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}const src=materialize(entry);img.loading='eager';img.src=src;
     });
   }
   function url(name, data, type) { const entry = get(name, data, type); return options.lazy ? entry.placeholder : materialize(entry); }
