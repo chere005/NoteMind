@@ -3,30 +3,32 @@ const fs = require('node:fs'), vm = require('node:vm'), { buildSync } = require(
 
 const signatureModule = { exports: {} };
 vm.runInNewContext(buildSync({entryPoints:['src/tablet/renderer/sheetSignature.ts'],bundle:true,platform:'node',format:'cjs',write:false}).outputFiles[0].text,
-  { module: signatureModule, exports: signatureModule.exports, WeakRef });
-const { sheetSignature } = signatureModule.exports;
+  { module: signatureModule, exports: signatureModule.exports, WeakRef, performance, setTimeout, setImmediate });
+const { sheetSignature,prepareSheetSignature } = signatureModule.exports;
+const {hasPendingInkMutations}=require('../src/ink-mutations.js');
 const source = fs.readFileSync('src/tablet-entry.tsx', 'utf8');
-const implementation = source.slice(source.indexOf(' const prepareSheetSave='), source.indexOf(' const openSheet='));
+const implementation = source.slice(source.indexOf(' const signatureStamp='),source.indexOf(' const renameIntents='))+'\n'+source.slice(source.indexOf(' const prepareSheetSave='), source.indexOf(' const openSheet='));
+async function until(read){for(let at=0;at<50;at++){if(read())return;await new Promise(setImmediate);}assert.fail('Expected owned save preparation did not dispatch.');}
 const stroke = x => ({ colorHex: '#123456', width: 3, points: [{ x, y: .3 }] });
 const sheet = name => ({ name, page: { aspect: 2, strokes: [stroke(.2)], backdrop: null }, paper: { kind: 'blank', spacing: 'medium', colour: 'white' } });
 
 function pendingSave(sheets) {
-  let complete;
+  let complete,dispatchedResolve;const dispatched=new Promise(resolve=>dispatchedResolve=resolve);
   const context = {
-    sheets, active: 0, currentSheets: sheets,projectInkSnapshot:(_page,strokes)=>strokes,flushInkMutations:()=>null,includeInk:(_extent,strokes)=>({x:0,y:0,width:1,height:1}), surface:{current:null},sheetsSnapshot:()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper})),sheetSignature, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
+    sheets, active: 0, currentSheets: sheets,paper:()=>sheets[0].paper,projectInkSnapshot:(_page,strokes)=>strokes,flushInkMutations:()=>null,includeInk:(_extent,strokes)=>({x:0,y:0,width:1,height:1}), surface:{current:null},sheetsSnapshot:()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper})),sheetSignature,prepareSheetSignature,hasPendingInkMutations, snapshotDrawing: value=>value, denseDrawing:()=>false, btoa: value => Buffer.from(value).toString('base64'),
     latestSheets: { current: sheets.map(s => ({ name: s.name, aspect: s.page.aspect, strokes: s.page.strokes, paper: s.paper })) },
     captureReadyDrawing:()=>({frozen:true}),drawingSvg: () => 'preview',drawingPreview: () => 'preview', refresh() {}, setSaveError(message) { throw Error(message); },
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
-    window: { notemind: { savePane(data,svg,file,options) { context.savedData = data;context.saveTarget={file,options};return new Promise(resolve => { complete = resolve; }); } } },
+    window: { notemind: { savePane(data,svg,file,options) { context.savedData = data;context.saveTarget={file,options};dispatchedResolve();return new Promise(resolve => { complete = resolve; }); } } },
   };
   context.bindDrawingSaveChunks=value=>value;context.saveDrawingPane=(api,...args)=>api.savePane(...args);context.pendingSheetActions={current:new Set()};context.page={current:sheets[0].page};context.liveSheets={get current(){return context.currentSheets;}};context.sheetsSnapshot=()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.ensureSheetReady=async page=>context.currentSheets.find(item=>item.page===page);
   vm.runInNewContext(implementation + ';globalThis.save = saveSheet;globalThis.closeDrawing=closeSheet;', context);
-  return { context, complete: file => complete(file) };
+  return { context,dispatched, complete: file => complete(file) };
 }
 
 test('a delayed drawing save marks only the ink written to the file as saved', async () => {
-  const first = sheet('First'), { context, complete } = pendingSave([first]);
-  const saving = context.save();
+  const first = sheet('First'), { context, complete,dispatched } = pendingSave([first]);
+  const saving = context.save();await dispatched;
   const writtenSignature = sheetSignature({ ...first, page: { ...first.page, strokes: context.savedData.strokes } });
   first.page.strokes = [...first.page.strokes, stroke(.8)];
   complete('/tmp/first.nm');await saving;
@@ -35,8 +37,8 @@ test('a delayed drawing save marks only the ink written to the file as saved', a
 });
 
 test('a delayed drawing save follows its page through a rename and reorder', async () => {
-  const first = sheet('First'), second = sheet('Second'), { context, complete } = pendingSave([first, second]);
-  const saving = context.save(), writtenSignature = sheetSignature(first);
+  const first = sheet('First'), second = sheet('Second'), { context, complete,dispatched } = pendingSave([first, second]);
+  const saving = context.save(), writtenSignature = sheetSignature(first);await dispatched;
   context.currentSheets = [second, { ...first, name: 'Renamed' }];
   complete('/tmp/first.nm');await saving;
   assert.equal(context.currentSheets[0].file, undefined);
@@ -47,12 +49,12 @@ test('a delayed drawing save follows its page through a rename and reorder', asy
 });
 
 test('keeping a newly saved drawing in the project updates the current sheet object', async () => {
-  const first = sheet('First'), { context, complete } = pendingSave([first]), events = [];
+  const first = sheet('First'), { context, complete,dispatched } = pendingSave([first]), events = [];
   context.window.dispatchEvent = event => events.push(event);
   context.CustomEvent = class { constructor(type, options) { this.type = type;this.detail = options.detail; } };
   const start = source.indexOf('onKeep:async(to,on)=>') + 'onKeep:'.length, end = source.indexOf('}}} onHide', start) + 1;
   vm.runInNewContext('globalThis.keep=' + source.slice(start, end), context);
-  const keeping = context.keep('project', true);complete('/tmp/first.nm');await keeping;
+  const keeping = context.keep('project', true);await dispatched;complete('/tmp/first.nm');await keeping;
   assert.equal(context.currentSheets[0].keptProject, true);
   assert.equal(events[0].type, 'notemind-keep-file');assert.equal(events[0].detail, '/tmp/first.nm');
 });
@@ -65,21 +67,21 @@ test('a rejected asynchronous keep does not mark the drawing as kept', async () 
 });
 
 test('versioned save retains its initiating file revision and records the committed revision',async()=>{
- const first=sheet('First');first.file='/tmp/first.nm';first.fileRevision={sha256:'a'.repeat(64),bytes:100};const {context,complete}=pendingSave([first]);let preview;context.drawingPreview=()=>new Promise(resolve=>preview=resolve);const saving=context.save();context.currentSheets=[{...first,fileRevision:{sha256:'b'.repeat(64),bytes:200}}];preview('frozen');await new Promise(setImmediate);assert.deepEqual(JSON.parse(JSON.stringify(context.saveTarget.options.expected)),first.fileRevision);assert.equal(context.saveTarget.options.versioned,true);const revision={sha256:'c'.repeat(64),bytes:300};complete({file:'/tmp/first.nm',revision});assert.equal(await saving,'/tmp/first.nm');assert.equal(context.currentSheets[0].fileRevision,revision);
+ const first=sheet('First');first.file='/tmp/first.nm';first.fileRevision={sha256:'a'.repeat(64),bytes:100};const {context,complete}=pendingSave([first]);let preview;context.drawingPreview=()=>new Promise(resolve=>preview=resolve);const saving=context.save();context.currentSheets=[{...first,fileRevision:{sha256:'b'.repeat(64),bytes:200}}];await until(()=>preview);preview('frozen');await new Promise(setImmediate);assert.deepEqual(JSON.parse(JSON.stringify(context.saveTarget.options.expected)),first.fileRevision);assert.equal(context.saveTarget.options.versioned,true);const revision={sha256:'c'.repeat(64),bytes:300};complete({file:'/tmp/first.nm',revision});assert.equal(await saving,'/tmp/first.nm');assert.equal(context.currentSheets[0].fileRevision,revision);
 });
 
 test('dense save passes the encoded sidecar without re-reading newer geometry',async()=>{
- const first=sheet('First'),{context,complete}=pendingSave([first]);let worker,seen;context.denseDrawing=()=>true;context.denseAssets=snapshot=>{seen=snapshot;return new Promise(resolve=>worker=resolve)};const saving=context.save();first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'Later',aspect:2,strokes:first.page.strokes,paper:first.paper}];assert.equal(seen.name,'First');assert.equal(seen.strokes.length,1);worker({sidecar:'exact binary',data:'preview'});await new Promise(setImmediate);assert.equal(context.savedData.encodedGraphics,'exact binary');assert.equal(context.savedData.strokes,undefined);complete('/tmp/first.nm');await saving;
+ const first=sheet('First'),{context,complete}=pendingSave([first]);let worker,seen;context.denseDrawing=()=>true;context.denseAssets=snapshot=>{seen=snapshot;return new Promise(resolve=>worker=resolve)};const saving=context.save();first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'Later',aspect:2,strokes:first.page.strokes,paper:first.paper}];await until(()=>seen);assert.equal(seen.name,'First');assert.equal(seen.strokes.length,1);worker({sidecar:'exact binary',data:'preview'});await new Promise(setImmediate);assert.equal(context.savedData.encodedGraphics,'exact binary');assert.equal(context.savedData.strokes,undefined);complete('/tmp/first.nm');await saving;
 });
 
 test('save commits unfinished pen contact before capturing its immutable payload and signature',async()=>{
- const first=sheet('First'),{context,complete}=pendingSave([first]);let flushed=0;context.surface.current={flush(){if(!flushed++)first.page.strokes=[...first.page.strokes,stroke(.7)];}};const saving=context.save();assert.equal(flushed,1);assert.equal(context.savedData.strokes.length,2);first.page.strokes=[...first.page.strokes,stroke(.9)];complete('/tmp/first.nm');await saving;assert.notEqual(context.currentSheets[0].saved,sheetSignature(context.currentSheets[0]));
+ const first=sheet('First'),{context,complete,dispatched}=pendingSave([first]);let flushed=0;context.surface.current={flush(){if(!flushed++)first.page.strokes=[...first.page.strokes,stroke(.7)];}};const saving=context.save();assert.equal(flushed,1);await dispatched;assert.equal(context.savedData.strokes.length,2);first.page.strokes=[...first.page.strokes,stroke(.9)];complete('/tmp/first.nm');await saving;assert.notEqual(context.currentSheets[0].saved,sheetSignature(context.currentSheets[0]));
 });
 
 test('a dense drawing save captures payload and signature before asynchronous preview encoding',async()=>{
  const first=sheet('First'),{context,complete}=pendingSave([first]);let preview;
  context.drawingPreview=()=>new Promise(resolve=>preview=resolve);const saving=context.save(),writtenSignature=sheetSignature(first);assert.equal(context.savedData,undefined);
- first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'First',aspect:first.page.aspect,strokes:first.page.strokes,paper:first.paper}];preview('frozen preview');await new Promise(setImmediate);
+ first.page.strokes=[...first.page.strokes,stroke(.8)];context.latestSheets.current=[{name:'First',aspect:first.page.aspect,strokes:first.page.strokes,paper:first.paper}];await until(()=>preview);preview('frozen preview');await new Promise(setImmediate);
  assert.equal(context.savedData.strokes.length,1);complete('/tmp/first.nm');await saving;assert.equal(context.currentSheets[0].saved,writtenSignature);assert.notEqual(context.currentSheets[0].saved,sheetSignature(context.currentSheets[0]));
 });
 
