@@ -7,7 +7,7 @@ class PreviewBudgetFiles{
  async written(record,total){await record.lease?.written(total);}
  async done(record,{visible=false}={}){await record.handle?.close();record.handle=null;record.entry.handle=null;if(visible){record.visibleLease=record.lease;record.lease=null;}else{const lease=record.lease;record.lease=null;await lease?.release();}return record.entry;}
  async rollback(record){await record.handle?.close();record.handle=null;const lease=record.lease;record.lease=null;if(lease)await lease.rollback();else if(this.budget&&!record.removed)await this.budget.remove(record.key,record.identity);else await record.cleanup();}
- async pin(record,{check=this.check}={}){if(record.removed)throw Error('Word preview image cache retired.');if(!record.visibleLease)record.visibleLease=await this.budget?.claim({key:record.key,kind:record.kind,bytes:record.bytes,identity:record.identity,cleanup:record.cleanup,check});}
+ async pin(record,{check=this.check}={}){if(record.removed)throw Error('Word preview image cache retired.');if(record.visibleLease)return false;record.visibleLease=await this.budget?.claim({key:record.key,kind:record.kind,bytes:record.bytes,identity:record.identity,cleanup:record.cleanup,check});return !!record.visibleLease;}
  async unpin(record){const lease=record.visibleLease;record.visibleLease=null;await lease?.release();}
  async close(){for(const record of [...this.records.values()]){await this.unpin(record);if(record.removed)continue;if(this.budget)await this.budget.remove(record.key,record.identity);else await record.cleanup();}}
 }
