@@ -20,6 +20,9 @@
 .sheet-tabs #video-options>.bar-btn{max-width:100%;min-width:0;gap:4px}
 .sheet-tabs #video-options .bar-label-text{overflow:hidden;text-overflow:ellipsis;max-width:76px}
 .sheet-tabs .sheet-scroll{min-width:0;flex:1}
+.sheet-tabs[data-sheets=drawing] .sheet-scroll{flex:0 1 auto}
+.sheet-tabs[data-sheets=drawing] [data-page-overview-toggle]{margin-left:auto;flex:none}
+.sheet-tabs [data-bar=pane-menu]{flex:none}
 .sheet-tabs .pane-hide{flex:none}
 .camera-head .toolbar-separator{height:18px;width:1px;background:var(--cam-hair,var(--wm-rule));margin:0 3px;flex:none}
 .camera-head [data-pane=notes]{width:28px;padding:0;min-width:28px}

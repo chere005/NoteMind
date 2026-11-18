@@ -8,6 +8,10 @@ const { sheetSignature,prepareSheetSignature } = signatureModule.exports;
 const {hasPendingInkMutations}=require('../src/ink-mutations.js');
 const source = fs.readFileSync('src/tablet-entry.tsx', 'utf8');
 const implementation = source.slice(source.indexOf(' const signatureStamp='),source.indexOf(' const renameIntents='))+'\n'+source.slice(source.indexOf(' const prepareSheetSave='), source.indexOf(' const openSheet='));
+const keepStart = source.indexOf('onKeep:async(to,on)=>{');
+const keepEnd = source.indexOf('}:null;', keepStart);
+assert.ok(keepStart >= 0 && keepEnd > keepStart, 'the drawing options contain the production keep handler');
+const keepImplementation = 'globalThis.keep=' + source.slice(keepStart + 'onKeep:'.length, keepEnd);
 async function until(read){for(let at=0;at<50;at++){if(read())return;await new Promise(setImmediate);}assert.fail('Expected owned save preparation did not dispatch.');}
 const stroke = x => ({ colorHex: '#123456', width: 3, points: [{ x, y: .3 }] });
 const sheet = name => ({ name, page: { aspect: 2, strokes: [stroke(.2)], backdrop: null }, paper: { kind: 'blank', spacing: 'medium', colour: 'white' } });
@@ -52,8 +56,7 @@ test('keeping a newly saved drawing in the project updates the current sheet obj
   const first = sheet('First'), { context, complete,dispatched } = pendingSave([first]), events = [];
   context.window.dispatchEvent = event => events.push(event);
   context.CustomEvent = class { constructor(type, options) { this.type = type;this.detail = options.detail; } };
-  const start = source.indexOf('onKeep:async(to,on)=>') + 'onKeep:'.length, end = source.indexOf('}}} onHide', start) + 1;
-  vm.runInNewContext('globalThis.keep=' + source.slice(start, end), context);
+  vm.runInNewContext(keepImplementation, context);
   const keeping = context.keep('project', true);await dispatched;complete('/tmp/first.nm');await keeping;
   assert.equal(context.currentSheets[0].keptProject, true);
   assert.equal(events[0].type, 'notemind-keep-file');assert.equal(events[0].detail, '/tmp/first.nm');
@@ -62,7 +65,7 @@ test('keeping a newly saved drawing in the project updates the current sheet obj
 test('a rejected asynchronous keep does not mark the drawing as kept', async () => {
  const first=sheet('First');let complete;const events=[],context={pendingSheetActions:{current:new SheetActions()},page:{current:first.page},sheets:[first],active:0,kept:[first],captureReadyDrawing:()=>({frozen:true}),denseDrawing:()=>false,drawingPreview:()=>new Promise(resolve=>complete=resolve),editableSheet:()=>({name:'First'}),btoa:value=>value,refresh(){},setSheets:update=>{context.kept=update(context.kept)},window:{NoteMindNotes:{captureInsertion:()=>({tab:'original'})},dispatchEvent:event=>{events.push(event);return false}},CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options)}}};
  context.page={current:first.page};context.liveSheets={current:[first]};context.ensureSheetReady=async()=>first;
- const start=source.indexOf('onKeep:async(to,on)=>{')+'onKeep:'.length,end=source.indexOf('} onHide=',start),text=source.slice(start,end).replace(/}}$/, '}');vm.runInNewContext('globalThis.keep='+text,context);
+ vm.runInNewContext(keepImplementation,context);
  const pending=context.keep('note',true);context.sheets=[sheet('Later')];complete('preview');await pending;assert.equal(events.length,1);assert.equal(events[0].cancelable,true);assert.equal(events[0].detail.insertion.tab,'original');assert.equal(context.kept[0].keptNote,undefined);
 });
 

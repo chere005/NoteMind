@@ -86,6 +86,7 @@ interface Props {
   buttons?: BoxButtons | null
   /** A fixed reference page keeps its own visible paper independently of drawing preferences. */
   paperOverride?: Paper
+  showPrecisionControls?: boolean
 }
 
 /** How near a stroke the eraser has to be, in points. */
@@ -121,7 +122,8 @@ const CURSORS: Record<Exclude<BoxHit, null>, string> = {
 }
 
 export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSurface(
-  { page, colour, width, box, onBox, onEdited, frame: regionBox = null, buttons = null, paperOverride }, handle) {
+  { page, colour, width, box, onBox, onEdited, frame: regionBox = null, buttons = null, paperOverride,
+    showPrecisionControls = true }, handle) {
   const host = useRef<HTMLDivElement | null>(null)
   const wrap = useRef<HTMLDivElement | null>(null)
   const [fit, setFit] = useState({ x: 0, y: 0, width: 0, height: 0, viewport: { ...UNIT_SHEET } })
@@ -903,7 +905,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           </div>
         )}
       </div>
-      <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>
+      {showPrecisionControls && <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>}
       {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).

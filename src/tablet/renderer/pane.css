@@ -54,9 +54,7 @@
  .pen-bar .pen-swatch{width:18px;min-width:18px;height:18px}
  .pen-bar .pen-swatch::after{inset:-6px -1.5px}
 }
-/* A pane narrower than its tools scrolls them; Insert and the options menu stay in reach at the right edge. */
-.pen-bar .pen-trailing>.bar-split.primary{position:sticky;right:calc(var(--bar-btn) + 5px);z-index:1;box-shadow:0 0 0 4px var(--bar-strip)}
-.pen-bar [data-bar="pane-menu"]{position:sticky;right:0;z-index:1;background:var(--bar-strip);box-shadow:0 0 0 4px var(--bar-strip),8px 0 0 4px var(--bar-strip),-3px 0 0 4px var(--bar-strip)}
-.pen-bar [data-bar="pane-menu"]:hover:not(:disabled){background:var(--bar-fill)}
+/* A pane narrower than its tools scrolls them; Insert stays in reach at the right edge. */
+.pen-bar .pen-trailing>.bar-split.primary{position:sticky;right:0;z-index:1;box-shadow:0 0 0 4px var(--bar-strip)}
 /* The width's number is never squeezed away where it is shown. */
 .pen-bar .pen-width-select{flex:none}
