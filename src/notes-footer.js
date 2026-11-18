@@ -70,7 +70,7 @@
  rich.addEventListener('input',update);source.addEventListener('input',update);update();
  new MutationObserver(()=>{if(/^(Saved|Autosaved)\b/.test($('status').textContent))saved.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}).observe($('status'),{childList:true,characterData:true,subtree:true});
  let savedTab=activeTab?.id;
- window.addEventListener('notemind-document',event=>{if(event.detail.activeId!==savedTab){savedTab=event.detail.activeId;saved.textContent='';}update();});
+ window.addEventListener('notemind-document',event=>{if(event.detail.activeId!==savedTab){savedTab=event.detail.activeId;saved.textContent='';update();}});
 
  let writing;
  function setZoom(percent,remember=true){

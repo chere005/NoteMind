@@ -93,7 +93,7 @@ function refreshEditor({contentChanged=true}={}){
  const caret=sourceCaret(),sourceWasHidden=source.hidden;if(rich.hidden!==!visual)rich.hidden=!visual;if(source.hidden!==visual)source.hidden=visual;
  if(visual){if(source.textLength!==0)source.value='';if(contentChanged)rich.innerHTML=render(doc.text);}
  else{if(rich.firstChild)rich.innerHTML='';if(contentChanged){source.value=doc.text;if(sourceWasHidden&&caret)source.setSelectionRange(caret.start,caret.end,caret.direction);}}
- richChanged=false;
+ richChanged=false;if(contentChanged)window.NoteMindFooter?.update();
 }
 function switchMode(toVisual) { if (visual === toVisual) return; doc.text = currentText(); sourceCaret(); if(!visual)rememberSourceCaret(); visual = toVisual; refreshEditor(); $('toolbar').hidden = false; $('visual').classList.toggle('selected', visual); $('markdown').classList.toggle('selected', !visual); $('modeLabel').textContent = visual ? 'Visual editor' : 'Markdown editor'; if (visual) visualAccess(); else $('status').textContent = 'Ready'; activeTab.visual=visual; window.NoteMindNotes?.changedView();(visual?rich:source).focus({preventScroll:true}); }
 
