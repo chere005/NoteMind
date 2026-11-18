@@ -3,7 +3,7 @@ const {executeBytes}=require('./document-worker-bytes.cjs'),makeBytes=require('.
 const abort=()=>Object.assign(Error('Image conversion cancelled.'),{name:'AbortError'});
 const frame=host=>{try{return host.mainFrame?host.mainFrame.processId+':'+host.mainFrame.routingId:null}catch{return null}};
 const alive=pid=>{try{process.kill(pid,0);return true}catch(error){if(error.code==='ESRCH')return false;throw error}},pause=()=>new Promise(resolve=>setTimeout(resolve,100));
-function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=null,active=null,closed=false;
+function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=null,active=null,admission=null,closed=false;
  const eligible=host=>host&&typeof host.executeJavaScript==='function'&&typeof host.getOSProcessId==='function'&&typeof host.once==='function'&&!host.isDestroyed?.();
  async function create(host){
   if(context)return context.host===host&&!context.invalid?context:null;
@@ -20,22 +20,24 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
   try{await state.execute('('+installImageIndexRasterHost.toString()+')('+JSON.stringify(key)+','+JSON.stringify(pathToFileURL(path.join(__dirname,'image-index-raster-worker.js')).href)+','+makeBytes.toString()+')');if(state.invalid||host.isDestroyed?.())throw abort();state.installed=true;return state;}
   catch(error){if(!state.invalid)state.failed=error;throw error;}
  }
- async function convert(host,input,type,{signal,maxDimension=2400,dimensions,timeoutMs=30000}={}){
+ async function convertOwned(host,input,type,{signal,maxDimension=2400,dimensions,timeoutMs=30000}={}){
   if(closed)throw Error('Image conversion is closing.');if(signal?.aborted)throw abort();
   if(!eligible(host)||!dimensions||type==='image/svg+xml'||input?.byteLength>50*1024*1024)return null;
   if(active)throw Error('An image conversion is already active.');
-  const state=await create(host);if(!state)return null;if(state.failed)throw state.failed;if(!state.installed||state.invalid||frame(host)!==state.frame)throw abort();
+  const state=await create(host);if(signal?.aborted||closed)throw abort();if(!state)return null;if(state.failed)throw state.failed;if(!state.installed||state.invalid||frame(host)!==state.frame)throw abort();
+  const outerSignal=signal,controller=new AbortController(),forward=()=>controller.abort();outerSignal?.addEventListener('abort',forward,{once:true});if(outerSignal?.aborted)forward();signal=controller.signal;
   const nonce=randomUUID(),scope='window['+JSON.stringify(state.key)+']';let timer,failure;
   const execute=state.execute,cancel=()=>{void execute(scope+'.cancel('+JSON.stringify(nonce)+')').catch(()=>{});};
-  const job={state,nonce,done:null};active=job;signal?.addEventListener('abort',cancel,{once:true});
+  const job={state,nonce,controller,done:null};active=job;signal?.addEventListener('abort',cancel,{once:true});
   const work=(async()=>{let value;try{
    timer=setTimeout(()=>{failure=Error('Image conversion timed out.');cancel();},timeoutMs);if(signal?.aborted)cancel();
    value=await executeBytes(code=>execute(code.replaceAll('window.NoteMindDocumentBytes',scope+'.bytes').replaceAll('window.documentTools',scope+'.tools('+JSON.stringify(nonce)+')')),'image',[input,type,false,maxDimension,dimensions],{signal});
    if(signal?.aborted||state.invalid)throw abort();if(failure)throw failure;return value;
-  }catch(error){const bytes=value?.data;if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)try{bytes.buffer.transfer?.(0)}catch{}if(signal?.aborted)throw abort();if(failure)throw failure;if(error?.code==='IMAGE_WORKER_UNSUPPORTED')return null;throw error;}finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel);try{if(state.invalid)await state.gone;else try{await execute(scope+'.drain('+JSON.stringify(nonce)+')')}catch(error){if(state.invalid)await state.gone;else throw error;}}finally{if(active===job)active=null;}}})();job.done=work;return work;
+  }catch(error){const bytes=value?.data;if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)try{bytes.buffer.transfer?.(0)}catch{}if(signal?.aborted)throw abort();if(failure)throw failure;if(error?.code==='IMAGE_WORKER_UNSUPPORTED')return null;throw error;}finally{clearTimeout(timer);outerSignal?.removeEventListener('abort',forward);signal.removeEventListener('abort',cancel);try{if(state.invalid)await state.gone;else try{await execute(scope+'.drain('+JSON.stringify(nonce)+')')}catch(error){if(state.invalid)await state.gone;else throw error;}}finally{if(active===job)active=null;}}})();job.done=work;return work;
  }
- async function stats(){const state=context;return{fixedContextOwner:state?{webContentsId:state.host.id,pid:state.pid,frame:state.frame,invalid:state.invalid,persistent:true}:null,active:!!active,inflightRPCs:state?.inflight.size||0,...state?.installed&&!state.invalid?await state.execute('window['+JSON.stringify(state.key)+'].stats()'):{}};}
- async function dispose(){closed=true;const job=active;if(job){void job.state.execute('window['+JSON.stringify(job.state.key)+'].cancel('+JSON.stringify(job.nonce)+')').catch(()=>{});await job.done?.catch(()=>{});}return stats();}
+ function convert(...args){if(closed)return Promise.reject(Error('Image conversion is closing.'));if(admission)return Promise.reject(Error('An image conversion is already active.'));const request={done:null};admission=request;request.done=convertOwned(...args).finally(()=>{if(admission===request)admission=null;});return request.done;}
+ async function stats(){const state=context;return{fixedContextOwner:state?{webContentsId:state.host.id,pid:state.pid,frame:state.frame,invalid:state.invalid,persistent:true}:null,active:!!admission,inflightRPCs:state?.inflight.size||0,...state?.installed&&!state.invalid?await state.execute('window['+JSON.stringify(state.key)+'].stats()'):{}};}
+ async function dispose(){closed=true;const request=admission;active?.controller.abort();await request?.done?.catch(()=>{});return stats();}
  return{convert,stats,dispose};
 }
 module.exports={createHostImageConverter};
