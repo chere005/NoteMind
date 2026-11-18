@@ -20,3 +20,13 @@ test('atomic admission owns installation and a held first upload through concurr
 
 test('private pixel mode validates exact byte geometry and consumes its output only after chunk ACK',async()=>{const client=createHostImageConverter(),host=owner({automatic:false}),work=client.convertPixels(host,Uint8Array.of(1),'image/png',{dimensions:{width:3,height:2}});await waitRequest(host);assert.equal(host.workers[0].requests[0].pixels,true);const output=host.reply(undefined,{bytes:new Uint8Array(24).fill(17),width:3,height:2,pixels:true});const result=await work;assert.equal(result.pixels,true);assert.equal(result.width,3);assert.equal(result.height,2);assert.deepEqual([...result.data],Array(24).fill(17));assert.equal(output.byteLength,0);assert.equal((await client.stats()).bytes,0);await client.dispose();host.close();});
 test('a missing or false private pixel geometry tag cannot be published as a PNG or RGBA success',async()=>{for(const requested of [false,true]){const client=createHostImageConverter(),host=owner({automatic:false}),work=(requested?client.convertPixels:client.convert)(host,Uint8Array.of(1),'image/png',options());work.catch(()=>{});await waitRequest(host);const output=host.reply(undefined,{pixels:!requested});await assert.rejects(work,/Invalid image conversion output/);assert.equal(output.byteLength,0);assert.equal((await client.stats()).bytes,0);await client.dispose();host.close();}});
+test('unconfirmed binary byte cleanup quarantines the owner until actual captured PID exit',async()=>{
+ let running=true;const client=createHostImageConverter({isAlive:()=>running,wait:task}),host=owner(),execute=host.executeJavaScript;
+ host.executeJavaScript=code=>code.includes('.bytes["release"]')?Promise.reject(Error('release RPC lost')):execute(code);
+ let done=false;const work=client.convert(host,Uint8Array.of(1),'image/jpeg',options()).finally(()=>done=true);work.catch(()=>{});
+ for(let at=0;at<100&&!(await client.stats()).fixedContextOwner?.invalid;at++)await task();
+ assert.equal(done,false);assert.equal((await client.stats()).fixedContextOwner.invalid,true);assert.equal((await client.stats()).active,true);assert.equal(host.lastOutput.byteLength,3,'unreleased renderer output is still charged');
+ await assert.rejects(client.convert(owner(),Uint8Array.of(2),'image/jpeg',options()),/already active/);
+ let closed=false;const closing=client.dispose().then(()=>closed=true);await task();assert.equal(closed,false);host.close();await task();assert.equal(done,false,'destroy event alone is insufficient');
+ running=false;await assert.rejects(work,/cleanup is unconfirmed/);await closing;assert.equal((await client.stats()).fixedContextOwner,null);
+});

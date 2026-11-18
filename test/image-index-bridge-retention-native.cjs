@@ -2,8 +2,9 @@
 require('./disable-native-pen.cjs');
 const{app,BrowserWindow}=require('electron'),fs=require('node:fs'),fsp=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{execFileSync}=require('node:child_process');
 const{executeBytes}=require('../src/document-worker-bytes.cjs'),makeBytes=require('../src/document-byte-tools.js'),{observeImageBridge}=require('./helpers/image-index-bridge-probe.cjs'),{ArchiveSource}=require('../src/archive-version-source.cjs');
-const root=path.resolve('src'),source=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),out=path.resolve('test-results/performance/image-index-bridge-'+source.slice(0,7)+'.json'),fixture=path.resolve(process.env.NOTEMIND_BRIDGE_FIXTURE||'/Users/example/GIT/NoteMind/test-results/performance-0.37/real-raster-fixture'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-index-bridge-'));
-const report={source,pid:process.pid,profile,scope:'Synthetic bridge-stage only: eight fresh varied17,280,000B owned outputs, original first8 canonical JPEG input traffic; no canvas/bitmap/OCR/App acceptance',versions:process.versions,limit:1024**3,rows:[],memory:[],files:{},ok:false};
+const binaryOutput=process.env.NOTEMIND_BRIDGE_BINARY_OUTPUT==='1';
+const root=path.resolve('src'),source=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),out=path.resolve('test-results/performance/image-index-bridge-'+source.slice(0,7)+(binaryOutput?'-binary':'')+'.json'),fixture=path.resolve(process.env.NOTEMIND_BRIDGE_FIXTURE||'/Users/example/GIT/NoteMind/test-results/performance-0.37/real-raster-fixture'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-index-bridge-'));
+const report={source,binaryOutput,pid:process.pid,profile,scope:'Synthetic bridge-stage only: eight fresh varied17,280,000B owned outputs, original first8 canonical JPEG input traffic; no canvas/bitmap/OCR/App acceptance',versions:process.versions,limit:1024**3,rows:[],memory:[],files:{},ok:false};
 for(const file of['document-worker-bytes.cjs','document-byte-tools.js'])report.files[file]=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex');
 fs.mkdirSync(path.dirname(out),{recursive:true});app.setPath('userData',profile);app.dock?.hide();app.on('window-all-closed',()=>{});
 require('./native-failure-exit.cjs').installNativeFailureExit({app,report:out,telemetry:report});
@@ -27,10 +28,10 @@ app.whenReady().then(async()=>{
   let input,output;const image=info.images[at],seed=(0x12345678+at*0x9e3779b9)>>>0;
   try{const entry=archive.files.get(image.name),value=await archive.read(entry);archive.verifyEntry(entry,value,manifest);input=value.bytes;if(input.length!==image.bytes||sha(input)!==image.sha256)throw Error('Canonical input bytes changed.');
    await win.webContents.executeJavaScript('window.__bridgeSeed='+seed);const authority=expected(seed),start=performance.now();
-   output=await executeBytes(code=>win.webContents.executeJavaScript(code.replaceAll('window.NoteMindDocumentBytes','window.fixture.bytes').replaceAll('window.documentTools','window.fixture.tools("synthetic")')), 'imagePixels',[input,'image/jpeg',false,2400,{width:1800,height:2400}]);
+   output=await executeBytes(code=>win.webContents.executeJavaScript(code.replaceAll('window.NoteMindDocumentBytes','window.fixture.bytes').replaceAll('window.documentTools','window.fixture.tools("synthetic")')), 'imagePixels',[input,'image/jpeg',false,2400,{width:1800,height:2400}],{binaryOutput});
    await win.webContents.executeJavaScript('window.fixture.drain("synthetic")');
    const actual=sha(output.data),stats=await win.webContents.executeJavaScript('window.fixture.stats()'),row={at,inputSHA:image.sha256,inputBytes:input.length,outputBytes:output.data.length,actual,authority,wallMs:performance.now()-start,stats};report.rows.push(row);
-   const retiredExpected=report.rows.reduce((sum,item)=>sum+2*item.inputBytes+item.outputBytes,0);if(stats.retired.bytes!==retiredExpected)throw Error('Renderer private backing retirement receipt changed.');
+   const retiredExpected=report.rows.reduce((sum,item)=>sum+2*item.inputBytes+item.outputBytes*(binaryOutput?2:1),0);if(stats.retired.bytes!==retiredExpected)throw Error('Renderer private backing retirement receipt changed.');
    if(actual!==authority||output.data.length!==17280000||stats.bytes.bytes||stats.bytes.sessions)throw Error('Byte bridge output or drain changed.');
   }finally{const receipt={at,inputBefore:input?.byteLength||0,outputBefore:output?.data?.byteLength||0};discard(input);discard(output?.data);receipt.inputAfter=input?.byteLength||0;receipt.outputAfter=output?.data?.byteLength||0;(report.mainRetirement||=[]).push(receipt);}
   report.probe={rows:probe.rows,totals:probe.snapshot()};memory();fs.writeFileSync(out,JSON.stringify({...report,inProgress:true},null,2)+'\n');
