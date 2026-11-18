@@ -348,6 +348,21 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const view = element.ownerDocument.defaultView ?? window
     const measure = () => {
       const rect = elementSize(element)
+      if (!(rect.width > 0 && rect.height > 0)) {
+        // A hidden stage has no pixels to preserve. Commit accepted contact in its old coordinates first.
+        if (size.current.width > 0 && size.current.height > 0) finishGesture.current()
+        if (frame.current !== null) cancelAnimationFrame(frame.current)
+        frame.current = null;paintVersion.current++
+        raster.current?.dispose();raster.current = null;rasterPending.current = false
+        context.current = null;canvasView.current = null;paintedInk.current = null;inkOwner.current = null
+        lastDense.current = false;extraDirty.current = [];everything.current = true
+        loadedBackdrop.current = null;paintedPaper.current = null
+        for (const layer of [canvas.current, backdrop.current, lineCanvas.current]) {
+          if (!layer) continue
+          if (layer.width !== 1) layer.width = 1
+          if (layer.height !== 1) layer.height = 1
+        }
+      }
       // All available paper is writable. Only the viewport expands: canonical ink and its history never stretch.
       const baseView = latest.current.page.fitViewport(rect)
       const sheetView = rect.width>0&&rect.height>0?precision.configure(baseView,rect,latest.current.page.aspect):baseView
@@ -357,7 +372,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       setFit((was) => (was.width === box.width && was.height === box.height
         && was.viewport.x === sheetView.x && was.viewport.y === sheetView.y && was.viewport.width === sheetView.width && was.viewport.height === sheetView.height ? was : box))
       setDpr(view.devicePixelRatio || 1)
-      schedule(true)
+      if (rect.width > 0 && rect.height > 0) schedule(true)
     }
     measure()
     // The sheet's shape follows the tablet's orientation.
@@ -394,12 +409,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   useLayoutEffect(() => {
     const file = page.backdrop
-    if (!file) return
+    if (!file || !(fit.width > 0 && fit.height > 0)) return
     return watchBackdrop(file, image => {
-      if (latest.current.page !== page || latest.current.page.backdrop !== file) return
+      if (latest.current.page !== page || latest.current.page.backdrop !== file || !(size.current.width > 0 && size.current.height > 0)) return
       loadedBackdrop.current = { file, image };setBackdropTick(n => n + 1)
     })
-  }, [page, page.backdrop])
+  }, [page, page.backdrop, fit.width > 0 && fit.height > 0])
 
   // The paper, on its own canvas under the ink: painted when the paper, the sheet's size or the display's scale changes (never per stroke).
   useLayoutEffect(() => {
