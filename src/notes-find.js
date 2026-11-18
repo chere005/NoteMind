@@ -14,9 +14,23 @@
  // The [start,end) spans of the query in `text`, honouring match case and whole word.
  function scan(text){
   const found=[],query=input.value;if(!query)return found;
-  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase(),starts=[],ends=[];let offset=0;
-  if(!options.matchCase)for(const character of text){const length=character.toLocaleLowerCase().length;for(let i=0;i<length;i++){starts.push(offset);ends.push(offset+character.length);}offset+=character.length;}
-  let from=0,at;while((at=hay.indexOf(needle,from))>=0){const stop=at+needle.length,start=options.matchCase?at:starts[at],end=options.matchCase?stop:ends[stop-1];let before=start-1;if(before>0&&/[\uDC00-\uDFFF]/.test(text[before]))before--;const left=start>0?text.slice(before,start):'',right=end<text.length?String.fromCodePoint(text.codePointAt(end)):'';
+  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase(),blocks=[];let mapped=0;
+  // BMP characters with unchanged lowercase width keep their source offsets.
+  // Only expansions and surrogate pairs need records; ASCII needs no map.
+  if(!options.matchCase&&/[^\x00-\x7f]/.test(text)){
+   let offset=0,lower=0;
+   for(const character of text){const length=character.toLocaleLowerCase().length;
+    if(character.length!==1||length!==1){const block=mapped>>>10,at=(mapped&1023)*4;blocks[block] ||=new Uint32Array(4096);blocks[block][at]=lower;blocks[block][at+1]=lower+length;blocks[block][at+2]=offset;blocks[block][at+3]=offset+character.length;mapped++;}
+    offset+=character.length;lower+=length;
+   }
+  }
+  function sourceOffset(position,end=false){
+   if(!mapped)return position+Number(end);let low=0,high=mapped;
+   while(low<high){const middle=(low+high)>>>1,block=blocks[middle>>>10],at=(middle&1023)*4;if(block[at]<=position)low=middle+1;else high=middle;}
+   if(!low)return position+Number(end);const index=low-1,block=blocks[index>>>10],at=(index&1023)*4;
+   return position<block[at+1]?block[at+(end?3:2)]:position+Number(end)+block[at+3]-block[at+1];
+  }
+  let from=0,at;while((at=hay.indexOf(needle,from))>=0){const stop=at+needle.length,start=options.matchCase?at:sourceOffset(at),end=options.matchCase?stop:sourceOffset(stop-1,true);let before=start-1;if(before>0&&/[\uDC00-\uDFFF]/.test(text[before]))before--;const left=start>0?text.slice(before,start):'',right=end<text.length?String.fromCodePoint(text.codePointAt(end)):'';
    if((!options.wholeWord||(!word.test(left)&&!word.test(right)))&&!(found.at(-1)?.[0]===start&&found.at(-1)?.[1]===end))found.push([start,end]);from=stop;}
 
   return found;
