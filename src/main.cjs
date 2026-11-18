@@ -112,6 +112,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   const recentFiles=[],recentProjects=[];
   const recentMenu=(list,open)=>list.length?[...list.map(file=>({label:path.basename(file),sublabel:path.dirname(file),click:()=>open(file)})),{type:'separator'},{label:'Clear Menu',click:()=>projectService.recents.clear()}]:[{label:'No Recent Items',enabled:false}];
+  const commands=(items,prefix='')=>items.map(([id,label])=>({label,click:command(prefix+id)}));
   const buildMenu=()=>Menu.setApplicationMenu(Menu.buildFromTemplate([
 
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
@@ -133,18 +134,45 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
       {label:'Close Window',click:()=>win.close()},
     ]},
 
-    {label:'Projects',submenu:[{label:'New Project…',accelerator:'CmdOrCtrl+Shift+N',click:command('projectNew')},{label:'Open Project…',click:command('projectOpen')},{label:'Open Recent',submenu:recentMenu(recentProjects,file=>projectService.open(file).then(project=>win?.webContents.send('workspace:open',project)).catch(error=>dialog.showErrorBox('Open Project',error.message)))},{label:'Open Default Workspace',click:command('projectDefault')},{type:'separator'},{label:'Save Project As…',click:command('projectSaveAs')},{label:'Rename Project…',click:command('projectRename')},{label:'Project Menu…',click:command('projectMenu')},{label:'Open Project in New Window',click:command('workspaceWindow')},{type:'separator'},{label:'Add Folder…',accelerator:'CmdOrCtrl+Shift+A',click:command('chooseFolder')},{label:'Add Files…',click:command('projectAddFiles')}]},
+    {label:'Projects',submenu:[{label:'New Project…',accelerator:'CmdOrCtrl+Shift+N',click:command('projectNew')},{label:'Open Project…',click:command('projectOpen')},{label:'Open Recent',submenu:recentMenu(recentProjects,file=>projectService.open(file).then(project=>win?.webContents.send('workspace:open',project)).catch(error=>dialog.showErrorBox('Open Project',error.message)))},{label:'Open Default Workspace',click:command('projectDefault')},{type:'separator'},{label:'Save Project As…',click:command('projectSaveAs')},{label:'Rename Project…',click:command('projectRename')},{label:'Open Project in New Window',click:command('workspaceWindow')},{type:'separator'},{label:'Add Folder…',accelerator:'CmdOrCtrl+Shift+A',click:command('chooseFolder')},{label:'Add Files…',click:command('projectAddFiles')}]},
 
     { label: 'Edit', submenu: [{label:'Undo',accelerator:'CmdOrCtrl+Z',click:command('undoText')}, {label:'Redo',accelerator:process.platform==='darwin'?'CmdOrCtrl+Shift+Z':'Ctrl+Y',click:command('redoText')},{label:'Undo File Action',click:command('undoFile')},{label:'Redo File Action',click:command('redoFile')}, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },{type:'separator'},{label:'Find in Notepad',accelerator:'CmdOrCtrl+F',click:command('findNote')},{label:'Find and Replace…',accelerator:process.platform==='darwin'?'Alt+Cmd+F':'Ctrl+H',click:command('findReplace')},{label:'Find Next',accelerator:'F3',click:command('findNext')},{label:'Find Previous',accelerator:'Shift+F3',click:command('findPrevious')},{label:'Use Selection for Find',accelerator:'CmdOrCtrl+E',click:command('findSelection')},{label:'Search Notepads',accelerator:'CmdOrCtrl+Shift+F',click:command('searchNotepads')}] },
 
     { label: 'Format', submenu: formatMenu },
     { label: 'View', submenu: [{ label: 'Toggle Notepads Sidebar', click: command('sidebarToggle') }, { label: 'Rendered Page', click: command('visual') }, { label: 'Markdown Source', click: command('markdown') }, { label: 'Toggle Capture Pane', accelerator:'CmdOrCtrl+Shift+Y',click: command('paneToggle') }, { type: 'separator' }, { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: command('zoomReset') }, { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: command('zoomIn') }, { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: command('zoomOut') }, { label:'Toggle Editor Pane',click:command('toggleEditor') }] },
 
-    {label:'Drawing',submenu:[['undo','Undo Drawing'],['redo','Redo Drawing'],['toggleErase','Erase Tool'],['toggleSelect','Select Tool'],['togglePenDraws','Pen Always Draws'],['nextColour','Next Colour'],['prevColour','Previous Colour'],['wider','Wider Line'],['thinner','Thinner Line'],['deleteSelection','Delete Selection'],['clearSelection','Clear Selection'],['sendWriting','Send Drawing'],['sendPage','Send Picture'],['clearSheet','Clear Sheet'],['nextSheet','Next Sheet'],['prevSheet','Previous Sheet']].map(([id,label])=>({label,click:command('pen:'+id)}))},
+    {label:'Drawing',submenu:[
+      ...commands([['undo','Undo Drawing'],['redo','Redo Drawing']],'pen:'),
+      {type:'separator'},
+      {label:'Tools',submenu:[
+        ...commands([['toggleErase','Erase Tool'],['toggleSelect','Select Tool'],['togglePenDraws','Pen Always Draws']],'pen:'),
+        {type:'separator'},
+        ...commands([['nextColour','Next Colour'],['prevColour','Previous Colour'],['wider','Wider Line'],['thinner','Thinner Line']],'pen:'),
+        {type:'separator'},
+        ...commands([['deleteSelection','Delete Selection'],['clearSelection','Clear Selection']],'pen:'),
+      ]},
+      {label:'Sheets',submenu:[
+        ...commands([['nextSheet','Next Sheet'],['prevSheet','Previous Sheet']],'pen:'),
+        {type:'separator'},
+        {label:'Clear Page',click:command('pen:clearSheet')},
+      ]},
+      {label:'Insert',submenu:commands([['sendWriting','Writing'],['sendPage','Picture']],'pen:')},
+      {type:'separator'},
+      {label:'Tablet Settings…',click:command('penSettings')},
+    ]},
 
-    {label:'Capture',submenu:[{label:'Drawing',click:command('source:tablet')},{label:'Camera',click:command('source:camera')},{label:'Turn Input Off',click:command('inputOff')},{label:'Tablet Settings…',click:command('penSettings')},{label:'Refresh Device List',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},{label:'Aspect Ratio',submenu:[['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']].map(([value,label])=>({label,click:command('cameraAspect:'+value)}))}]},
+    {label:'Capture',submenu:[
+      ...commands([['source:tablet','Drawing'],['source:camera','Camera'],['inputOff','Turn Input Off']]),
+      {type:'separator'},
+      {label:'Refresh Cameras',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},
+      {label:'Camera Aspect Ratio',submenu:commands([['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']],'cameraAspect:')},
+    ]},
 
-    {label:'Notepad',submenu:[['writingTools','Formatting Options…'],['noteInfo','Tags and Pin…'],['attachments','Attachments…'],['attachFiles','Attach Files…'],['scanPages','Multipage Scan…'],['insertNoteLink','Link to Notepad…'],['indexImages','Read Images for Search'],['library','All Notepads…'],['smartFolders','Smart Folders…'],['versions','Version History…'],['recentlyDeleted','Recently Deleted…']].map(([id,label])=>({label,click:command(id)}))},
+    {label:'Notepad',submenu:[
+      ...commands([['noteInfo','Tags and Pin…'],['attachments','Attachments…'],['attachFiles','Attach Files…'],['scanPages','Multipage Scan…'],['insertNoteLink','Link to Notepad…'],['indexImages','Read Images for Search'],['versions','Version History…']]),
+      {type:'separator'},
+      {label:'Library',submenu:commands([['library','All Notepads…'],['smartFolders','Smart Folders…'],['recentlyDeleted','Recently Deleted…']])},
+    ]},
 
     { label: 'Tools', submenu: [{ label: 'Run Python', accelerator: 'F5', click: command('run') },{label:'Stop Python',click:()=>stopPython()},{label:'Python Interpreter…',click:command('pythonSetup')},{type:'separator'},{label:'Clean Up Unused Images…',click:command('cleanAssets')}] },
 

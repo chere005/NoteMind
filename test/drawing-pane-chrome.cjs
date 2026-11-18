@@ -61,11 +61,44 @@ app.once('browser-window-created', (_, window) => {
       })()`);
 
       let state = await layout();
-      const nativeLabels = name => Menu.getApplicationMenu().items.find(item => item.label === name).submenu.items.map(item => item.label);
-      assert.ok(!nativeLabels('Capture').some(label => label.includes('Wacom Screen')));
+      const nativeItem = (...labels) => labels.reduce((menu, label) => menu.submenu.items.find(item => item.label === label),
+        { submenu: Menu.getApplicationMenu() });
+      const nativeLabels = (...labels) => nativeItem(...labels).submenu.items.filter(item => item.type !== 'separator').map(item => item.label);
+      assert.deepEqual(nativeLabels('Drawing'), ['Undo Drawing', 'Redo Drawing', 'Tools', 'Sheets', 'Insert', 'Tablet Settings…']);
+      assert.deepEqual(nativeLabels('Drawing', 'Tools'), ['Erase Tool', 'Select Tool', 'Pen Always Draws', 'Next Colour', 'Previous Colour',
+        'Wider Line', 'Thinner Line', 'Delete Selection', 'Clear Selection']);
+      assert.deepEqual(nativeLabels('Drawing', 'Sheets'), ['Next Sheet', 'Previous Sheet', 'Clear Page']);
+      assert.deepEqual(nativeLabels('Drawing', 'Insert'), ['Writing', 'Picture']);
+      assert.deepEqual(nativeLabels('Capture'), ['Drawing', 'Camera', 'Turn Input Off', 'Refresh Cameras', 'Camera Aspect Ratio']);
+      assert.equal(nativeItem('Capture', 'Refresh Cameras').accelerator, 'CmdOrCtrl+Alt+R');
+      assert.deepEqual(nativeLabels('Capture', 'Camera Aspect Ratio'), ['Free', '4:3', '16:9', 'Square']);
+      assert.deepEqual(nativeLabels('Notepad', 'Library'), ['All Notepads…', 'Smart Folders…', 'Recently Deleted…']);
+      assert.ok(!nativeLabels('Notepad').includes('Formatting Options…'));
+      assert.ok(!nativeLabels('Projects').includes('Project Menu…'));
+      assert.ok(await js(`!!document.querySelector('#projectMenu') && !!document.querySelector('#writingTools')`));
       assert.ok(nativeLabels('File').includes('Close Window') && !nativeLabels('Window').includes('Close Window'));
       assert.ok(nativeLabels('Window').includes('Zoom Window'));
       assert.ok(nativeLabels('Help').includes('Welcome Screen') && !nativeLabels('File').includes('Welcome'));
+
+      // Follow clicks through the live menu, IPC and preload without opening unrelated panes.
+      await js(`{
+        window.checkedNativeCommands = [];
+        const record = event => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          window.checkedNativeCommands.push(event.detail);
+          if (window.checkedNativeCommands.length === 5) window.removeEventListener('notemind-command', record, true);
+        };
+        window.addEventListener('notemind-command', record, true);
+      }`);
+      for (const route of [['Drawing', 'Tools', 'Erase Tool'], ['Drawing', 'Insert', 'Picture'], ['Drawing', 'Tablet Settings…'],
+        ['Capture', 'Camera Aspect Ratio', '4:3'], ['Notepad', 'Library', 'Smart Folders…']]) {
+        const item = nativeItem(...route);
+        item.click(item, window, {});
+      }
+      await tick();
+      assert.deepEqual(await js('window.checkedNativeCommands'), ['pen:toggleErase', 'pen:sendPage', 'penSettings', 'cameraAspect:1.3333333333333333', 'smartFolders']);
+
       assert.equal(state.overlay, false, 'The drawing sheet has no floating precision controls');
       assert.equal(state.oldOptions, false, 'The pen toolbar has no drawing options button');
       assert.ok(state.aligned, 'The drawing and Notepad menus align in the top row');
