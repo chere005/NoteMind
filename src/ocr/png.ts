@@ -106,9 +106,9 @@ export function decodePng(bytes: Uint8Array): Rgba {
   let data: Uint8Array
   try { data = inflateSync(compressed, { maxOutputLength: expected }) } finally { retire(compressed) }
   if (data.length !== expected) { retire(data, true); throw new Error("PNG: incomplete image data") }
-  let out: Uint8Array | undefined
+  let ownedOutput: Uint8Array | undefined
   try {
-  out = new Uint8Array(width * height * 4)
+  const out = ownedOutput = new Uint8Array(width * height * 4)
   const max = (1 << Math.min(depth, 8)) - 1
 
   
@@ -171,5 +171,5 @@ export function decodePng(bytes: Uint8Array): Rgba {
     }
   }
   return { width, height, data: out }
-  } catch (error) { retire(out); throw error } finally { retire(data, true) }
+  } catch (error) { retire(ownedOutput); throw error } finally { retire(data, true) }
 }
