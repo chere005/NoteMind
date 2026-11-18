@@ -1,5 +1,6 @@
 // Main stages immutable media in bounded private spools; live document assets stay unchanged.
 const fs = require("node:fs/promises"), path = require("node:path"), os = require("node:os"), { createHash } = require("node:crypto");
+const {isMarkedAsUntransferable}=require('node:worker_threads');
 const { imageSize } = require("image-size"), { isRawAsset } = require("./archive-raw-assets.cjs"), { ENTRY_BYTES, TOTAL_BYTES } = require("./archive-limits.cjs");
 const CHUNK = 196608, WORKING = 256 * 1024 * 1024, MAX_PIXELS = 64 * 1024 * 1024, MAX_OUTPUT_PIXELS = 16 * 1024 * 1024;
 const abort = () => Object.assign(Error("Word export cancelled."), { name: "AbortError" }), check = (signal) => {
@@ -59,27 +60,31 @@ function dimensions(header) {
 async function spool(value, file, storage, signal, {handle:borrowedHandle}={}) {
   let bytes = isRawAsset(value) ? value.bytes : ArrayBuffer.isView(value) ? value.byteLength : typeof value === "string" ? value.length / 4 * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0) : NaN;
   if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > ENTRY_BYTES) throw Error("Word images must be at most 50 MiB.");
-  const handle = borrowedHandle||await fs.open(file, "wx", 384), hash = createHash("sha256"), header = Buffer.allocUnsafe(Math.min(bytes, 1024 * 1024));
+  const handle = borrowedHandle||await fs.open(file, "wx", 384), hash = createHash("sha256"), header = Buffer.allocUnsafeSlow(Math.min(bytes, 1024 * 1024));
   let at = 0;
   try {
     while (at < bytes) {
       check(signal);
-      const end = Math.min(bytes, at + CHUNK), part = isRawAsset(value) ? await storage.readRawAsset(value, { offset: at, length: end - at }) : ArrayBuffer.isView(value) ? Buffer.from(value.buffer, value.byteOffset + at, end - at) : Buffer.from(value.slice(at / 3 * 4, Math.min(value.length, (at + CHUNK) / 3 * 4)), "base64");
-      if (part.length !== end - at) throw Error("Word image source changed.");
-      if (at < header.length) Buffer.from(part.buffer, part.byteOffset, Math.min(part.length, header.length - at)).copy(header, at);
-      hash.update(part);
-      await write(handle, part);
+      const end = Math.min(bytes, at + CHUNK), raw=isRawAsset(value), ownedRaw=raw&&typeof storage.readOwnedRawAsset==='function';let part;
+      try{
+        part=raw?await(ownedRaw?storage.readOwnedRawAsset(value,{offset:at,length:end-at}):storage.readRawAsset(value,{offset:at,length:end-at})):ArrayBuffer.isView(value)?Buffer.from(value.buffer,value.byteOffset+at,end-at):Buffer.from(value.slice(at/3*4,Math.min(value.length,(at+CHUNK)/3*4)),"base64");
+        check(signal);
+        if (part.length !== end - at) throw Error("Word image source changed.");
+        if (at < header.length) Buffer.from(part.buffer, part.byteOffset, Math.min(part.length, header.length - at)).copy(header, at);
+        hash.update(part);
+        await write(handle, part);
+      }finally{if(ownedRaw||!raw&&!ArrayBuffer.isView(value))discard(part);}
       at = end;
       await task();
     }
     const stat = await handle.stat({ bigint: true }), sha256 = hash.digest("hex");
     return { file, bytes, sha256, identity: require("./word-file.cjs").identity(stat), info: dimensions(header) };
   } finally {
-    if(!borrowedHandle)await handle.close();
+    try{if(!borrowedHandle)await handle.close();}finally{discard(header);}
   }
 }
 function discard(bytes) {
-  if (bytes?.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && typeof bytes.buffer.transfer === "function") bytes.buffer.transfer(0);
+  if (bytes?.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && !isMarkedAsUntransferable?.(bytes.buffer) && typeof bytes.buffer.transfer === "function") bytes.buffer.transfer(0);
 }
 async function exportInScope(doc, file, options, services, expected) {
   const { storage, convertImageFile } = services, controller = new AbortController(), links = [], link = (signal2) => {
