@@ -134,9 +134,15 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     const element = canvas.current
     const { view: v, page: p } = latest.current
     if (!element) return
-    // Hiding a pane can briefly report a zero stage before the next measured
-    // layout. Keep its accepted pixels until a real view can be projected.
-    if(latest.current.on&&p&&(!v.size.width||!v.size.height))return
+    // A hidden/off camera owns no viewport pixels. The layout effect still
+    // finishes an accepted contact on its original page before the next paint.
+    if(!latest.current.on||!p||!v.size.width||!v.size.height){
+      paintVersion.current++;renderer.current?.dispose();renderer.current=null
+      context.current=null;painted.current=null;everything.current=true
+      if(element.width!==1)element.width=1
+      if(element.height!==1)element.height=1
+      return
+    }
     const ratio = Math.min(element.ownerDocument.defaultView?.devicePixelRatio||1,8192/Math.max(1,v.size.width),8192/Math.max(1,v.size.height),Math.sqrt(16*1024*1024)/Math.sqrt(Math.max(1,v.size.width))/Math.sqrt(Math.max(1,v.size.height)))
     const w = Math.max(1, Math.floor(v.size.width * ratio)), h = Math.max(1, Math.floor(v.size.height * ratio))
     const plan=latest.current.on&&p?cameraRasterPlan(v,ratio):null,previous=painted.current,newMatrix=plan?multiply(plan.workerToDevice,plan.canonicalToWorker):null
@@ -162,7 +168,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
         return
       }
       const strokes=preview||p.strokes,source=p.strokes,version=++paintVersion.current
-      const valid=()=>version===paintVersion.current&&latest.current.page===p&&latest.current.on&&p.strokes===source&&(!gesture.current||(gesture.current.kind==='erase'&&gesture.current.preview===strokes))&&(!hasPendingInkMutations(p)||gesture.current?.kind==='erase'&&gesture.current.preview===strokes)
+      const valid=()=>version===paintVersion.current&&latest.current.page===p&&latest.current.on&&latest.current.view.size.width>0&&latest.current.view.size.height>0&&p.strokes===source&&(!gesture.current||(gesture.current.kind==='erase'&&gesture.current.preview===strokes))&&(!hasPendingInkMutations(p)||gesture.current?.kind==='erase'&&gesture.current.preview===strokes)
       if(strokes.length>4096||p.currentGeometryPoints>20000){
         renderer.current ||=new CameraInkRenderer()
         renderer.current.request({page:p,strokes,ownerStrokes:source,view:v,ratio,valid},(result,output,current)=>{
