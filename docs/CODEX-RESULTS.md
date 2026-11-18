@@ -30,3 +30,8 @@
 - The isolated four-input quality pair completed. Text and geometry matched on all four inputs. Confidence checks accounted for the native pair's exit 1.
 - The six focused Node test files passed all 33 cases.
 - The dated result with timings and corpus details is in `docs/OCR-NATIVE-FEASIBILITY.md`.
+
+## Task 5 — Stroke kinds
+- Wrote the stroke inventory, format changes, 0.39.0 compatibility, and commit-by-commit tests in `docs/STROKE-KIND-PLAN.md`.
+- `rg -l colorHex src` matched 21 files. All appear in the plan's table. The plan is 58 lines.
+- The task changed only the Markdown plan and this report.
