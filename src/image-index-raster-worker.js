@@ -12,16 +12,23 @@
   try{
    check();
    blob=new Blob([packet.bytes],{type:packet.type});
+   // Blob snapshots its byte source synchronously; the transferred input has
+   // no later reader, even while native decoding is still in progress.
+   if(!discard(packet.bytes))throw Object.assign(Error('Image input backing could not be released.'),{resourcesReleased:false});
+   packet.bytes=null;
    if(dimensions){
     if(!Number.isFinite(dimensions.width)||dimensions.width<=0||!Number.isFinite(dimensions.height)||dimensions.height<=0||dimensions.width>1000000||dimensions.height>1000000)throw Error('Invalid image dimensions.');
     const scale=Math.min(1,limit/Math.max(dimensions.width,dimensions.height));
     try{image=await scope.createImageBitmap(blob,{resizeWidth:Math.max(1,Math.round(dimensions.width*scale)),resizeHeight:Math.max(1,Math.round(dimensions.height*scale)),resizeQuality:'high'})}catch{}
    }
-   check();if(!image)try{image=await scope.createImageBitmap(blob)}catch{throw unsupported()}check();
+   check();if(!image)try{image=await scope.createImageBitmap(blob)}catch{throw unsupported()}blob=null;check();
    const scale=Math.min(1,limit/Math.max(image.width,image.height)),width=Math.max(1,Math.round(image.width*scale)),height=Math.max(1,Math.round(image.height*scale));
    canvas=new scope.OffscreenCanvas(width,height);canvas.getContext('2d',{willReadFrequently:true}).drawImage(image,0,0,width,height);image.close();image=null;check();
    output=await canvas.convertToBlob({type:'image/png'});
-   check();resultBytes=await output.arrayBuffer();check();
+   // The completed immutable PNG owns its encoding. End the independent
+   // raster surface before allocating the response's encoded-byte backing.
+   canvas.width=0;canvas.height=0;canvas=null;
+   check();resultBytes=await output.arrayBuffer();output=null;check();
    if(resultBytes.byteLength>50*1024*1024)throw Error('Image conversion exceeds its output limit.');
    published=true;return{bytes:resultBytes,width,height};
   }finally{
