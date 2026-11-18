@@ -1,5 +1,6 @@
 // Word-private inline storage keeps the installed Markdown rules without a Token object per fragment.
 const {linkMatches} = require('./word-link-matches.cjs');
+const packedPostRules = new Map(new (require('markdown-it'))().inline.ruler2.__rules__.filter(rule => ['balance_pairs','emphasis','strikethrough','fragments_join'].includes(rule.name)).map(rule => [rule.name, rule.fn]));
 const PAGE = 8192, ROW = Symbol('word inline row'), childPackets = new WeakMap(), owners = new WeakMap();
 class Strings {
   constructor() { this.values = ['']; this.short = new Map([['', 0]]); }
@@ -129,6 +130,7 @@ class Delimiters {
     this.listId.release();
   }
   at(id, i) { this.touch(); if (i < 0 || i >= this.count.get(id)) return undefined; const row = this.noncontiguous.get(id) ? this.order[this.offset.get(id) + i] : this.first.get(id) + i; return this.cache.get(row, () => new DelimiterView(this, row)); }
+  rowAt(id, i) { return this.noncontiguous.get(id) ? this.order[this.offset.get(id) + i] : this.first.get(id) + i; }
   list(id) { return this.listCache.get(id, () => new Proxy([], {get: (_target,key) => key === 'length' ? this.count.get(id) : isIndex(key) ? this.at(id, Number(key)) : undefined})); }
   get typedBytes() { return ['marker','length','token','end','flags','listId','first','count','last','noncontiguous','offset'].reduce((sum,key) => sum + this[key].bytes, this.order?.byteLength || 0); }
 }
@@ -153,7 +155,7 @@ function parseInline(text, md, env, {check = () => {}, onStats} = {}) {
   localInline.parse = (source, _md, childEnv, out) => { if (source.length < 32768) { md.inline.parse(source, md, childEnv, out); return; } const children = parseInline(source, md, childEnv, {check}); childPackets.set(out, children); };
   const state = new md.inline.State(text, localMD, env, tokens.tokens);
   const stack = []; let current = delimiters.makeList(); state.delimiters = current.list;
-  state.tokens_meta = new Proxy([], {get: (_target,key) => { if (key === 'length') return metaLength; if (isIndex(key)) { const id = metaLists.get(Number(key)); return id ? {delimiters: delimiters.list(id)} : undefined; } return undefined; }});
+  const packedMeta = state.tokens_meta = new Proxy([], {get: (_target,key) => { if (key === 'length') return metaLength; if (isIndex(key)) { const id = metaLists.get(Number(key)); return id ? {delimiters: delimiters.list(id)} : undefined; } return undefined; }});
   state.pushPending = function () { const token = tokens.create('text','',0); token.content = this.pending; token.level = this.pendingLevel; tokens.push(token); this.pending = ''; return token; };
   state.push = function (type, tag, nesting) {
     if (this.pending) this.pushPending();
@@ -169,7 +171,7 @@ function parseInline(text, md, env, {check = () => {}, onStats} = {}) {
   let complete = false;
   try {
   localInline.tokenize(state); tokens.flushAttrs(); delimiters.seal();
-  for (const rule of md.inline.ruler2.__rules__.filter(rule => rule.enabled)) { check(); if (rule.name === 'balance_pairs') balancePairs(state, check); else if (rule.name === 'fragments_join') joinText(tokens.tokens, {levels: true, check}); else rule.fn(state); }
+  for (const rule of md.inline.ruler2.__rules__.filter(rule => rule.enabled)) { check(); const direct = packedPostRules.get(rule.name) === rule.fn && state.tokens === tokens.tokens && state.tokens_meta === packedMeta && state.delimiters === current.list; if (!direct) rule.fn(state); else if (rule.name === 'balance_pairs') balancePairs(delimiters, current.id(), metaLists, metaLength, check); else if (rule.name === 'fragments_join') joinText(tokens.tokens, {levels: true, check}); else postProcessPairs(tokens, delimiters, current.id(), metaLists, metaLength, rule.name, check); }
   tokens.flushAttrs(); check(); onStats?.({inlineTokens: tokens.count, inlineRows: tokens.rows, inlineTypedBytes: tokens.typedBytes, delimiterRows: delimiters.rows, delimiterTypedBytes: delimiters.typedBytes, cacheBytes: positions.bytes});
   complete = true; return tokens.tokens;
   } finally {
@@ -180,34 +182,62 @@ function parseInline(text, md, env, {check = () => {}, onStats} = {}) {
   }
 }
 // Same Markdown delimiter pairing, with a fixed-width jump ledger rather than an expanding number array.
-function balancePairs(state, check) {
-  const process = delimiters => {
-    const max = delimiters.length; if (!max) return;
+function eachDelimiterList(pool, root, meta, length, check, process) {
+  process(root);
+  for (let i = 0; i < length; i++) { if (i % 4096 === 0) check(); const id = meta.get(i); if (id) process(id); }
+}
+function balancePairs(pool, root, meta, length, check) {
+  let work = 0;
+  const touch = () => { if (++work % 4096 === 0) check(); };
+  const process = id => {
+    const max = pool.count.get(id); if (!max) return;
     const bottom = Object.create(null), jumps = new Uint32Array(max); let header = 0, last = -2;
     try{for (let closerAt = 0; closerAt < max; closerAt++) {
-      if (closerAt % 4096 === 0) check();
-      const closer = delimiters[closerAt];
-      if (delimiters[header].marker !== closer.marker || last !== closer.token - 1) header = closerAt;
-      last = closer.token; closer.length = closer.length || 0;
-      if (!closer.close) continue;
-      const limits = bottom[closer.marker] ||= [-1,-1,-1,-1,-1,-1], min = limits[(closer.open ? 3 : 0) + closer.length % 3];
+      touch();
+      const closer = pool.rowAt(id, closerAt), marker = pool.marker.get(closer), token = pool.token.get(closer), closerLength = pool.length.get(closer), flags = pool.flags.get(closer);
+      if (pool.marker.get(pool.rowAt(id, header)) !== marker || last !== token - 1) header = closerAt;
+      last = token;
+      if (!(flags & 2)) continue;
+      const limits = bottom[marker] ||= [-1,-1,-1,-1,-1,-1], min = limits[(flags & 1 ? 3 : 0) + closerLength % 3];
       let openerAt = header - jumps[header] - 1, newMin = openerAt;
       for (; openerAt > min; openerAt -= jumps[openerAt] + 1) {
-        const opener = delimiters[openerAt]; if (opener.marker !== closer.marker) continue;
-        if (opener.open && opener.end < 0) {
-          const odd = (opener.close || closer.open) && (opener.length + closer.length) % 3 === 0 && (opener.length % 3 !== 0 || closer.length % 3 !== 0);
+        touch(); const opener = pool.rowAt(id, openerAt); if (pool.marker.get(opener) !== marker) continue;
+        const openerFlags = pool.flags.get(opener), openerLength = pool.length.get(opener);
+        if ((openerFlags & 1) && !pool.end.get(opener)) {
+          const odd = ((openerFlags & 2) || (flags & 1)) && (openerLength + closerLength) % 3 === 0 && (openerLength % 3 !== 0 || closerLength % 3 !== 0);
           if (!odd) {
-            const jump = openerAt > 0 && !delimiters[openerAt - 1].open ? jumps[openerAt - 1] + 1 : 0;
+            const jump = openerAt > 0 && !(pool.flags.get(pool.rowAt(id, openerAt - 1)) & 1) ? jumps[openerAt - 1] + 1 : 0;
             jumps[closerAt] = closerAt - openerAt + jump; jumps[openerAt] = jump;
-            closer.open = false; opener.end = closerAt; opener.close = false; newMin = -1; last = -2; break;
+            pool.flags.set(closer, flags & ~1); pool.end.set(opener, closerAt + 1); pool.flags.set(opener, openerFlags & ~2); newMin = -1; last = -2; break;
           }
         }
       }
-      if (newMin !== -1) limits[(closer.open ? 3 : 0) + (closer.length || 0) % 3] = newMin;
+      if (newMin !== -1) limits[(pool.flags.get(closer) & 1 ? 3 : 0) + closerLength % 3] = newMin;
     }}finally{discard(jumps.buffer);}
   };
-  process(state.delimiters);
-  for (let i = 0; i < state.tokens_meta.length; i++) { if (i % 4096 === 0) check(); const list = state.tokens_meta[i]?.delimiters; if (list) process(list); }
+  eachDelimiterList(pool, root, meta, length, check, process);
+}
+// The installed emphasis/strike passes operate on the same compact rows. A
+// replaced extension rule still receives the ordinary compatible state views.
+function postProcessPairs(tokens, pool, root, meta, length, kind, check) {
+  const strike = kind === 'strikethrough';
+  const rewrite = (at, type, name, nesting) => { const row = tokens.order.get(at); tokens.type.set(row, tokens.name(type)); tokens.tag.set(row, tokens.name(name)); tokens.nesting.set(row, nesting); tokens.content.set(row, 0); };
+  const process = id => {
+    const max = pool.count.get(id), lone = new Column(Uint32Array); let count = 0;
+    try {
+      for (let i = strike ? 0 : max - 1; strike ? i < max : i >= 0; strike ? i++ : i--) {
+        if (i % 4096 === 0) check(); const start = pool.rowAt(id, i), marker = pool.marker.get(start), endAt = pool.end.get(start) - 1;
+        if ((strike ? marker !== 126 : marker !== 95 && marker !== 42) || endAt < 0) continue;
+        const end = pool.rowAt(id, endAt), startToken = pool.token.get(start), endToken = pool.token.get(end), previous = i > 0 ? pool.rowAt(id, i - 1) : -1;
+        const strong = !strike && i > 0 && pool.end.get(previous) - 1 === endAt + 1 && pool.marker.get(previous) === marker && pool.token.get(previous) === startToken - 1 && pool.token.get(pool.rowAt(id, endAt + 1)) === endToken + 1;
+        rewrite(startToken, strike ? 's_open' : strong ? 'strong_open' : 'em_open', strike ? 's' : strong ? 'strong' : 'em', 1); rewrite(endToken, strike ? 's_close' : strong ? 'strong_close' : 'em_close', strike ? 's' : strong ? 'strong' : 'em', -1);
+        if (strong) { tokens.content.set(tokens.order.get(pool.token.get(previous)), 0); tokens.content.set(tokens.order.get(pool.token.get(pool.rowAt(id, endAt + 1))), 0); i--; }
+        if (strike) { const row = tokens.order.get(endToken - 1); if (tokens.names[tokens.type.get(row)] === 'text' && tokens.strings.get(tokens.content.get(row)) === '~') lone.set(count++, endToken - 1); }
+      }
+      while (count) { check(); const i = lone.get(--count); let j = i + 1; while (j < tokens.count && tokens.names[tokens.type.get(tokens.order.get(j))] === 's_close') { if (j % 4096 === 0) check(); j++; } j--; if (i !== j) { const row = tokens.order.get(j); tokens.order.set(j, tokens.order.get(i)); tokens.order.set(i, row); } }
+    } finally { lone.release(); }
+  };
+  eachDelimiterList(pool, root, meta, length, check, process);
 }
 function linkifyTokens(children, source, md, check) {
   const store = owners.get(children); if (!store) return false;
@@ -240,18 +270,18 @@ function linkifyTokens(children, source, md, check) {
 }
 function joinText(children, {levels = false, normalize = false, includeChildren = true, check = () => {}} = {}) {
   const store = owners.get(children); if (!store) return false;
-  const order = new Column(Uint32Array); let count = 0, level = 0, last = null, parts = [], chunks = [], chars = 0;
+  const order = new Column(Uint32Array); let count = 0, level = 0, last = -1, parts = [], chunks = [], chars = 0, adopted = false;
   const flush = () => {
-    if (!last) return;
+    if (last < 0) return;
     if (parts.length) chunks.push(parts.join(''));
-    last.content = chunks.length === 1 ? chunks[0] : chunks.join('');
-    order.set(count++, last[ROW]); last = null; parts = []; chunks = []; chars = 0;
+    store.content.set(last, store.strings.put(chunks.length === 1 ? chunks[0] : chunks.join('')));
+    order.set(count++, last); last = -1; parts = []; chunks = []; chars = 0;
   };
-  for (let i = 0; i < children.length; i++) {
-    if (i % 4096 === 0) check(); const token = children[i];
-    if (normalize && token.type === 'text_special') token.type = 'text';
-    if (normalize && includeChildren && token.children) {
-      const nested = token.children;
+  try { for (let i = 0; i < store.count; i++) {
+    if (i % 4096 === 0) check(); const row = store.order.get(i); store.touch(); let type = store.names[store.type.get(row)];
+    if (normalize && type === 'text_special') { store.type.set(row, store.name('text')); type = 'text'; }
+    const nested = store.children.get(row);
+    if (normalize && includeChildren && nested) {
       if (!joinText(nested, {normalize: true, includeChildren: false, check})) {
         for (const item of nested) if (item.type === 'text_special') item.type = 'text';
         let at = 0;
@@ -260,13 +290,14 @@ function joinText(children, {levels = false, normalize = false, includeChildren 
         nested.length = at;
       }
     }
-    if (levels) { if (token.nesting < 0) level--; token.level = level; if (token.nesting > 0) level++; }
-    if (token.type === 'text') {
-      last = token; const content = token.content; parts.push(content); chars += content.length;
+    if (levels) { const nesting = store.nesting.get(row); if (nesting < 0) level--; store.level.set(row, level); if (nesting > 0) level++; }
+    if (type === 'text') {
+      last = row; const content = store.strings.get(store.content.get(row)); parts.push(content); chars += content.length;
       if (chars >= 32768) { chunks.push(parts.join('')); parts = []; chars = 0; }
-    } else { flush(); order.set(count++, token[ROW]); }
+    } else { flush(); order.set(count++, row); }
   }
-  flush(); store.order.release(); store.order = order; store.count = count; return true;
+  flush(); store.order.release(); store.order = order; store.count = count; adopted = true; return true;
+  } finally { if (!adopted) order.release(); }
 }
 function releaseInline(children) {
   const store = owners.get(children); if (!store) return false;
