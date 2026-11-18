@@ -1,5 +1,5 @@
 const {app}=require('electron'),fs=require('node:fs'),path=require('node:path');
-const root=path.resolve('test-results/workspace-ux-'+Date.now());fs.mkdirSync(root,{recursive:true});process.env.NOTEMIND_DATA=root;app.disableHardwareAcceleration();
+const root=path.resolve('test-results/workspace-ux-'+Date.now());fs.mkdirSync(root,{recursive:true});process.env.NOTEMIND_DATA=root;app.setPath('documents',root);app.disableHardwareAcceleration();
 const folder=path.join(root,'Notes');fs.mkdirSync(folder);fs.mkdirSync(path.join(root,'workspaces'));fs.writeFileSync(path.join(root,'workspaces/index.json'),JSON.stringify([{id:'default',name:'Default Workspace',folders:[folder],files:[]}]));
 const report={root,checks:[]},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));let tested=false;
 app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webContents.setBackgroundThrottling(false);w.webContents.once('did-finish-load',async()=>{

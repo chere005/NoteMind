@@ -38,7 +38,8 @@
   const clear=()=>{selected=null;owner=null;box.hidden=true;if(drag)void finish({pointerId:drag.pointerId,preventDefault(){}},true);};
   function place(){if(!selected||!selected.isConnected||owner!==activeTab||!visual){clear();return;}const r=selected.getBoundingClientRect();if(!r.width||!r.height){box.hidden=true;return;}box.hidden=false;box.style.left=r.left+'px';box.style.top=r.top+'px';box.style.width=r.width+'px';box.style.height=r.height+'px';}
   function commit(img,canvas,tab){if(tab!==activeTab||!img.isConnected)return;const data=canvas.toDataURL('image/png').split(',')[1],name='assets/picture-'+crypto.randomUUID()+'.png';NoteMindHistory.transaction(()=>{doc.assets[name]=data;NoteMindImagePreviews.apply(img,name,data,'image/png');richChanged=true;markDirty();});img.addEventListener('load',place,{once:true});place();}
-  rich.addEventListener('click',e=>{const img=e.target.closest?.('img[data-asset]');if(!img||!rich.contains(img)){clear();return;}selected=img;owner=activeTab;place();});
+  const select=img=>{selected=img;owner=activeTab;place();};
+  rich.addEventListener('click',e=>{const img=e.target.closest?.('img[data-asset]');if(!img||!rich.contains(img)){clear();return;}select(img);});
   document.addEventListener('pointerdown',e=>{if(!box.contains(e.target)&&!(selected&&(e.target===selected||selected.contains(e.target))))clear();},true);
   window.addEventListener('scroll',place,true);window.addEventListener('resize',place);
   new MutationObserver(place).observe(rich,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
@@ -50,7 +51,8 @@
   handle.onpointermove=resize;
   async function finish(e,cancel){if(!drag||drag.pointerId!==e.pointerId||e.type==='lostpointercapture'&&handle.hasPointerCapture?.(e.pointerId))return;if(!cancel)resize(e);if(!drag)return;e.preventDefault();const current=drag;drag=null;if(handle.hasPointerCapture?.(current.pointerId))try{handle.releasePointerCapture(current.pointerId);}catch{}const displayed=current.img.getBoundingClientRect().width,scale=displayed/current.width;current.style===null?current.img.removeAttribute('style'):current.img.setAttribute('style',current.style);try{if(cancel||!current.moved)return;if(!await current.ready){if(current.error)alert(current.error.message);return;}if(current.run!==resizeRun||current.tab!==activeTab||!current.img.isConnected||current.img.dataset.asset!==current.asset||doc.assets[current.asset]!==current.expected||current.img.src!==current.src)return;const maxScale=Math.min(8192/current.naturalWidth,8192/current.naturalHeight,Math.sqrt(32000000/(current.naturalWidth*current.naturalHeight))),safe=Math.min(scale,maxScale),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(current.naturalWidth*safe));canvas.height=Math.max(1,Math.round(current.naturalHeight*safe));canvas.getContext('2d').drawImage(current.img,0,0,canvas.width,canvas.height);commit(current.img,canvas,current.tab);}catch(error){alert(error.message);}finally{current.release();place();}}
   handle.onpointerup=e=>finish(e,false);handle.onpointercancel=e=>finish(e,true);handle.onlostpointercapture=e=>finish(e,true);
+  // notes-image-gaps.js selects with the keyboard and deletes the selected picture.
+  return {selected:()=>selected?.isConnected&&owner===activeTab?selected:null,select,clear};
  }
- if(typeof rich!=='undefined'&&document.body)installSelection();
- window.NoteMindPicture={edit};
+ window.NoteMindPicture={edit,...(typeof rich!=='undefined'&&document.body?installSelection():null)};
 })();

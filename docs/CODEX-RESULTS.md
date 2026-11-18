@@ -1,5 +1,11 @@
 # Codex results
 
+## Merge verification follow-up
+
+- Fixed a shutdown race that could lose a second Quit request when cleanup rejected. The regression test now reaches final archive cleanup. The original interactive hang was not reproduced.
+- Updated the hidden UI checks to use the current drawing storage and menus. Restored the Welcome guide's images and preserved legacy imported-sheet metadata when the sheet loads from the drawing catalog.
+- Completed selected-image deletion with Undo and transparent Writing insertion with editable ink. Verified the Wacom Input Monitoring and hold-plus-tap paths with automated input.
+
 ## Task 1 — Quit
 - Added a hidden test for quitting with the workspace open, after closing it and with a stroke still in progress. All three check recovery before process exit and enforce a five-second deadline.
 - `node_modules/.bin/electron test/hidden-runner.cjs quit-exits` exited 0 in all three cases on the unchanged shutdown code.

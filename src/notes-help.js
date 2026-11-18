@@ -29,9 +29,13 @@
    const tab=tabs.find(t=>t.doc.path?.toLowerCase()===file.toLowerCase());
    if(tab?.dirty)activateTab(tab);
    else {
-    const fresh=await window.notemind.openPath(file);
-    if(tab){rememberCurrent();tab.doc=fresh;tab.dirty=!!fresh.dirty;tab.visual=true;tab.draftStamp=null;activeTab=null;activateTab(tab);}
-    else addTab({...fresh,visual:true});
+    const opened=await window.notemind.openPath(file),sync=window.NoteMindDocumentSync;
+    const fresh=sync?await sync.hydrate(opened):opened;
+    try{
+     if(!tab||!tabs.includes(tab))await addTab({...fresh,visual:true});
+     else if(tab.dirty)activateTab(tab);
+     else{rememberCurrent();tab.doc=fresh;tab.dirty=!!fresh.dirty;tab.visual=true;tab.draftStamp=null;activeTab=null;activateTab(tab);}
+    }finally{sync?.releaseDocument(fresh);}
    }
    window.NoteMindSidebar?.keepGuide(file);
    await window.notemind.remember(file);await N.session();

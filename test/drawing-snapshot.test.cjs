@@ -34,13 +34,16 @@ test('small vector previews use the live mean pressure and retain exact point co
  const strokes=[{colorHex:'#123456',width:3,points:[{x:.12345678901234567,y:.2},{x:.6,y:.7}],pressures:[.1,.9]},{colorHex:'#234567',width:3,points:[{x:.2,y:.3}],pressures:[0]}],svg=svgDrawing(snapshotDrawing({name:'Pressure',aspect:1,strokes,paper:{kind:'blank',spacing:'medium',colour:'white'}}));assert.equal((svg.match(/<path/g)||[]).length,2);assert.match(svg,/M123\.45678901234567 200 L600 700/);assert.equal((svg.match(/stroke-width="3"/g)||[]).length,2,'the segment uses mean pressure and the dot uses its unscaled pen width');assert.doesNotMatch(svg,/stroke-width="0\.6"|stroke-width="4\.92"/);
 });
 
-test('the production Insert Drawing path includes the active sheet paper in both preview and editable payload',()=>{
+test('Writing omits paper from its image and keeps the active sheet paper in the editable payload',()=>{
  const source=require('node:fs').readFileSync('src/tablet-entry.tsx','utf8'),implementation=source.slice(source.indexOf(' const drawingSvg='),source.indexOf(' const selectionRaster=')),events=[];
  assert.ok(implementation.includes('const insert='),'the production insertion path is available');
- const first={aspect:2,strokes:[],backdrop:null},other={aspect:1,strokes:[{colorHex:'#000000',width:2,points:[{x:.2,y:.3}]}],backdrop:null};
+ const stroke={colorHex:'#000000',width:2,points:[{x:.2,y:.3}]},first={aspect:2,strokes:[stroke],backdrop:'data:image/png;base64,aGVsbG8='},other={aspect:1,strokes:[stroke],backdrop:null};
  const context={surface:{current:null},page:{current:first},sheets:[{name:'Cream lines',page:first,paper:{kind:'lines',spacing:'large',colour:'cream'}},{name:'Dark dots',page:other,paper:{kind:'dots',spacing:'small',colour:'dark'}}],box:null,paper:()=>({kind:'blank',spacing:'medium',colour:'white'}),snapshotDrawing,writingRegion,svgDrawing,denseDrawing,pngDrawingSvg,canvasPng,graphics:require('../src/graphics-pane.js'),btoa:value=>Buffer.from(value,'binary').toString('base64'),window:{dispatchEvent:event=>events.push(event)},CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail}}};
  context.active=0;context.liveSheets={current:context.sheets};context.flushInkMutations=()=>null;context.projectInkSnapshot=(_owner,strokes)=>strokes;context.setSaveError=message=>{throw Error(message)};
  vm.runInNewContext(implementation+';globalThis.insertDrawing=insert;globalThis.savedDrawing=drawingSvg;',context);context.insertDrawing();
- assert.equal(events.length,1);assert.equal(events[0].type,'tablet-insert');const svg=Buffer.from(events[0].detail.data,'base64').toString();assert.match(svg,/fill="#f7f0dc"/);assert.match(svg,/height="1"/);assert.deepEqual(JSON.parse(JSON.stringify(events[0].detail.sheet.paper)),context.sheets[0].paper);
+ assert.equal(events.length,1);assert.equal(events[0].type,'tablet-insert');assert.equal(events[0].detail.inkOnly,true);
+ const svg=Buffer.from(events[0].detail.data,'base64').toString();assert.match(svg,/stroke="#000000"/);assert.doesNotMatch(svg,/<rect|<image/);
+ assert.deepEqual(JSON.parse(JSON.stringify(events[0].detail.sheet.paper)),context.sheets[0].paper);assert.equal(events[0].detail.sheet.backdrop,null);
+ const firstSvg=Buffer.from(context.savedDrawing(true,first),'base64').toString();assert.match(firstSvg,/fill="#f7f0dc"/);assert.match(firstSvg,/height="1"/);assert.match(firstSvg,/<image/);
  const otherSvg=Buffer.from(context.savedDrawing(true,other),'base64').toString();assert.match(otherSvg,/fill="#1e2025"/);assert.match(otherSvg,/stroke="#F2F2F7"/,'saving another sheet uses that sheet’s own paper instead of the active paper');
 });

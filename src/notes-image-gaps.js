@@ -294,11 +294,63 @@
       return range.getClientRects()[0] || range.getBoundingClientRect();
     }
 
+    function pictureNode(image) {
+      return image.closest('.graphics-pane') || image;
+    }
+
+    function deletePicture(image, selection) {
+      const picture = pictureNode(image);
+      const range = document.createRange();
+      range.selectNode(picture);
+      if (selection.rangeCount && !selection.isCollapsed) {
+        const selected = selection.getRangeAt(0);
+        if (selected.compareBoundaryPoints(Range.START_TO_START, range) ||
+            selected.compareBoundaryPoints(Range.END_TO_END, range)) return false;
+      }
+      const block = topLevel(picture);
+      const remove = isImageBlock(block) && block.querySelectorAll(PICTURE).length <= 1 ? block : picture;
+      const name = image.dataset.asset;
+      root.NoteMindHistory.transaction(() => {
+        root.NoteMindPicture.clear();
+        range.selectNode(remove);
+        range.collapse(true);
+        remove.remove();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        richChanged = true;
+        const kept = root.NoteMindPruneReplacedAssets(NoteMindDocument.md, { ...doc, text: currentText() }, name);
+        for (const asset of kept.removed) delete doc.assets[asset];
+        doc.meta = kept.meta;
+        markDirty();
+      });
+      return true;
+    }
+
     editor.addEventListener('keydown', event => {
       if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
-      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || !editable()) return;
       const selection = getSelection();
+      const picture = root.NoteMindPicture?.selected?.();
+      if (picture && (event.key === 'Backspace' || event.key === 'Delete')) {
+        if (deletePicture(picture, selection)) event.preventDefault();
+        return;
+      }
+      if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && gap && caretInside(gap) && isUnusedGap(gap)) {
+        const next = neighbour(gap, event.key === 'ArrowLeft' ? -1 : 1);
+        const image = isImageBlock(next) && (next.matches(PICTURE) ? next : next.querySelector(PICTURE));
+        if (image) {
+          event.preventDefault();
+          root.NoteMindPicture.select(image);
+          const range = document.createRange();
+          range.selectNode(pictureNode(image));
+          selection.removeAllRanges();
+          selection.addRange(range);
+          dropUnusedGap();
+          return;
+        }
+      }
+      if (picture && !event.key.startsWith('Shift')) root.NoteMindPicture.clear();
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       if (!selection.rangeCount || !selection.isCollapsed) return;
       const current = topLevel(selection.anchorNode);
       if (!current) return;

@@ -30,8 +30,9 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   await wait(()=>!!document.querySelector('.float-menu [data-bar=pane-save-original]'));
   check(await js(()=>!!document.querySelector('[data-tablet=surface]')&&!!document.querySelector('.float-menu [data-bar=pane-save-original]')),'The ink example opens in the actual drawing editor with an original target');
   await js(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
-  await js(()=>{rich.querySelector('[data-attachment]').click();});await wait(()=>document.querySelectorAll('.document-workspace:not([hidden]) [data-preview-page]').length===2);
-  check(await js(()=>document.querySelector('.document-workspace:not([hidden])').dataset.docKind==='pdf'&&document.querySelectorAll('.document-workspace:not([hidden]) [data-preview-page]').length===2),'The bundled reference opens as a real two-page PDF');
+  await js(()=>{rich.querySelector('[data-attachment]').click();});
+  await wait(()=>document.querySelector('.pdf-reference:not([hidden]) [aria-label="PDF page number"]')?.max==='2'&&!!document.querySelector('.pdf-reference:not([hidden]) .pdf-reference-paper canvas'));
+  check(await js(()=>document.querySelector('.pdf-reference:not([hidden])').dataset.docKind==='pdf'&&!!document.querySelector('.pdf-reference:not([hidden]) .pdf-reference-paper canvas')),'The bundled reference opens as a real two-page PDF');
   Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Welcome').click();let start;for(let i=0;i<100&&!start;i++){start=BrowserWindow.getAllWindows().find(b=>b!==w&&b.webContents.getURL().endsWith('welcome.html'));if(!start)await pause(50);}if(!start)throw Error('Welcome screen missing');
   if(start.webContents.isLoading())await new Promise(resolve=>start.webContents.once('did-finish-load',resolve));await pause(300);const sj=code=>start.webContents.executeJavaScript(code);
   check(await sj("!!document.querySelector('[data-start=guide]')"),'Welcome screen offers Explore Features');

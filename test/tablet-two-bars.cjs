@@ -5,6 +5,7 @@ const {app, nativeTheme} = require('electron'), fs = require('node:fs'), path = 
 const root = path.resolve('test-results/tablet-two-bars-' + Date.now());
 fs.mkdirSync(root, {recursive: true});
 process.env.NOTEMIND_DATA = root;
+app.setPath('documents', root);
 app.disableHardwareAcceleration();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const report = {root, checks: [], shots: []};
@@ -90,7 +91,7 @@ app.on('browser-window-created', (_, w) => {
       return {rows:[...pane.querySelectorAll(':scope>.sheet-tabs,:scope>.pen-bar,:scope>.bar-row,:scope>.camera-head')]
           .filter(visible).map(e=>e.className),
         undo:visible(bar.querySelector('[data-tablet=undo]')),insert:visible(bar.querySelector('[data-capture=ink]')),
-        more:visible(bar.querySelector('[data-bar=pane-menu]')),location:!!pane.querySelector('.pen-bar .drawing-location'),
+        more:visible(pane.querySelector('.sheet-tabs [data-bar=pane-menu]')),location:!!pane.querySelector('.pen-bar .drawing-location'),
         saveButton:!!pane.querySelector('button[data-tablet=pane-save]'),clearButton:!!pane.querySelector('button[data-tablet=clear]'),
         penSplit:visible(bar.querySelector('[data-bar=pen]'))&&visible(bar.querySelector('[data-bar=pen-kinds]')),
         standard:swatches.filter(e=>!e.classList.contains('custom')&&tappable(e)).length,
@@ -112,7 +113,7 @@ app.on('browser-window-created', (_, w) => {
       check(state.standard >= 5, `At least five standard colours are swatches to tap ${where}: ` + state.standard);
       check(state.swatchSize >= 18, `Swatches are at least 18 px ${where}: ` + state.swatchSize);
       check(!state.colourMenu, `No colour menu button ${where}`);
-      check(state.undo && state.insert && state.more, `Undo, Insert and the options menu are on the tool bar ${where}`);
+      check(state.undo && state.insert && state.more, `Undo and Insert are on the pen bar and options are on the tabs bar ${where}`);
     };
     // A tap on a swatch makes it the pen's colour.
     const tap = async name => {
@@ -180,10 +181,17 @@ app.on('browser-window-created', (_, w) => {
       await pause(1800);
       const image = await js(`(async()=>{const all=document.querySelectorAll('#rich img[data-asset]'),img=all[all.length-1];
         if(!img)return null;if(!img.complete)await new Promise(r=>{img.onload=img.onerror=r});
-        return {count:all.length,ratio:img.naturalWidth/img.naturalHeight,asset:img.dataset.asset}})()`);
+        const canvas=document.createElement('canvas');canvas.width=100;canvas.height=100;
+        const context=canvas.getContext('2d');context.drawImage(img,0,0,100,100);
+        const pixels=context.getImageData(0,0,100,100).data;
+        const frame=img.closest('.graphics-pane'),style=getComputedStyle(frame);
+        return {count:all.length,ratio:img.naturalWidth/img.naturalHeight,asset:img.dataset.asset,
+          clearCorner:pixels[3]===0,hasInk:pixels.some((value,index)=>index%4===3&&value>0),
+          frameFree:style.borderTopWidth==='0px'&&style.backgroundColor==='rgba(0, 0, 0, 0)'}})()`);
       report.sheet = sheet;
       report.image = image;
       check(image && image.count === before + 1, 'Insert put one drawing in the note');
+      check(image.clearCorner && image.hasInk && image.frameFree, 'Writing floats on the note with transparent margins');
       // The page's full width; the stroke's .1 of the VIEW's height plus a margin of 2% of the page's width above and below.
       const expected = 1 / ((.1 * sheet.view.height + .04 * sheet.aspect) / sheet.aspect);
       check(Math.abs(image.ratio / expected - 1) < .12,
@@ -300,7 +308,7 @@ app.on('browser-window-created', (_, w) => {
       report.pane380 = state;
       check(state.width <= 400, 'The pane took the 380 pixel width: ' + state.width);
       fits(state, 'in a 380 pixel pane');
-      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,ink,bring-menu,pane-menu',
+      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,ink,bring-menu',
         'A 380 pixel pane shows pen, eraser, select, colours, undo, Insert and options: ' + state.order);
       check(!state.widthSelect && !state.presets && !state.paper, 'Width, presets and paper leave a 380 pixel bar');
       colour = await tap('Purple');
