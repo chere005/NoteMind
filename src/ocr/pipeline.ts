@@ -74,15 +74,31 @@ function sampler(image: Rgba): (x: number, y: number, out: Float32Array) => void
     const a = data[o + 3]! / 255
     return data[o + c]! * a + 255 * (1 - a)
   }
+  const cachePixels = ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer
   return (x, y, out) => {
     const fx = Math.min(width - 1, Math.max(0, x - 0.5)), fy = Math.min(height - 1, Math.max(0, y - 0.5))
     const x0 = Math.floor(fx), y0 = Math.floor(fy)
     const x1 = Math.min(width - 1, x0 + 1), y1 = Math.min(height - 1, y0 + 1)
     const ax = fx - x0, ay = fy - y0
-    for (let c = 0; c < 3; c += 1) {
-      const top = px(x0, y0, c) * (1 - ax) + px(x1, y0, c) * ax
-      const bottom = px(x0, y1, c) * (1 - ax) + px(x1, y1, c) * ax
-      out[c] = top * (1 - ay) + bottom * ay
+    if (cachePixels) {
+      const p00 = (y0 * width + x0) * 4, p10 = (y0 * width + x1) * 4
+      const p01 = (y1 * width + x0) * 4, p11 = (y1 * width + x1) * 4
+      const a00 = data[p00 + 3]! / 255, a10 = data[p10 + 3]! / 255
+      const a01 = data[p01 + 3]! / 255, a11 = data[p11 + 3]! / 255
+      const w00 = 255 * (1 - a00), w10 = 255 * (1 - a10)
+      const w01 = 255 * (1 - a01), w11 = 255 * (1 - a11)
+      for (let c = 0; c < 3; c += 1) {
+        const top = (data[p00 + c]! * a00 + w00) * (1 - ax) + (data[p10 + c]! * a10 + w10) * ax
+        const bottom = (data[p01 + c]! * a01 + w01) * (1 - ax) + (data[p11 + c]! * a11 + w11) * ax
+        out[c] = top * (1 - ay) + bottom * ay
+      }
+    } else {
+      // Preserve per-read semantics for generic views or shared mutable pixels.
+      for (let c = 0; c < 3; c += 1) {
+        const top = px(x0, y0, c) * (1 - ax) + px(x1, y0, c) * ax
+        const bottom = px(x0, y1, c) * (1 - ax) + px(x1, y1, c) * ax
+        out[c] = top * (1 - ay) + bottom * ay
+      }
     }
   }
 }
