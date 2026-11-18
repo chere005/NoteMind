@@ -74,7 +74,7 @@
 
  let writing;
  function setZoom(percent,remember=true){
-  percent=levels.includes(percent)?percent:100;zoom.value=String(percent);rich.style.zoom=source.style.zoom=String(percent/100);update();
+  percent=levels.includes(percent)?percent:100;zoom.value=String(percent);rich.style.zoom=source.style.zoom=String(percent/100);
   if(remember){clearTimeout(writing);writing=setTimeout(()=>window.notemind.preferenceSet?.('view',{zoom:percent}).catch(()=>{}),250);}
  }
  const step=delta=>setZoom(levels[Math.min(levels.length-1,Math.max(0,levels.indexOf(Number(zoom.value))+delta))]);
