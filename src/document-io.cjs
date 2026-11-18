@@ -53,10 +53,11 @@ async function importFile(file,options={}){requireOpen();checkAbort(options.sign
 async function exportFile(doc,file,options={}){
  requireOpen();checkAbort(options.signal);const finish=beginExport();try{const ext=path.extname(file).toLowerCase();let bytes;
  if(ext==='.docx'){const receipt=await require('./word-export-media.cjs').exportWordWithMedia(doc,file,options,{storage:codec,convertImageFile,tempRoot:app.getPath?.('temp')||require('node:os').tmpdir()});if(receipt.warnings?.length&&typeof options.onWarning==='function')try{await options.onWarning(receipt);}catch(error){if(!receipt.committed)throw error;receipt.warnings.push('The Word document was saved, but its warning could not be shown: '+(error?.message||String(error)));}return receipt.file;}
+ if(ext!=='.pdf')throw Error('Choose .docx or .pdf.');const target=require('./path-key.cjs').physicalPath(file),guard=require('./guarded-write.cjs'),expected=await guard.fingerprintFile(target);checkAbort(options.signal);requireOpen();
  doc=await require('./print-images.cjs').preparePrint(doc,options.clean,(...args)=>call('image',...args));
  checkAbort(options.signal);requireOpen();
  if(ext==='.pdf'){bytes=await renderPDF(doc,require('./pdf-options.cjs').printOptions(options));}
- else throw Error('Choose .docx or .pdf.');const temp=file+'.'+crypto.randomUUID()+'.tmp';try{await fs.writeFile(temp,bytes,{flag:'wx'});await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{})}return file;}finally{finish();}
+ else throw Error('Choose .docx or .pdf.');await guard.replaceIfUnchanged(target,bytes,expected,{beforeCommit:()=>checkAbort(options.signal)});return file;}finally{finish();}
 }
 async function previewFile(file,password){
  requireOpen();const bytes=await require('./read-limited.cjs').readLimited(file,150*1024*1024,'Open files up to 150 MB.');const ext=path.extname(file).toLowerCase();
