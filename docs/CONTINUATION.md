@@ -1,5 +1,15 @@
 # Continuation
 
+## November 17, 11 PM Central checkpoint
+
+The11PM whole-timeline update was delivered. Target remains8AM CentralNov18; next update midnight. Active targets: now–midnight foundation/scale closures; midnight–2AM feature-wide panel/fixes;2–4AM three fresh whole-app audits/fixes;4–7AM full preflight/frozen stress/recovery/soak/package gates;7–8AM Claude handoff. Installed0.35.0 is untouched. No full suite/main push/release/install has happened.
+
+Root source70510fa includes integrated metadata/readers/source-file/capability/Main+preload leaves, Doc/PDF/version/edit/scan consumer closures, privateRGBA/ORT cleanup, Word eager admission and bounded layout/retired placeholders. Lazy mode remains OFF pending Perf debt seam and native mixed/full-consumer qualification. Arch b719135 OCR continuation fix and3855b3e visible-only attachment thumbnail leaf are ready for Root merge (index.html needs thumbnail queue script). Root has an uncommitted index.html reader-script include; preserve it.
+
+Development stable branch is now80c9dee=e570d0a3 plus ONLY Word placeholder UI cap, deliberately excluding the still-pending Main/debt integration. Root build session71096 is active; do not run another heavy process until it exits. Data owns native lane after fresh4file runtime receipt. Data driver585e98c/e570runtime original2Mtable actually exited1 at physical scroll ceiling after~1.119M exact rows; repeat must use Root70510fa cap, Data5a43a9f linear cleanup and original2M workload. Table harness600s only;1GiB/≤8loaded/20sclose unchanged. Data3f5b1fa (Root73adbc1) inline1893/full16MiB proof actually exited0 at941,670,400B. Word100 frozen-pixel c5c063bf actually exited0 at1,072,431,104B; product-only diagnostic751,779,840B. Reports live in the allowlisted word-reference-full-native worktree test-results/performance-0.37.
+
+Native model/mixed workflow still has no passing current full100completion proof. Perf debt covers every explicit working owner across archive-worker reset; Arch owns source-only extended mixed driver plus positive textPNG model proof and actual worker/raw drain. Data prepared40MP TIFF native proof source c274f02, not launched. Keep original bytes/pixels/dimensions/caps, noGC/cache/flag shortcuts. Source-level reads do not close the fresh review waves.
+
 ## November 17, 10 PM Central checkpoint
 
 The 10 PM status was delivered. Handoff target remains **8 AM Central November 18**; next whole-timeline update is11PM. The earlier10–11PM install estimate is superseded: work targets midnight for the active foundations/scale closures, midnight–2AM for the feature-wide panel/fixes,2–4AM for three fresh whole-app audits/fixes,4–7AM for full preflight/frozen stress/recovery/soak/package qualification,7–8AM for the exact Claude handoff. These remain working targets and do not authorize passing a failing gate. Installed0.35.0 is untouched; no main push or release installation occurred.

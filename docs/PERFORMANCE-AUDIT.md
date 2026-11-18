@@ -1,5 +1,9 @@
 # Performance investigation and release evidence
 
+## November 17, 11 PM verified delta
+
+Word100 c5c063bf/e570runtime: actualexit0,101 exact source/frozenCPU/default-display/dimension proofs, typing max3ms, finalclose41.7ms, all worker/files gone;1,072,431,104B including independent oracle lifetimes, thin1,310,720B headroom. Product-only diagnostic751,779,840B is separately labelled. Inline fe97b1c0: actualexit0/full1893fragments/exact16,777,201bytes+styles+Unicode+end/typing/cleanup,941,670,400B; prior256KiB visible shaping failed1,134,952,448B. Table585e98cc: actualexit1 at33,554,432px ceiling/fragment2185,69loaded;1,023,524,864B. Root70510fa caps only retired placeholders4096px; full2M repeat pending. Data5a43 cleanup removes measured repeated full-journal reparsing (1893files→~1.2GB reparsed), retaining exact inode/stamp authority; native timing repeat pending. None of these prove real mixed indexing/model completion; that gate remains open.
+
 ## November 17, 10 PM Central checkpoint
 
 The 10 PM status was delivered. Handoff target remains **8 AM Central November 18**; next whole-timeline update is11PM. The earlier10–11PM install estimate is superseded: work targets midnight for the active foundations/scale closures, midnight–2AM for the feature-wide panel/fixes,2–4AM for three fresh whole-app audits/fixes,4–7AM for full preflight/frozen stress/recovery/soak/package qualification,7–8AM for the exact Claude handoff. These remain working targets and do not authorize passing a failing gate. Installed0.35.0 is untouched; no main push or release installation occurred.
