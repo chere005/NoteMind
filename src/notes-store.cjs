@@ -5,6 +5,7 @@ const archiveCodec = require('./archive-codec.cjs');
 const {keyPath}=require('./path-key.cjs');
 const digest = data => createHash('sha256').update(data).digest('hex');
 const titleOf = text => String(text || '').split(/\r?\n/).map(s => s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`=]/g, '').trim()).find(Boolean)?.slice(0, 100) || 'Untitled';
+const resolveTitleOf=async text=>(await require('./notes-title.js').resolveAutomaticTitleInfo(text)).title;
 const metadata = value => ({tags: [...new Set((Array.isArray(value?.tags) ? value.tags : []).map(t => String(t).trim().replace(/^#/, '').slice(0, 60)).filter(Boolean))].slice(0, 100), pinned: !!value?.pinned, collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter(x => typeof x === 'string').slice(0, 1000) : [], attachments: value?.attachments && typeof value.attachments==='object' ? value.attachments : {}, graphicsPanes: Object.fromEntries(Object.entries(value?.graphicsPanes||{}).filter(([,pane])=>pane?.version===1).map(([name])=>[name,{version:1}]))});
 async function atomic(file, data, {valid}={}) {
  const directory=path.dirname(file),created=await fs.mkdir(directory, {recursive:true}),temp=file+'.'+randomUUID()+'.tmp';let handle,published=false;
@@ -51,7 +52,7 @@ class NotesStore {
    if(other?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before editing.');
    if(other?.path && doc.path && keyPath(other.path)!==keyPath(doc.path) && await fs.stat(other.path).catch(()=>null)) id=randomUUID();
    const previous=index.records[id] || {}, now=new Date().toISOString();
-   const meta=metadata(options.meta ?? doc.meta ?? previous.meta),title=doc.title || titleOf(doc.text);
+   const meta=metadata(options.meta ?? doc.meta ?? previous.meta),title=doc.title || await resolveTitleOf(doc.text);
    const entry={...previous, id, path:doc.path || null, title, text:doc.text, meta, created:previous.created || doc.created || now, modified:options.modified || (previous.text===doc.text && previous.title===title && JSON.stringify(previous.meta)===JSON.stringify(meta) ? previous.modified || now : now), attachments:Object.keys(doc.assets || {}).filter(n=>!n.endsWith('.json'))};
    if(!doc.path)entry.recoveryRoot=this.recoveryRoot;index.records[id]=entry;
    return {...doc, id, title:entry.title, meta, created:entry.created};
@@ -181,4 +182,4 @@ class NotesStore {
  });}
  async reconcileDeleted(restored) {return this.transaction(async index=>{for(const item of [...index.deleted])if(item.path&&restored&&keyPath(item.path)===keyPath(restored)){index.deleted=index.deleted.filter(x=>x.id!==item.id);for(const r of Object.values(index.records))if(r.deleted===item.id)delete r.deleted;}});}
 }
-module.exports={NotesStore,titleOf,metadata,atomic,digest};
+module.exports={NotesStore,titleOf,resolveTitleOf,metadata,atomic,digest};

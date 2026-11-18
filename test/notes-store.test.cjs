@@ -1,5 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const {NotesStore,titleOf}=require('../src/notes-store.cjs'),format=require('../src/notepad-format.cjs'),render=require('../src/document-renderer.cjs');
+test('library title fallback resolves exceptional prefixes cooperatively and keeps escaped text literal',async t=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-store-title-')),store=new NotesStore(root);t.after(()=>fs.rm(root,{recursive:true,force:true}));const doc=await store.register({text:' '.repeat(70000)+'\\[Exact\\] \\<br\\>',assets:{},meta:{}});assert.equal(doc.title,'[Exact] <br>');assert.equal((await store.record(doc.id)).title,'[Exact] <br>');assert.equal(await require('../src/notes-store.cjs').resolveTitleOf(' '.repeat(70000)+'File name'),'File name');});
 test('draft recovery, metadata, smart filters, and versions survive a fresh store',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-store-')),store=new NotesStore(root);
  const doc=await store.draft({text:'# Weekend\n\n- [ ] Buy groceries',assets:{'assets/test.svg':Buffer.from('<svg/>').toString('base64')},meta:{tags:['home','home'],pinned:true,collapsed:['0:Weekend']},dirty:true,visual:false});

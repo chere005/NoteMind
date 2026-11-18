@@ -11,7 +11,7 @@ const { pack, unpack } = require('./zip.cjs');
 
 if (process.env.NOTEMIND_DATA) app.setPath('userData', path.resolve(process.env.NOTEMIND_DATA));
 
-const {NotesStore,digest,titleOf}=require('./notes-store.cjs');
+const {NotesStore,digest,resolveTitleOf}=require('./notes-store.cjs');
 const notesStore=new NotesStore(path.join(process.env.NOTEMIND_HOME||app.getPath('userData'),'notes-library'),path.join(app.getPath('userData'),'note-recovery'));
 const fileActions=require('./file-actions.cjs')(path.join(app.getPath('userData'),'file-history'),async file=>{const item=await notesStore.captureDeleted(file);await shell.trashItem(file);await notesStore.finishDeleted(item);});
 let win, padController;
@@ -344,7 +344,7 @@ async function settleDocumentWrites(source){const key=keyPath(source);await Prom
 async function saveDocument(doc,saveAs=false,automatic=false){
  let file=saveAs?null:doc.path;
  if(automatic&&!file)throw Error('Choose a file before saving.');
- if(!file){const suggested=(doc.title||titleOf(doc.text)).replace(/[\\/:*?"<>|]/g,'-')+'.nm';const result=await dialog.showSaveDialog(win,{defaultPath:doc.path||(doc.initialFolder?path.join(doc.initialFolder,suggested):suggested),filters:[{name:'Notepad',extensions:['nm','wm']},{name:'Markdown',extensions:['md']},{name:'Python',extensions:['py']},{name:'Text',extensions:['txt']}]});if(result.canceled)return null;file=result.filePath;}
+ if(!file){const suggested=(doc.title||await resolveTitleOf(doc.text)).replace(/[\\/:*?"<>|]/g,'-')+'.nm';const result=await dialog.showSaveDialog(win,{defaultPath:doc.path||(doc.initialFolder?path.join(doc.initialFolder,suggested):suggested),filters:[{name:'Notepad',extensions:['nm','wm']},{name:'Markdown',extensions:['md']},{name:'Python',extensions:['py']},{name:'Text',extensions:['txt']}]});if(result.canceled)return null;file=result.filePath;}
  file=physicalPath(file);
  const key=keyPath(file);
  const write=async()=>{
