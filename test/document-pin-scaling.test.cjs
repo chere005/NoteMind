@@ -1,0 +1,10 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto'),{EventEmitter}=require('node:events'),{DocumentAssetSessions}=require('../src/document-asset-sessions.cjs');
+const owner=()=>Object.assign(new EventEmitter(),{isDestroyed:()=>false});
+test('pinning the supported asset count performs no linear membership search and releases each entry once',t=>{
+ const sessions=new DocumentAssetSessions(),state=sessions.session(owner()),tokens=[];for(let i=0;i<9998;i++){const token=randomUUID();tokens.push(token);sessions.remember(state,token,'eA==');}const includes=Array.prototype.includes;Array.prototype.includes=function(value,...args){if(value?.pins!==undefined)assert.fail('asset pinning searched its growing entry array');return includes.call(this,value,...args);};
+ try{const release=sessions.pin(state,tokens);assert.ok([...state.entries.values()].every(entry=>entry.pins===1));release();release();assert.ok([...state.entries.values()].every(entry=>entry.pins===0));}finally{Array.prototype.includes=includes;}
+});
+test('duplicate tokens and same-entry aliases keep one pin until delayed drop after owner disposal',async()=>{
+ const released=[],sessions=new DocumentAssetSessions({raw:{releaseRawAssets:async(_owner,tokens)=>released.push(tokens)}}),who=owner(),state=sessions.session(who),token=randomUUID(),alias=randomUUID(),other=randomUUID(),descriptor={rawAssetToken:randomUUID(),epoch:1,bytes:1,chars:4};
+ const entry=sessions.remember(state,token,descriptor),kept=sessions.remember(state,other,'eA==');state.entries.set(alias,entry);const release=sessions.pin(state,[token,token,alias,'missing',other]);assert.equal(entry.pins,1);assert.equal(kept.pins,1);sessions.dispose(who);assert.equal(state.entries.size,0);assert.equal(released.length,0);assert.equal(state.bytes,8);release();release();await new Promise(setImmediate);assert.equal(entry.pins,0);assert.equal(kept.pins,0);assert.equal(state.bytes,0);assert.equal(sessions.states.size,0);assert.equal(released.filter(tokens=>tokens?.includes(descriptor.rawAssetToken)).length,1);
+});
