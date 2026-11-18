@@ -1,4 +1,4 @@
-// Read-only Word ZIP access. Physical import limit is unchanged; expanded XML has no Notepad entry cap.
+// Held-FD Word ZIP32 access; expanded XML is streamed independently of Notepad asset limits.
 const fs=require('node:fs/promises'),path=require('node:path'),zlib=require('node:zlib'),{createHash}=require('node:crypto'),{finished}=require('node:stream/promises'),{isMarkedAsUntransferable}=require('node:worker_threads');
 const MAX_SOURCE=0xffffffff,CHUNK=65536,table=Uint32Array.from({length:256},(_,n)=>{for(let bit=0;bit<8;bit++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
 const crc32=(bytes,seed=0)=>{if(zlib.crc32)return zlib.crc32(bytes,seed)>>>0;let n=(seed^0xffffffff)>>>0;for(const byte of bytes)n=table[(n^byte)&255]^(n>>>8);return(n^0xffffffff)>>>0;};
