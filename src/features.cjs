@@ -8,7 +8,7 @@ module.exports = function installFeatures(window, projectService) {
  const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain),outputWrites=new Set();let outputClosed=false,outputDisposal=null,outputQuitReady=false,outputQuitWaiting=null;
  function outputWrite(run){if(outputClosed)return Promise.reject(Error('NoteMind file writes are closing.'));const pending=Promise.resolve().then(run).finally(()=>outputWrites.delete(pending));outputWrites.add(pending);return pending;}
  function dispose(){outputClosed=true;if(outputDisposal)return outputDisposal;return outputDisposal=Promise.resolve().then(async()=>{while(outputWrites.size)await Promise.allSettled([...outputWrites]);await drawingSaves.dispose();}).catch(error=>{outputDisposal=null;throw error;});}
- app.on('will-quit',event=>{if(outputQuitReady)return;event?.preventDefault?.();const pending=dispose();if(!outputQuitWaiting)outputQuitWaiting=pending.then(()=>{outputQuitReady=true;app.quit();}).catch(error=>{outputQuitWaiting=null;console.error('Drawing output cleanup could not finish:',error);});});
+ app.on('will-quit',event=>{if(outputQuitReady)return;event?.preventDefault?.();const pending=dispose();if(!outputQuitWaiting)outputQuitWaiting=pending.then(()=>{outputQuitReady=true;app.quit();}).catch(error=>{outputQuitWaiting=null;console.error('Feature output cleanup could not finish:',error);});});
  ipcMain.on('window-close',()=>win()?.close());
  const {home,root,registry,recents}=projectService;
  const preferenceKeys=['orientation','pen','view','padChromeOrientation','toolPresets'];
@@ -26,17 +26,17 @@ module.exports = function installFeatures(window, projectService) {
   preferenceWrites.set(key,next);try{await next;}finally{if(preferenceWrites.get(key)===next)preferenceWrites.delete(key);}
  }));
  app.whenReady().then(async()=>{await fs.mkdir(path.join(home,'preferences'),{recursive:true});const watcher=require('node:fs').watch(path.join(home,'preferences'),(_,file)=>{const key=String(file).replace(/\.json$/,'');if(!preferenceKeys.includes(key))return;readPreference(key).then(value=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('preference-changed',{key,value});}).catch(()=>{});});app.on('will-quit',()=>watcher.close());});
- ipcMain.handle('workspace-list',()=>registry.migrate());
- ipcMain.handle('workspace-put',(_,workspace,remove)=>registry.put(workspace,remove));
- ipcMain.handle('workspace-save',async(_,workspace)=>{const result=await dialog.showSaveDialog(win(),{defaultPath:(workspace.id==='default'?'Project':workspace.name)+'.wmpr',filters:[{name:'Project',extensions:['wmpr']}]});if(result.canceled)return null;const file=result.filePath.toLowerCase().endsWith('.wmpr')?result.filePath:result.filePath+'.wmpr';const saved={...workspace,id:require('./workspaces.cjs').idFor(file),name:path.basename(file,'.wmpr'),file,readOnly:false};await registry.put(saved);await recents.remember(file,'project');return saved;});
- ipcMain.handle('workspace-new',async()=>{const result=await dialog.showSaveDialog(win(),{defaultPath:'Project.wmpr',filters:[{name:'Project',extensions:['wmpr']}]});return result.canceled?null:projectService.create(result.filePath);});
- ipcMain.handle('workspace-rename',(_,workspace,name)=>projectService.rename(workspace,name));
- ipcMain.handle('workspace-open-path',(_,file)=>projectService.open(file));
+ ipcMain.handle('workspace-list',()=>outputWrite(()=>registry.migrate()));
+ ipcMain.handle('workspace-put',(_,workspace,remove)=>outputWrite(()=>registry.put(workspace,remove)));
+ ipcMain.handle('workspace-save',(_,workspace)=>outputWrite(async()=>{const result=await dialog.showSaveDialog(win(),{defaultPath:(workspace.id==='default'?'Project':workspace.name)+'.wmpr',filters:[{name:'Project',extensions:['wmpr']}]});if(result.canceled)return null;const file=result.filePath.toLowerCase().endsWith('.wmpr')?result.filePath:result.filePath+'.wmpr';const saved={...workspace,id:require('./workspaces.cjs').idFor(file),name:path.basename(file,'.wmpr'),file,readOnly:false};await registry.put(saved);await recents.remember(file,'project');return saved;}));
+ ipcMain.handle('workspace-new',()=>outputWrite(async()=>{const result=await dialog.showSaveDialog(win(),{defaultPath:'Project.wmpr',filters:[{name:'Project',extensions:['wmpr']}]});return result.canceled?null:projectService.create(result.filePath);}));
+ ipcMain.handle('workspace-rename',(_,workspace,name)=>outputWrite(()=>projectService.rename(workspace,name)));
+ ipcMain.handle('workspace-open-path',(_,file)=>outputWrite(()=>projectService.open(file)));
  ipcMain.handle('workspace-recent',async()=>{const all=await recents.read();return Promise.all(all.projects.map(async x=>({path:x.path,name:path.basename(x.path,path.extname(x.path)),exists:await fs.access(x.path).then(()=>true,()=>false)})));});
- ipcMain.handle('workspace-open',async()=>{const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Project',extensions:['wmpr','wm']}]});return result.canceled?null:projectService.open(result.filePaths[0]);});
+ ipcMain.handle('workspace-open',()=>outputWrite(async()=>{const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Project',extensions:['wmpr','wm']}]});return result.canceled?null:projectService.open(result.filePaths[0]);}));
  ipcMain.handle('choose-files',async()=>{const result=await dialog.showOpenDialog(win(),{properties:['openFile','multiSelections'],filters:[{name:'Notepads and text files',extensions:['nm','wm','md','txt','py']}]});return result.canceled?[]:result.filePaths;});
  ipcMain.handle('workspace-seed', async () => { try { return JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'workspace.json'),'utf8')); } catch { return null; } });
- ipcMain.handle('workspace-window', async (_, workspace) => {
+ ipcMain.handle('workspace-window', (_, workspace) => outputWrite(async()=>{
   if (!workspace || !/^[a-zA-Z0-9-]+$/.test(workspace.id) || !Array.isArray(workspace.folders)) throw Error('Invalid workspace');
   await registry.put(workspace);if(workspace.file)await recents.remember(workspace.file,'project');
   const profile = workspace.id==='default'?home:path.join(root,workspace.id); await fs.mkdir(profile,{recursive:true});
@@ -46,7 +46,7 @@ module.exports = function installFeatures(window, projectService) {
   await new Promise((resolve,reject)=>{child.on('error',reject);child.once('spawn',()=>{if(!Number.isSafeInteger(child.pid)||child.pid<=0)reject(Error('The project window could not start.'));else resolve();});});
   child.unref();
   return child.pid;
- });
+ }));
  ipcMain.handle('export-image', (_, data, extension='png') => outputWrite(async()=>{
   if(!['png','svg'].includes(extension)) throw Error('Unsupported image type');
   const result=await dialog.showSaveDialog(win(),{defaultPath:`Drawing.${extension}`,filters:[{name:'Image',extensions:[extension]}]});
@@ -72,7 +72,7 @@ module.exports = function installFeatures(window, projectService) {
   if(!options?.compact&&drawing.encodedSheet.byteLength<=1024*1024)return {file,fileRevision:drawing.fileRevision,sheet:require('./graphics-pane.js').decode(drawing.encodedSheet)};
   const transfer=require('./sheet-load-transport.cjs').shared.beginFor(event.sender,{encodedSheets:[{metadata:{},bytes:drawing.encodedSheet}]},{scope:'drawing',maxBytes:150*1024*1024});return {file,fileRevision:drawing.fileRevision,transfer};
  });
- ipcMain.handle('python-select',async()=>{const r=await dialog.showOpenDialog(win(),{title:'Select Python interpreter',properties:['openFile']});if(r.canceled)return null;await fs.writeFile(path.join(app.getPath('userData'),'python.json'),JSON.stringify({executable:r.filePaths[0]}));return r.filePaths[0];});
+ ipcMain.handle('python-select',()=>outputWrite(async()=>{const r=await dialog.showOpenDialog(win(),{title:'Select Python interpreter',properties:['openFile']});if(r.canceled)return null;await fs.writeFile(path.join(app.getPath('userData'),'python.json'),JSON.stringify({executable:r.filePaths[0]}));return r.filePaths[0];}));
  return {dispose};
 };
 
