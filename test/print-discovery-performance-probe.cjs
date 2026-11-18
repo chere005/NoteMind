@@ -1,0 +1,5 @@
+const fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),crypto=require('node:crypto'),{performance}=require('node:perf_hooks');
+const file=path.resolve('src/print-asset-files.cjs'),baseline=process.argv[2],source=fs.readFileSync(baseline||file,'utf8');let api;
+if(baseline){const m=new Module(file,module);m.filename=file;m.paths=Module._nodeModulePaths(path.dirname(file));m._compile(source,file);api=m.exports;}else api=require(file);
+const text='No picture here.\n\n'.repeat(60000),doc={text,assets:{},meta:{}};api.referencedImages({text:'warmup',assets:{},meta:{}});const before=process.memoryUsage(),start=performance.now(),result=[...api.referencedImages(doc)],wallMs=performance.now()-start,after=process.memoryUsage();
+console.log(JSON.stringify({mode:baseline?'baseline':'candidate',scope:'exact print image discovery on the same1,080,000-byte image-free Markdown; source parse/setup excludes process startup',sourceSHA:crypto.createHash('sha256').update(text).digest('hex'),codeSHA:crypto.createHash('sha256').update(source).digest('hex'),bytes:Buffer.byteLength(text),result,wallMs,before,after,versions:process.versions}));
