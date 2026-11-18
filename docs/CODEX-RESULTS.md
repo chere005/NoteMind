@@ -15,3 +15,11 @@
 - `node_modules/.bin/electron test/hidden-runner.cjs welcome-guide` exited 1 twice. Both the edit button and the example image were missing after reopening the guide.
 - `node_modules/.bin/electron test/hidden-runner.cjs workspace-ux` exited 0 twice, including the orientation and Wacom menu checks.
 - The runs redirected Documents to the test profile. Four scripts remain unqualified. Fixtures, storage reads, and unrelated checks are unchanged.
+
+## Task 3 — Limits in practice
+- Added a test-only 4 GiB switch and one-minute memory observations. The default aggregate guard remains 1 GiB.
+- `NOTEMIND_LIMITS_4_GIB=1 node_modules/.bin/electron test/hidden-runner.cjs real-raster-index-completion` exited 0 with 100 completed pages.
+- `NOTEMIND_LIMITS_4_GIB=1 node_modules/.bin/electron test/hidden-runner.cjs source-control-native` exited 0 with the exact 16 MiB source.
+- The same OCR command with `NOTEMIND_LIMITS_TEN_PHOTOS=1` exited 0 on retry with 10 completed pages. The first run reached 10 replies before a test still expected a count of 100.
+- The same editor command with `NOTEMIND_LIMITS_ONE_MIB=1` exited 0 with the 1 MiB source.
+- All four rows and verdicts are in `docs/audit/LIMITS-IN-PRACTICE.md`.
