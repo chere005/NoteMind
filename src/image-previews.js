@@ -1,6 +1,6 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = { create: options => factory(require('./document-renderer.cjs').imageDimensions, options) };
-  else root.NoteMindImagePreviews = factory(root.NoteMindDocument.imageDimensions, {lazy:true,identity:(assets,name)=>root.NoteMindDocumentSync?.assetIdentity?.(assets,name),chunks:(assets,name)=>root.NoteMindDocumentSync?.assetChunks?.(assets,name)});
+  else root.NoteMindImagePreviews = factory(root.NoteMindDocument.imageDimensions, {lazy:true,identity:(assets,name)=>root.NoteMindDocumentSync?.assetIdentity?.(assets,name),chunks:(assets,name)=>root.NoteMindDocumentSync?.assetChunks?.(assets,name),isRef:value=>!!root.NoteMindDocumentSync?.isRef?.(value),info:(assets,name)=>root.NoteMindDocumentSync?.info?.(assets,name),readChunks:(assets,name,options)=>root.NoteMindDocumentSync.readChunks(assets,name,options),ownedSourceChunks:true});
 })(typeof window === 'undefined' ? this : window, function (dimensions, options = {}) {
   const cache = new Map(), placeholders = new Map(), bound = new Map(), pins = new Map();
   const urls = options.urls || URL, makeBlob = options.makeBlob || ((bytes, type) => new Blob([bytes], { type }));
@@ -10,6 +10,7 @@
   const discard = bytes => { if (ArrayBuffer.isView(bytes) && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && typeof bytes.buffer.transfer === 'function') try { bytes.buffer.transfer(0); } catch {} };
   function measure(data) { const bytes = decode(data); try { return dimensions(bytes); } finally { if (!options.decode) discard(bytes); } }
   function blob(entry) {
+    if(entry.reference)throw Error('Use asynchronous loading for this picture.');
     if (entry.chunks && !options.decode && !options.makeBlob) {
       const parts = [];
       for (const chunk of entry.chunks) { const bytes = decode(chunk); try { parts.push(new Blob([bytes])); } finally { discard(bytes); } }
@@ -38,20 +39,19 @@
     for (const entry of values) if (count > maxEntries && !entry.active && !attached.has(entry)) { forget(entry); count--; }
   }
   function get(name, data, type) {
-    const owned=assetsFor?.(),key=data.length>=1024*1024&&owned?.[name]===data&&options.identity?options.identity(owned,name)||data:data;let types=cache.get(key),entry=types?.get(type);
-    if (!entry) {
-      const chunks=owned?.[name]===data?options.chunks?.(owned,name):null,prefix=(chunks?.[0]||data).slice(0,Math.ceil(65536/3)*4);
-      let size = measure(prefix);
-      // Unusual JPEG metadata or SVG prologs can put the dimensions after the first header block.
-      if (!size && prefix.length !== data.length) size = measure(data);
-      const placeholder = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + (size?.width || 1) + '" height="' + (size?.height || 1) + '"/>') + '#notemind-preview-' + (++serial);
-      const pixels=size?.width*size?.height*4, decodedEstimate=Number.isFinite(pixels)&&pixels>0?pixels:Math.max(1,maxDecodedBytes);
-      entry = {key,data,chunks,type,size,placeholder,decodedBytes:decodedEstimate,bytes:Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0), url: null, active: 0, used: ++clock };
-      if (!types) cache.set(key, types = new Map()); types.set(type, entry); placeholders.set(placeholder, entry);
+    const reference=!!options.isRef?.(data);if(!reference&&typeof data!=='string')throw Error('Invalid picture source.');
+    const owned=assetsFor?.(),snapshot=reference?Object.freeze({[name]:data}):owned,key=reference?(options.identity?.(snapshot,name)||data):data.length>=1024*1024&&owned?.[name]===data&&options.identity?options.identity(owned,name)||data:data;let types=cache.get(key),entry=types?.get(type);
+    if(!entry){let chunks=null,size,bytes;
+      if(reference){const info=options.info?.(snapshot,name);if(!info||!Number.isSafeInteger(info.bytes)||info.bytes<0||info.chars!==4*Math.ceil(info.bytes/3))throw Error('Invalid immutable picture metadata.');if(Number.isSafeInteger(info.width)&&info.width>0&&Number.isSafeInteger(info.height)&&info.height>0)size={width:info.width,height:info.height};bytes=info.bytes;}
+      else{chunks=owned?.[name]===data?options.chunks?.(owned,name):null;const prefix=(chunks?.[0]||data).slice(0,Math.ceil(65536/3)*4);size=measure(prefix);if(!size&&prefix.length!==data.length)size=measure(data);bytes=Math.floor(data.length*3/4)-((chunks?.at(-1)||data).endsWith('==')?2:(chunks?.at(-1)||data).endsWith('=')?1:0);}
+      const placeholder='data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="'+(size?.width||1)+'" height="'+(size?.height||1)+'"/>')+'#notemind-preview-'+(++serial),pixels=size?.width*size?.height*4,decodedEstimate=Number.isFinite(pixels)&&pixels>0?pixels:Math.max(1,maxDecodedBytes);
+      entry={key,data,chunks,type,size,placeholder,reference,sourceAssets:snapshot,name,decodedBytes:decodedEstimate,bytes,url:null,active:0,used:++clock};if(!types)cache.set(key,types=new Map());types.set(type,entry);placeholders.set(placeholder,entry);
     }
-    entry.used = ++clock; return entry;
+    entry.used=++clock;return entry;
   }
+
   function materialize(entry) {
+    if(entry.reference)throw Error('Use asynchronous loading for this picture.');
     if (!entry.url) {
       cancelLoading(entry);beforeMaterialize(entry);
       entry.url = urls.createObjectURL(blob(entry)); blobBytes += entry.bytes; decodedBytes += entry.decodedBytes;
@@ -60,22 +60,25 @@
   }
   const abortError=()=>Object.assign(Error('Picture source loading cancelled.'),{name:'AbortError'});
   function waitForSignal(promise,signal){if(!signal)return promise;if(signal.aborted)return Promise.reject(abortError());return new Promise((resolve,reject)=>{const abort=()=>{signal.removeEventListener('abort',abort);reject(abortError());};signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});});}
-  function canOwn(entry){return !!urlOwners&&!options.decode&&!options.makeBlob&&!entry.workerFallback;}
+  function canOwn(entry){return !!urlOwners&&(entry.reference||!options.decode&&!options.makeBlob)&&!entry.workerFallback;}
   function* privateChunks(entry){for(const part of entry.chunks||[entry.data])for(let at=0;at<part.length;at+=262144)yield decode(part.slice(at,at+262144));}
+  const sourceChunks=(entry,signal)=>entry.reference?options.readChunks(entry.sourceAssets,entry.name,{signal}):privateChunks(entry);
+  async function referenceBlob(entry,signal){const parts=[];let count=0;for await(const bytes of sourceChunks(entry,signal)){try{if(signal.aborted)throw abortError();if(!(bytes instanceof Uint8Array)||!bytes.byteLength||bytes.byteLength>196608||count+bytes.byteLength>entry.bytes)throw Error('Invalid picture source chunk.');count+=bytes.byteLength;parts.push(new Blob([bytes]));}finally{if(options.ownedSourceChunks)discard(bytes);}}if(count!==entry.bytes)throw Error('Incomplete picture source.');return new Blob(parts,{type:entry.type});}
   function materializeAsync(entry){
     if(entry.url&&(!entry.urlOwner||entry.urlOwner.alive)){entry.used=++clock;return Promise.resolve(entry.url);}
-    if(entry.url)revoke(entry);if(!canOwn(entry))return Promise.resolve(materialize(entry));if(entry.loading)return entry.loading.promise;
+    if(entry.url)revoke(entry);if(!canOwn(entry)&&!entry.reference)return Promise.resolve(materialize(entry));if(entry.loading)return entry.loading.promise;
     beforeMaterialize(entry);const controller=new AbortController(),loading={controller,promise:null};entry.loading=loading;
     loading.promise=(async()=>{let owner;try{
-      owner=await urlOwners.create(privateChunks(entry),{bytes:entry.bytes,type:entry.type,signal:controller.signal,ownedChunks:true,onLost:()=>{if(entry.urlOwner===owner){revoke(entry);schedule();}}});
-      if(controller.signal.aborted||entry.retired||entry.loading!==loading){await owner.release();throw Object.assign(Error('Picture source loading cancelled.'),{name:'AbortError'});}
-      entry.urlOwner=owner;entry.url=owner.url;blobBytes+=entry.bytes;decodedBytes+=entry.decodedBytes;entry.used=++clock;return entry.url;
+      let source;if(canOwn(entry))owner=await urlOwners.create(sourceChunks(entry,controller.signal),{bytes:entry.bytes,type:entry.type,signal:controller.signal,ownedChunks:!entry.reference||!!options.ownedSourceChunks,onLost:()=>{if(entry.urlOwner===owner){revoke(entry);schedule();}}});else source=await referenceBlob(entry,controller.signal);
+      if(controller.signal.aborted||entry.retired||entry.loading!==loading){await owner?.release();throw Object.assign(Error('Picture source loading cancelled.'),{name:'AbortError'});}
+      entry.urlOwner=owner||null;entry.url=owner?owner.url:urls.createObjectURL(source);blobBytes+=entry.bytes;decodedBytes+=entry.decodedBytes;entry.used=++clock;return entry.url;
     }finally{if(entry.loading===loading)entry.loading=null;}})();return loading.promise;
   }
+  const displayed=img=>!!host&&!host.hidden&&img.isConnected!==false&&(typeof img.getClientRects!=='function'||img.getClientRects().length>0);
   function sourceForVisible(img,entry){
-    if(!canOwn(entry)){const src=materialize(entry);img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;return;}
-    void materializeAsync(entry).then(src=>{if(bound.get(img)===entry&&entry.visible?.has(img)&&host?.contains(img)&&assetsFor?.()?.[img.dataset.asset]===entry.data){img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;}}).catch(error=>{
-      if(error.name==='AbortError')return;if(entry.retired||bound.get(img)!==entry||!entry.visible?.has(img)||!host?.contains(img)||assetsFor?.()?.[img.dataset.asset]!==entry.data)return;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}const src=materialize(entry);img.loading='eager';img.src=src;
+    if(!canOwn(entry)&&!entry.reference){const src=materialize(entry);img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;return;}
+    void materializeAsync(entry).then(src=>{if(displayed(img)&&bound.get(img)===entry&&entry.visible?.has(img)&&host?.contains(img)&&assetsFor?.()?.[img.dataset.asset]===entry.data){img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;}}).catch(error=>{
+      if(error.name==='AbortError')return;if(entry.retired||!displayed(img)||bound.get(img)!==entry||!entry.visible?.has(img)||!host?.contains(img)||assetsFor?.()?.[img.dataset.asset]!==entry.data)return;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}if(entry.reference){void materializeAsync(entry).then(src=>{if(displayed(img)&&bound.get(img)===entry&&entry.visible?.has(img)&&host?.contains(img)&&assetsFor?.()?.[img.dataset.asset]===entry.data){img.loading='eager';img.src=src;}}).catch(()=>{if(bound.get(img)===entry)img.title='The picture could not be loaded.'});}else{const src=materialize(entry);img.loading='eager';img.src=src;}
     });
   }
   function url(name, data, type) { const entry = get(name, data, type); return options.lazy ? entry.placeholder : materialize(entry); }
@@ -129,14 +132,14 @@
   }
   async function ensure(img) {
     const release=pin(img),entry=bound.get(img),name=img.dataset.asset,signal=viewController?.signal;let decoding;
-    try{const src=canOwn(entry)?await waitForSignal(materializeAsync(entry),signal):materialize(entry);if(!host?.contains(img)||assetsFor()?.[name]!==entry.data||bound.get(img)!==entry)throw Error('The original picture is no longer open.');img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;decoding=img.decode();await waitForSignal(decoding,signal);if(!host?.contains(img)||assetsFor()?.[name]!==entry.data||bound.get(img)!==entry||img.getAttribute('src')!==entry.url)throw Error('The original picture is no longer open.');return img;}
+    try{const src=canOwn(entry)||entry.reference?await waitForSignal(materializeAsync(entry),signal):materialize(entry);if(!displayed(img)||!host?.contains(img)||assetsFor()?.[name]!==entry.data||bound.get(img)!==entry)throw Error('The original picture is no longer open.');img.loading='eager';if(img.getAttribute('src')!==src)img.src=src;decoding=img.decode();await waitForSignal(decoding,signal);if(!displayed(img)||!host?.contains(img)||assetsFor()?.[name]!==entry.data||bound.get(img)!==entry||img.getAttribute('src')!==entry.url)throw Error('The original picture is no longer open.');return img;}
     finally{if(signal?.aborted&&decoding)void Promise.resolve(decoding).catch(()=>{}).then(release);else release();}
   }
   async function withImage(img, run) { const release = pin(img); try { await ensure(img); return await run(img); } finally { release(); } }
   function lease(name,data,type){const entry=get(name,data,type);entry.active++;let url;try{url=materialize(entry);trim();}catch(error){entry.active--;trim();throw error;}let released=false;return {url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);if(entry.retired&&!entry.active)revoke(entry);trim();}};}
   async function leaseAsync(name,data,type,{signal}={}){
     const entry=get(name,data,type);entry.active++;
-    try{if(signal?.aborted)throw abortError();let url;try{url=await waitForSignal(materializeAsync(entry),signal);}catch(error){if(error.name==='AbortError'||entry.retired)throw error;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}url=materialize(entry);}if(signal?.aborted)throw abortError();let released=false;trim();return{url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);if(entry.retired&&!entry.active)revoke(entry);trim();}};}
+    try{if(signal?.aborted)throw abortError();let url;try{url=await waitForSignal(materializeAsync(entry),signal);}catch(error){if(error.name==='AbortError'||entry.retired)throw error;if(!entry.workerFallback){entry.workerFallback=true;workerFallbacks++;}url=entry.reference?await waitForSignal(materializeAsync(entry),signal):materialize(entry);}if(signal?.aborted)throw abortError();let released=false;trim();return{url,release(){if(released)return;released=true;entry.active=Math.max(0,entry.active-1);if(entry.retired&&!entry.active)revoke(entry);trim();}};}
     catch(error){entry.active=Math.max(0,entry.active-1);if(!entry.active)cancelLoading(entry);if(entry.retired&&!entry.active)revoke(entry);trim();throw error;}
   }
   function consumerPool(){
@@ -151,7 +154,7 @@
     return{hold,retire,stats:()=>({leases:records.size,pending:[...records].filter(record=>!record.settled).length,releaseErrors})};
   }
   function retainMany(assetSets) {
-    const used=new Set();for(const assets of assetSets||[])for(const[name,data]of Object.entries(assets||{}))if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
+    const used=new Set();for(const assets of assetSets||[])for(const[name,data]of Object.entries(assets||{}))if(options.isRef?.(data))used.add(options.identity?.(assets,name)||data);else if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
     retained = used;
     trim();
   }
