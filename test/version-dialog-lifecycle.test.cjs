@@ -26,3 +26,13 @@ test('edits made while a version snapshot saves prevent an outdated restoration'
  const h=fixture();await h.versions();h.resolve(0,'RESTORED A');await tick();const restoring=h.dialog.querySelector('.restore-version').onclick();await tick();h.c.editorText='A typed during snapshot';h.target.editVersion++;h.snapshots[0]();await restoring;
  assert.equal(h.c.editorText,'A typed during snapshot');assert.match(h.errors[0],/changed while restoring/);
 });
+test('version previews use an independent lazy image owner and release stale or closed reference documents',async()=>{
+ const h=fixture(),refs=require('../src/document-asset-reference.js'),image=refs.create({id:require('node:crypto').randomUUID(),bytes:3,chars:4,sha256:'a'.repeat(64),mime:'image/png',binaryGraphics:false,width:30,height:20}),released=[],owners=[];
+ h.c.window.NoteMindDocumentSync={releaseDocument:value=>released.push(value)};h.c.window.NoteMindImagePreviews={create:options=>{assert.equal(options.lazy,true);const owner={url:(name,value)=>{assert.equal(value,image);return'blob:version';},size:()=>({width:30,height:20}),retainMany:values=>owner.retained=values,mount:(element,getAssets)=>{owner.element=element;owner.getAssets=getAssets;},clear:()=>owner.cleared=(owner.cleared||0)+1};owners.push(owner);return owner;}};
+ await h.versions();const old={text:'![Image](assets/a.png)',assets:{'assets/a.png':image},meta:{}};h.reads[0].resolve(old);await tick();assert.equal(owners.length,1);assert.equal(owners[0].getAssets()['assets/a.png'],image);assert.match(h.dialog.querySelector('.version-preview').innerHTML,/blob:version/);
+ h.dialog.querySelectorAll('.version-list button')[1].click();assert.ok(released.includes(old));h.dialog.close();const late={text:'Late',assets:{'assets/a.png':image},meta:{}};h.reads[1].resolve(late);await tick();assert.ok(released.includes(late));assert.ok(owners[0].cleared>=2);
+});
+test('closing a version dialog during its safety snapshot keeps the restoration capture until that work settles',async()=>{
+ const h=fixture(),held=new Set(),released=[];h.c.window.NoteMindDocumentSync={capture:value=>{const captured={...value,assets:{...value.assets}};held.add(captured);return captured;},releaseDocument:value=>{held.delete(value);released.push(value);}};
+ await h.versions();h.resolve(0,'RESTORED');await tick();const restoring=h.dialog.querySelector('.restore-version').onclick();await tick();assert.equal(held.size,1);h.dialog.close();assert.equal(held.size,1);h.snapshots[0]();await restoring;assert.equal(held.size,0);assert.equal(h.target.doc.text,'Current A');
+});

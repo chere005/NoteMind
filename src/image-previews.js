@@ -1,7 +1,7 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = { create: options => factory(require('./document-renderer.cjs').imageDimensions, options) };
   else root.NoteMindImagePreviews = factory(root.NoteMindDocument.imageDimensions, {lazy:true,identity:(assets,name)=>root.NoteMindDocumentSync?.assetIdentity?.(assets,name),chunks:(assets,name)=>root.NoteMindDocumentSync?.assetChunks?.(assets,name),isRef:value=>!!root.NoteMindDocumentSync?.isRef?.(value),info:(assets,name)=>root.NoteMindDocumentSync?.info?.(assets,name),readChunks:(assets,name,options)=>root.NoteMindDocumentSync.readChunks(assets,name,options),ownedSourceChunks:true});
-})(typeof window === 'undefined' ? this : window, function (dimensions, options = {}) {
+})(typeof window === 'undefined' ? this : window, function createPreviews(dimensions, options = {}) {
   const cache = new Map(), placeholders = new Map(), bound = new Map(), pins = new Map();
   const urls = options.urls || URL, makeBlob = options.makeBlob || ((bytes, type) => new Blob([bytes], { type }));
   const decode = options.decode || (data => typeof Uint8Array.fromBase64 === 'function' ? Uint8Array.fromBase64(data) : Uint8Array.from(atob(data), c => c.charCodeAt(0)));
@@ -161,5 +161,5 @@
   function retain(assets) { retainMany([assets]); }
   function clear() {unmount();for(const entry of entries())forget(entry);urlOwners?.trim();}
   function stats() { return { entries: entries().length, blobBytes, estimatedDecodedBytes:decodedBytes, active: entries().filter(entry => entry.active).length,...(urlOwners?{urlOwners:urlOwners.stats(),workerFallbacks}: {}) }; }
-  return { url, size, apply, retain, retainMany, clear, mount, refresh, pin, ensure, withImage, lease, leaseAsync, consumerPool, stats };
+  return { create: next=>createPreviews(dimensions,{...options,...next}),url, size, apply, retain, retainMany, clear, mount, refresh, pin, ensure, withImage, lease, leaseAsync, consumerPool, stats };
 });
