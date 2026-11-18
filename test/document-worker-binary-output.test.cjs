@@ -1,13 +1,15 @@
 const{test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),{randomUUID}=require('node:crypto'),factory=require('../src/document-byte-tools.js'),{executeBytes,CHUNK}=require('../src/document-worker-bytes.cjs');
 const task=()=>new Promise(setImmediate);
-function fixture({readFault,ackFault,releaseFault,mutate,signal}={}){
+function fixture({beginFault,readFault,ackFault,releaseFault,mutate,signal}={}){
  const bytes=factory({consumeOwned:true,uuid:randomUUID,decode:text=>Uint8Array.from(Buffer.from(text,'base64'))}),sender=[],receiver=[],receipts=[];
  const context={window:{NoteMindDocumentBytes:bytes,documentTools:{image:async input=>{const taken=bytes.take(input);return{data:bytes.publishOwned(taken.owner,taken.bytes.buffer),width:4,height:3}}}}};
- let pending,reads=0,acks=0,releases=0;
- return{bytes,sender,receiver,receipts,get pending(){return pending},execute:async code=>{
+ let pending,reads=0,acks=0,releases=0,begins=0;const beginResults=[];
+ return{bytes,sender,receiver,receipts,beginResults,get pending(){return pending},execute:async code=>{
   if(code.includes('["ackBinary"]')){acks++;assert.equal(receiver.at(-1).data.byteLength,0,'Main consumes its clone before sender ACK');if(ackFault===true||ackFault==='once'&&acks===1)throw Error('ACK reply lost');}
+  if(code.includes('["begin"]')){begins++;if(beginFault==='once'&&begins===1)throw Error('begin reply lost');}
   if(code.includes('["release"]')){releases++;if(releaseFault==='once'&&releases===1)throw Error('release reply lost');}
   const value=await vm.runInNewContext(code,context);
+  if(code.includes('["begin"]')){beginResults.push(value);assert.equal(bytes.stats().sessions,1);if(beginFault===true||beginFault==='after-once'&&begins===1)throw Error('begin reply lost after dispatch');}
   if(code.includes('["release"]')&&releaseFault==='after-once'&&releases===1)throw Error('release reply lost after dispatch');
   if(code.includes('["readBinary"]')){reads++;sender.push(value);pending={id:JSON.parse(code.slice(code.indexOf('](')+2).split(',')[0]),chunk:value.chunk};signal?.abort();if(readFault===true||readFault==='once'&&reads===1)throw Error('read reply lost');const copy=structuredClone(value);receiver.push(copy);mutate?.(copy);return copy;}
   if(code.includes('["ackBinary"]')){assert.equal(sender.at(-1).data.byteLength,0);receipts.push(value);if(ackFault==='after-once'&&acks===1)throw Error('ACK reply lost after dispatch');}
@@ -34,9 +36,10 @@ test('cancellation after receiving a chunk still consumes and acknowledges both 
 test('malformed offset is rejected after exact received backing and sender ownership are both retired',async()=>{
  const h=fixture({mutate:part=>part.offset++});await assert.rejects(executeBytes(h.execute,'image',[Buffer.alloc(100)],{binaryOutput:true}),/interrupted/);assert.equal(h.receiver[0].data.byteLength,0);assert.equal(h.sender[0].data.byteLength,0);assert.equal(h.bytes.stats().bytes,0);
 });
-test('transient read, ACK and release rejection recover autonomously with the same token and no external ACK',async()=>{
- for(const options of[{readFault:'once'},{ackFault:'once'},{ackFault:'after-once'},{releaseFault:'once'},{releaseFault:'after-once'}]){
+test('transient begin, read, ACK and release rejection recover autonomously with the same token and no external ACK',async()=>{
+ for(const options of[{beginFault:'once'},{beginFault:'after-once'},{readFault:'once'},{ackFault:'once'},{ackFault:'after-once'},{releaseFault:'once'},{releaseFault:'after-once'}]){
   const h=fixture(options),input=Buffer.alloc(100,27),out=await executeBytes(h.execute,'image',[input],{binaryOutput:true});assert.deepEqual(out.data,input);assert.equal(h.bytes.stats().bytes,0);assert.equal(h.bytes.stats().pendingBinaryChunks,0);assert.ok(h.sender.every(part=>part.data.byteLength===0));assert.ok(h.receiver.every(part=>part.data.byteLength===0));
+  if(options.beginFault==='after-once')assert.equal(h.beginResults[0],h.beginResults[1],'begin retry reuses one exact session');
   if(options.readFault){assert.equal(h.sender.length,2);assert.equal(h.sender[0].data.buffer,h.sender[1].data.buffer,'read retry reuses one exact sender backing');assert.equal(h.receiver.length,1);}
   out.data.buffer.transfer(0);
  }

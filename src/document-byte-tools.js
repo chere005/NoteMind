@@ -7,7 +7,14 @@
  function release(id){const item=sessions.get(id);if(!item)return;if(!item.pending)return finish(item);if(!item.closing){clearTimeout(item.timer);item.closing=new Promise(resolve=>item.closed=resolve);}return item.closing;}
  function expire(item,delay){clearTimeout(item.timer);const failed=()=>{cleanupFailures++;if(sessions.get(item.id)===item)expire(item,25)};item.timer=setTimeout(()=>{try{release(item.id)?.catch?.(failed)}catch{failed()}},delay);item.timer.unref?.()}
  function touch(item){expire(item,15*60*1000)}
- function begin(total){if(!Number.isSafeInteger(total)||total<0||total>entryLimit||sessions.size>=2||used+total>limit)throw Error('Document byte transfer exceeds its limit.');const id=uuid(),item={id,input:new Uint8Array(total),at:0,charged:total,outputs:new Map(),next:0,owned:new Set()};if(consumeOwned)item.owned.add(item.input.buffer);sessions.set(id,item);used+=total;touch(item);return id}
+ function begin(total,ownedId){
+  if(!Number.isSafeInteger(total)||total<0||total>entryLimit)throw Error('Document byte transfer exceeds its limit.');
+  if(ownedId!==undefined&&(!consumeOwned||typeof ownedId!=='string'||!ownedId.length||ownedId.length>128||!/^[A-Za-z0-9:-]+$/.test(ownedId)))throw Error('Invalid private document transfer identity.');
+  const id=ownedId??uuid(),existing=sessions.get(id);
+  if(existing){if(ownedId!==undefined&&!existing.closing&&existing.input?.length===total&&existing.at===0&&existing.next===0)return id;throw Error('Document transfer identity is already in use.');}
+  if(sessions.size>=2||used+total>limit)throw Error('Document byte transfer exceeds its limit.');
+  const item={id,input:new Uint8Array(total),at:0,charged:total,outputs:new Map(),next:0,owned:new Set()};if(consumeOwned)item.owned.add(item.input.buffer);sessions.set(id,item);used+=total;touch(item);return id;
+ }
  function write(id,offset,data){const item=session(id);if(!item.input||offset!==item.at||typeof data!=='string'||data.length>CHUNK/3*4)throw Error('Invalid document byte chunk.');const bytes=decode(data);try{if(!bytes.length||bytes.length>CHUNK||item.at+bytes.length>item.input.length)throw Error('Invalid document byte chunk.');item.input.set(bytes,item.at);item.at+=bytes.length;touch(item);return item.at}finally{if(consumeOwned&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)discard(bytes.buffer)}}
  function take(value){if(!value||typeof value!=='object'||typeof value.documentByteInput!=='string')return null;const item=session(value.documentByteInput);if(!item.input||item.at!==item.input.length)throw Error('Document byte transfer is incomplete.');const bytes=item.input;item.input=null;touch(item);return{bytes,owner:item.id}}
  function put(owner,bytes,owned){const item=session(owner);if(!(bytes instanceof Uint8Array)||bytes.length>entryLimit||used+bytes.length>limit)throw Error('Document output exceeds its limit.');const token=String(++item.next);item.outputs.set(token,bytes);if(owned)item.owned.add(bytes.buffer);item.charged+=bytes.length;used+=bytes.length;touch(item);return{documentByteOutput:token,bytes:bytes.length}}

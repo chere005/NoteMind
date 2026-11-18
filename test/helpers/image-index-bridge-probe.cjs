@@ -14,7 +14,7 @@ function observeImageBridge(host,{sample=async()=>{},limit=96,now=()=>performanc
   if(closed||sampling||!operation)return original.apply(this,args);
   totals.calls++;totals.codeChars+=code.length;
   if(operation==='begin'){
-   current={attempt:++sequence,inputBytes:Number(code.match(/\.bytes\["begin"\]\((\d+)\)/)?.[1]||0),uploadCalls:0,uploadCodeChars:0,readCalls:0,readChars:0,binaryReadBytes:0,ackCalls:0,outputBytes:0};
+   current={attempt:++sequence,inputBytes:Number(code.match(/\.bytes\["begin"\]\((\d+)(?:,|\))/)?.[1]||0),uploadCalls:0,uploadCodeChars:0,readCalls:0,readChars:0,binaryReadBytes:0,ackCalls:0,outputBytes:0};
    await record('before-begin');
   }
   const value=await original.apply(this,args);
