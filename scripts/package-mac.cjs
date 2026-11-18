@@ -7,6 +7,11 @@ const executable=cp.execFileSync('/usr/libexec/PlistBuddy',['-c','Print CFBundle
 const arch=cp.execFileSync('lipo',['-archs',path.join(bundle,'Contents/MacOS',executable)],{encoding:'utf8'});
 require('./mac-target.cjs').validateMacTarget(process.platform,process.arch,arch);
 const set=(key,value)=>{try{cp.execFileSync('/usr/bin/plutil',['-replace',key,'-string',value,plist]);}catch{cp.execFileSync('/usr/bin/plutil',['-insert',key,'-string',value,plist]);}};
+// Electron's macOS packaged-mode test uses the executable basename, not the
+// branded bundle name. Rename before publishing the entry and sealing the app.
+const brandedExecutable='NoteMind',brandedPath=path.join(bundle,'Contents/MacOS',brandedExecutable);
+if(executable!==brandedExecutable){if(fs.existsSync(brandedPath))throw Error('The branded NoteMind executable already exists.');fs.renameSync(path.join(bundle,'Contents/MacOS',executable),brandedPath);}
+set('CFBundleExecutable',brandedExecutable);
 const version=require('../package.json').version;
 set('CFBundleName','NoteMind');set('CFBundleDisplayName','NoteMind');set('CFBundleIdentifier','com.seancheren.notemind');set('CFBundleShortVersionString',version);set('CFBundleVersion',version);
 set('NSCameraUsageDescription','NoteMind uses the camera to capture pages and pictures.');
