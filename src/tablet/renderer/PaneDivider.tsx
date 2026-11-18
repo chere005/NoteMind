@@ -26,6 +26,7 @@ export function PaneDivider({ sidebar }: Props) {
   
   const before = useRef<{ fraction: number | null } | null>(null)
   const [dragging, setDragging] = useState(false)
+  const pointer=useRef<{id:number;node:HTMLElement}|null>(null)
 
   const app = (): HTMLElement | null => self.current?.closest<HTMLElement>(".workspace") ?? null
 
@@ -89,28 +90,35 @@ export function PaneDivider({ sidebar }: Props) {
     store(fraction.current)
   }
 
+  const ownsPointer=(event:{pointerId:number;currentTarget:HTMLElement})=>pointer.current?.id===event.pointerId&&pointer.current.node===event.currentTarget
+  const finishPointer=(event:React.PointerEvent<HTMLDivElement>,commit=false)=>{
+    if(!ownsPointer(event)||event.type==='lostpointercapture'&&event.currentTarget.hasPointerCapture(event.pointerId))return
+    if(commit)move(event.clientX)
+    pointer.current=null;setDragging(false)
+    try{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)}catch{}
+    store(fraction.current)
+  }
+
   return (
     <div ref={self} className={`pane-divider${dragging ? " dragging" : ""}`}
          role="separator" aria-orientation="vertical" aria-label="Resize editor and capture pane"
          tabIndex={0}
          title="Drag to resize · Double-click to expand or restore"
          onPointerDown={(event) => {
-           if (event.button !== 0) return
+           if (event.button !== 0||pointer.current) return
            // The mouse must not take the keyboard from the notes.
            event.preventDefault()
-           event.currentTarget.setPointerCapture(event.pointerId)
+           pointer.current={id:event.pointerId,node:event.currentTarget}
+           try{event.currentTarget.setPointerCapture(event.pointerId)}catch{}
            setDragging(true)
          }}
-         onPointerMove={(event) => { if (dragging) move(event.clientX) }}
-         onPointerUp={(event) => {
-           if (!dragging) return
-           setDragging(false)
-           try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {  }
-           store(fraction.current)
-         }}
-         onPointerCancel={() => { setDragging(false); store(fraction.current) }}
+         onPointerMove={(event) => { if (ownsPointer(event)) move(event.clientX) }}
+         onPointerUp={event=>finishPointer(event,true)}
+         onPointerCancel={event=>finishPointer(event)}
+         onLostPointerCapture={event=>finishPointer(event)}
          onDoubleClick={toggleFull}
          onKeyDown={(event) => {
+           if(event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229)return
            if (event.key === "ArrowLeft") { event.preventDefault(); nudge(24) }
            else if (event.key === "ArrowRight") { event.preventDefault(); nudge(-24) }
            else if (event.key === "Home") { event.preventDefault(); fraction.current = null; before.current = null; store(null); apply() }
