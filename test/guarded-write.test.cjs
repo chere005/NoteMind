@@ -36,3 +36,17 @@ test('creating a file never overwrites an unexpected file',async()=>{
   assert.equal(await fs.readFile(file,'utf8'),'external');await fs.unlink(file);await replaceIfUnchanged(file,'new',null);assert.equal(await fs.readFile(file,'utf8'),'new');
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('a writable replacement sync failure preserves the original target before publication',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-sync-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const file=path.join(root,'note.pdf');await fs.writeFile(file,'original');const open=fs.open;
+ t.mock.method(fs,'open',async(target,...args)=>{const handle=await open(target,...args);if(String(target).endsWith('.tmp'))handle.sync=async()=>{throw Object.assign(Error('replacement sync failed'),{code:'EIO'})};return handle;});
+ await assert.rejects(replaceIfUnchanged(file,'replacement',Buffer.from('original')),{code:'EIO'});assert.equal(await fs.readFile(file,'utf8'),'original');assert.deepEqual(await fs.readdir(root),['note.pdf']);
+});
+test('directory sync failure retains an exact committed result without replaying its callback',async t=>{
+ if(process.platform==='win32')return;const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-directory-sync-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const file=path.join(root,'note.pdf');await fs.writeFile(file,'original');const open=fs.open;let committed=0;
+ t.mock.method(fs,'open',async(target,...args)=>{const handle=await open(target,...args);if(target===root)handle.sync=async()=>{throw Object.assign(Error('directory sync failed'),{code:'EIO'})};return handle;});
+ await assert.rejects(replaceIfUnchanged(file,'replacement',Buffer.from('original'),{afterCommit:()=>committed++}),error=>error.code==='EIO'&&error.notemindFileCommitted===true);assert.equal(committed,1);assert.equal(await fs.readFile(file,'utf8'),'replacement');assert.deepEqual(await fs.readdir(root),['note.pdf']);
+});
+test('the final publication hook can cancel without replacing the target after verification',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'notemind-save-final-cancel-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const file=path.join(root,'note.pdf');await fs.writeFile(file,'original');let committed=0;
+ await assert.rejects(replaceIfUnchanged(file,'replacement',Buffer.from('original'),{beforeCommit(){throw Object.assign(Error('cancelled'),{name:'AbortError'})},afterCommit:()=>committed++}),{name:'AbortError'});assert.equal(committed,0);assert.equal(await fs.readFile(file,'utf8'),'original');assert.deepEqual(await fs.readdir(root),['note.pdf']);
+});

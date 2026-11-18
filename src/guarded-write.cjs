@@ -48,15 +48,18 @@ async function fingerprintFile(file){
 }
 
 // Prepare the replacement first, then compare again immediately before its atomic commit.
-async function replaceIfUnchanged(file,bytes,expected,{afterCommit}={}){
+async function replaceIfUnchanged(file,bytes,expected,{beforeCommit,afterCommit}={}){
  const temp=file+'.'+randomUUID()+'.tmp';let committed=false;await fs.mkdir(path.dirname(file),{recursive:true});
  try{
-  await fs.writeFile(temp,bytes,{flag:'wx'});
+  const handle=await fs.open(temp,'wx');try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
   await withFileLock(file,async()=>{
    if(!await matchesExisting(file,expected))throw Error('The file changed while it was being saved. Your draft is safe. Reopen it or use Save As to keep both.');
+   // The final cancellation fence is synchronous; verification remains the
+   // last asynchronous operation before the atomic publication.
+   beforeCommit?.();
    await fs.rename(temp,file);
    committed=true;
-   await afterCommit?.();
+   const failures=[];try{await afterCommit?.();}catch(error){failures.push(error);}try{await require('./fs-durability.cjs').syncDirectory(path.dirname(file));}catch(error){failures.push(error);}if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'The file was saved, but final durability or metadata work could not finish.');
   });
  }catch(error){if(committed){if(!(error instanceof Error))error=Error(String(error));error.notemindFileCommitted=true;}throw error;
  }finally{await fs.unlink(temp).catch(()=>{});}
