@@ -15,3 +15,5 @@ test('PDF page entry cannot throw or navigate before its source opens or while a
 test('PDF Fit resets both layout zoom and the drawing surface precision view',()=>{
  const h=render({opened:{id:'source',pageCount:3},zoom:2,shown:{info:{width:600,height:900},model:{aspect:2/3,strokes:[]}}});let fitted=0;h.surface.props.ref.current={fitView:()=>fitted++};h.fit.props.onClick();assert.equal(h.owner.snapshot.zoom,1);assert.equal(fitted,1);
 });
+
+test('PDF page entry leaves IME confirmation to its owner before ordinary Enter navigation',()=>{for(const composing of [{nativeEvent:{isComposing:true}},{keyCode:229},{nativeEvent:{keyCode:229}},{isComposing:true}]){const {owner,input}=render({opened:{id:'source',pageCount:3},pageInput:'2'});let prevented=0;input.props.onKeyDown({key:'Enter',preventDefault(){prevented++;},...composing});assert.equal(owner.refs.request.current,0);assert.equal(owner.snapshot.page,1);assert.equal(prevented,0);}const ordinary=render({opened:{id:'source',pageCount:3},pageInput:'2'});ordinary.input.props.onKeyDown({key:'Enter',preventDefault(){}});assert.equal(ordinary.owner.refs.request.current,1);});
