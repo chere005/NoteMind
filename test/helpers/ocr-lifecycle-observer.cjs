@@ -1,0 +1,27 @@
+// Read-only scalar observer. No reply lines, tensors, pixels or source buffers
+// survive their synchronous event callback; the model worker is never replaced.
+function createOCRLifecycleObserver({limit=1024,now=()=>performance.now()}={}){
+ if(!Number.isSafeInteger(limit)||limit<1||limit>4096)throw Error('Invalid OCR observation limit.');
+ const rows=[],readers=new Map(),live=new Map(),seen=new WeakSet(),totals={workers:0,starts:0,replies:0,positiveReplies:0,positiveAutoReplies:0,lines:0,errors:0,actualExits:0,missingPixelACKs:0,droppedRows:0};let next=0;
+ const scalar=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
+ const record=row=>{if(rows.length<limit)rows.push({at:now(),...row});else totals.droppedRows++;};
+ function observe(worker){if(seen.has(worker))return worker;seen.add(worker);const state={id:++next,threadId:scalar(worker.threadId),current:null,post:worker.postMessage};totals.workers++;live.set(worker,state);record({kind:'created',worker:state.id,threadId:state.threadId});
+  const post=function(packet,...args){const current={wireId:scalar(packet?.id),requestId:typeof packet?.requestId==='string'?packet.requestId.slice(0,120):null,pixels:packet?.ownedPixels===true,automatic:packet?.japanese!==false,inputBytes:scalar(packet?.pixels?.data?.byteLength??packet?.bytes?.byteLength)};state.current=current;totals.starts++;record({kind:'start',worker:state.id,...current});return state.post.call(this,packet,...args);};worker.postMessage=post;
+  const message=packet=>{const current=state.current,matched=!!current&&packet?.id===current.wireId,lines=Array.isArray(packet?.lines)?packet.lines.length:0;totals.replies++;if(packet?.error)totals.errors++;if(matched&&!packet?.error){totals.lines+=lines;if(lines){totals.positiveReplies++;if(current.automatic)totals.positiveAutoReplies++;}if(current.pixels&&packet.pixelsReleased!==true)totals.missingPixelACKs++;}const timing={};for(const key of ['decode','load','detect','recognise'])timing[key]=scalar(packet?.timing?.[key]);record({kind:'reply',worker:state.id,wireId:scalar(packet?.id),matched,lines,error:typeof packet?.error==='string'?packet.error.slice(0,240):null,pixelsReleased:packet?.pixelsReleased===true,...timing});};
+  const error=value=>record({kind:'worker-error',worker:state.id,message:String(value?.message||value).slice(0,240)});
+  const exit=code=>{totals.actualExits++;live.delete(worker);worker.removeListener('message',message);worker.removeListener('error',error);if(worker.postMessage===post)worker.postMessage=state.post;record({kind:'exit',worker:state.id,threadId:state.threadId,code:scalar(code)});};worker.on('message',message);worker.on('error',error);worker.once('exit',exit);return worker;
+ }
+ function attach(reader){if(readers.has(reader))return reader;const original=reader.workerFactory,wrapped=function(...args){return observe(original.apply(this,args))};reader.workerFactory=wrapped;readers.set(reader,{original,wrapped});return reader;}
+ function snapshot(){return{totals:{...totals},liveWorkers:live.size,readers:[...readers.keys()].map(reader=>({jobs:reader.jobs?.size||0,records:reader.records?.size||0,formats:reader.formats?.size||0,cacheCounting:!!reader.cacheCounting,cacheBytes:reader.cacheBytes||0})),rows:rows.map(row=>({...row}))};}
+ function detach(){if(live.size)throw Error('OCR observation still owns actual-exit receipts.');for(const[reader,{original,wrapped}]of readers)if(reader.workerFactory===wrapped)reader.workerFactory=original;readers.clear();}
+ return{attach,snapshot,detach};
+}
+async function waitForIndexDrain({observer,indexers,storage,traffic=()=>[],sample=()=>{},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=Date.now,timeoutMs=120000,signal}={}){
+ const began=now();let state;
+ for(;;){if(signal?.aborted)throw Object.assign(Error('Index completion observation cancelled.'),{name:'AbortError'});await sample();const ocr=observer.snapshot(),stats=indexers.map(value=>value.stats()),raw=storage.assetStats()?.raw,pendingTraffic=traffic().filter(row=>(row.channel==='notes-index-images'||row.channel==='document-call'&&row.operation==='indexImages')&&!Object.hasOwn(row,'wallMs')&&!row.error).length;
+  state={wallMs:now()-began,ocr:{totals:ocr.totals,liveWorkers:ocr.liveWorkers,readers:ocr.readers},indexers:stats,raw:raw?Object.fromEntries(['working','workClaims','leases','reads','uploads','reserved','bytes','spooledBytes','materializedBytes'].map(key=>[key,raw[key]])):null,pendingTraffic};
+  if(stats.length&&raw&&pendingTraffic===0&&ocr.liveWorkers===0&&ocr.readers.every(reader=>!reader.jobs&&!reader.records&&!reader.formats&&!reader.cacheCounting)&&stats.every(value=>!value.pending&&!value.queued&&!value.active&&!value.engineWorking&&!value.engineStopping)&&['working','workClaims','leases','reads','uploads','reserved'].every(key=>!raw[key]))return state;
+  if(now()-began>=timeoutMs){const error=Error('Real image indexing and its owned worker/claims did not drain.');error.indexDrain=state;throw error;}await pause(50);
+ }
+}
+module.exports={createOCRLifecycleObserver,waitForIndexDrain};
