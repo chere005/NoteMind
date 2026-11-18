@@ -1,0 +1,30 @@
+// Private DATA-only input transport. Preload transfers the port, never bytes.
+function createInputReceiver(port,{key,write,onBroken=()=>{}}){
+ const LIMIT=196608;let last=0,receipt=null,pending=0;const debts=new Set();
+ const post=value=>port.postMessage({key,...value});
+ const retire=async data=>{const backing=data.buffer;debts.add(backing);try{while(backing.byteLength){try{backing.transfer(0)}catch{await new Promise(resolve=>setTimeout(resolve,25));}}}finally{debts.delete(backing);}};
+ port.onmessage=event=>{const value=event.data;if(value?.key!==key)return;if(value.type==='hello'){post({type:'ready'});return;}if(value.type!=='data')return;
+  const data=value.data,valid=ArrayBuffer.isView(data)&&data.BYTES_PER_ELEMENT===1&&data.buffer instanceof ArrayBuffer&&!data.byteOffset&&data.byteLength===data.buffer.byteLength&&data.byteLength>0&&data.byteLength<=LIMIT;
+  if(!valid){if(data&&typeof data==='object')debts.add(data);onBroken(Error('Invalid private DATA input receiver.'));post({type:'ack',sequence:value.sequence,released:false});return;}
+  const end=value.offset+data.byteLength;let record;
+  const identity=Number.isSafeInteger(value.sequence)&&value.sequence>0&&Number.isSafeInteger(value.attempt)&&value.attempt>0&&value.attempt<=3&&typeof value.id==='string'&&value.id.length>0&&value.id.length<=128&&Number.isSafeInteger(value.offset)&&value.offset>=0&&Number.isSafeInteger(end);
+  if(identity&&value.sequence===last+1){let error;try{if(write(value.id,value.offset,data)!==end)throw Error('Private DATA input offset changed.');}catch(failure){error=String(failure.message||failure);}last=value.sequence;record=receipt={sequence:last,id:value.id,offset:value.offset,end,error,retired:new Set()};}
+  else if(identity&&value.sequence===last&&receipt?.id===value.id&&receipt.offset===value.offset&&receipt.end===end)record=receipt;
+  else record={sequence:value.sequence,id:value.id,offset:value.offset,end,error:identity&&value.sequence<last?undefined:'Private DATA input sequence changed.',retired:new Set()};
+  pending++;void retire(data).then(()=>{pending--;record.retired.add(value.attempt);post({type:'ack',sequence:record.sequence,id:record.id,offset:record.offset,end:record.end,released:true,retiredAttempts:[...record.retired],...record.error?{error:record.error}:{}});},error=>{onBroken(error);post({type:'ack',sequence:value.sequence,released:false});});
+ };port.start?.();post({type:'ready'});return{stats:()=>({last,pending,debts:debts.size})};
+}
+function createInputSender(port,{key,valid=()=>true,onBroken=()=>{},timeoutMs=1000,retries=2}={}){
+ let sequence=0,current=null,ready=false,failed=null,closed=false,readyTimer,readyAttempt=0;let resolveReady,rejectReady;const readiness=new Promise((yes,no)=>{resolveReady=yes;rejectReady=no});readiness.catch(()=>{});
+ const failure=error=>{if(failed)return;failed=Object.assign(Error(error.message||String(error)),{code:'DOCUMENT_BYTES_RELEASE_UNCONFIRMED',resourcesReleased:false});clearTimeout(readyTimer);clearTimeout(current?.timer);rejectReady(failed);current?.reject(failed);onBroken(failed);};
+ const post=value=>{try{if(!valid())throw Error('Private DATA input frame changed.');port.postMessage({key,...value});}catch(error){failure(error)}};
+ const hello=()=>{if(ready||failed)return;if(readyAttempt++>retries)return failure(Error('Private DATA input port did not acknowledge.'));post({type:'hello'});if(!ready&&!failed)readyTimer=setTimeout(hello,timeoutMs);};
+ const listen=event=>{const value=event.data;if(value?.key!==key)return;if(value.type==='ready'){ready=true;clearTimeout(readyTimer);resolveReady();return;}if(value.type!=='ack'||!current||value.sequence!==current.sequence)return;
+  if(value.released!==true||value.id!==current.id||value.offset!==current.offset||value.end!==current.offset+current.data.byteLength)return failure(Error('Private DATA input retirement is unconfirmed.'));
+  const item=current;if(!Array.isArray(value.retiredAttempts)||!value.retiredAttempts.length||value.retiredAttempts.length>3||value.retiredAttempts.some(n=>!item.sent.has(n)))return failure(Error('Private DATA attempt retirement is unconfirmed.'));for(const n of value.retiredAttempts)item.retired.add(n);item.receiverError ||=value.error;if(item.retired.size!==item.sent.size)return;clearTimeout(item.timer);try{item.data.buffer.transfer(0);if(item.data.byteLength)throw Error('Private DATA sender backing did not retire.');}catch(error){return failure(error);}current=null;item.receiverError?item.reject(Error(item.receiverError)):item.resolve(value.end);
+ };
+ port.on('message',listen);port.start?.();hello();
+ const send=item=>{if(current!==item||failed)return;if(item.attempt>=Math.min(3,retries+1))return failure(Error('Private DATA input acknowledgement was lost.'));item.sent.add(++item.attempt);post({type:'data',sequence:item.sequence,attempt:item.attempt,id:item.id,offset:item.offset,data:item.data});if(current===item&&!failed)item.timer=setTimeout(()=>send(item),timeoutMs);};
+ return{async write(id,offset,bytes){await readiness;if(failed)throw failed;if(closed)throw Error('Private DATA input context exited.');if(current)throw Error('Private DATA input is already active.');if(!ArrayBuffer.isView(bytes)||!bytes.byteLength||bytes.byteLength>196608)throw Error('Invalid private DATA input chunk.');return new Promise((resolve,reject)=>{const item=current={sequence:++sequence,id,offset,data:Uint8Array.from(new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength)),resolve,reject,attempt:0,sent:new Set(),retired:new Set(),timer:null};send(item);});},stop:()=>failure(Error('Private DATA input context closed.')),async afterExit(){if(current||!ready)failure(Error('Private DATA input context exited.'));closed=true;clearTimeout(readyTimer);clearTimeout(current?.timer);while(current?.data.byteLength){try{current.data.buffer.transfer(0)}catch{await new Promise(resolve=>setTimeout(resolve,25));}}current=null;port.off?.('message',listen);port.close?.();},stats:()=>({ready,failed:!!failed,pending:!!current,senderBytes:current?.data.byteLength||0})};
+}
+module.exports={createInputReceiver,createInputSender};

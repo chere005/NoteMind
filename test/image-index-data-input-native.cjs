@@ -1,0 +1,19 @@
+// Matched first8 ORIGINAL JPEG input-only bridge experiment; no canvas/OCR/App.
+const fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),{createHash}=require('node:crypto');
+const originalFile='/Users/example/GIT/NoteMind/test/image-index-bridge-retention-native.cjs',original=fs.readFileSync(originalFile,'utf8'),sha=s=>createHash('sha256').update(s).digest('hex'),dataMode=process.env.NOTEMIND_BRIDGE_DATA_INPUT==='1';let code=original;
+function once(a,b){if(code.split(a).length!==2)throw Error('Matched bridge boundary changed: '+a);code=code.replace(a,b);}
+for(const key of['NOTEMIND_BRIDGE_INPUT_ONLY','NOTEMIND_BRIDGE_FAST_DECODE','NOTEMIND_BRIDGE_BINARY_OUTPUT']){if(process.env[key]&&process.env[key]!=='1')throw Error('Preserve exact input-only fast baseline settings.');process.env[key]='1';}
+once("require('../src/document-worker-bytes.cjs')",'require('+JSON.stringify(path.resolve(__dirname,'../src/document-worker-bytes.cjs'))+')');
+once("require('../src/document-byte-tools.js')",'require('+JSON.stringify(path.resolve(__dirname,'../src/document-byte-tools.js'))+')');
+once("sandbox:true,contextIsolation:true,nodeIntegration:false,partition:","sandbox:false,preload:"+JSON.stringify(path.resolve(__dirname,'../src/preload.cjs'))+",contextIsolation:true,nodeIntegration:false,partition:");
+once("out=path.resolve('test-results/performance/image-index-bridge-'+source.slice(0,7)+(inputOnly?(fastDecode?'-fast-input-only':'-input-only'):binaryOutput?'-binary':'')+'.json')","out=path.resolve('test-results/performance-0.37/image-index-data-input-'+("+dataMode+"?'data':'baseline')+'-'+process.pid+'.json')");
+once('let win,probe,timer,deadline,archive,finished=false;','let win,probe,timer,deadline,archive,inputSender,finished=false;');
+once("probe?.detach();if(win&&!win.isDestroyed())win.destroy();report.ok=", "probe?.detach();if(win&&!win.isDestroyed()){const pid=win.webContents.getOSProcessId();await require('../src/document-helper-lifetime.cjs').stopConverter(win,{pid});win=null;}await inputSender?.afterExit();report.dataTransportMode="+dataMode+";report.inputTransportStats=inputSender?.stats();report.dataDriverProof=globalThis.__indexDataDriverProof;report.ok=");
+const setup=`const {MessageChannelMain}=require('electron'),{createInputSender,createInputReceiver}=require(${JSON.stringify(path.resolve(__dirname,'../src/image-index-input-data.cjs'))}),channel=new MessageChannelMain(),portKey='__notemindIndexRaster_'+crypto.randomUUID().replaceAll('-','');
+ await win.webContents.executeJavaScript('window.addEventListener("message",function receiver(event){if(event.source!==window||event.data?.kind!=="notemind-index-input-port-v1"||event.data.key!=='+JSON.stringify(portKey)+')return;window.removeEventListener("message",receiver);window.__inputDataReceiver=('+createInputReceiver.toString()+')(event.ports[0],{key:'+JSON.stringify(portKey)+',write:(...args)=>window.fixture.bytes.writeBinary(...args)});});true');
+ inputSender=createInputSender(channel.port1,{key:portKey,valid:()=>!!win&&!win.isDestroyed(),onBroken:error=>{void finish(error)}});win.webContents.postMessage('notemind-index-input-port',{key:portKey},[channel.port2]);
+`;
+once(' timer=setInterval(()=>{try{memory()}catch(error){void finish(error)}},50);',setup+' timer=setInterval(()=>{try{memory()}catch(error){void finish(error)}},50);');
+once('],{binaryOutput});','],{binaryOutput,inputTransport:'+dataMode+'?inputSender:undefined});');
+globalThis.__indexDataDriverProof={scope:'Matched preload/renderer/runtime/guards and original8 JPEGs; data input is the sole mode difference',dataMode,originalFile,originalSHA:sha(original),derivedSHA:sha(code),wrapperSHA:sha(fs.readFileSync(__filename))};
+const entry=new Module(originalFile,module);entry.filename=originalFile;entry.paths=Module._nodeModulePaths(path.dirname(originalFile));entry._compile(code,originalFile);
