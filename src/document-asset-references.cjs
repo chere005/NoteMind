@@ -59,7 +59,7 @@ class DocumentAssetReferences{
   if(!failure)try{this.check(this.state(owner));}catch(error){failure=error;}
   if(failure){try{await this.rollbackRestore(rawOwner);}catch(error){failure.restoreCleanupError=error.message;}throw failure;}
   return result;
- });this.restoreRollbacks.delete(rawOwner);return result;}catch(error){if(pending&&this.restoreRollbacks.get(rawOwner)===pending)try{await this.rollbackRestore(rawOwner);}catch(cleanup){error.restoreCleanupError=cleanup.message;}throw error;}}
+ });this.check(this.state(owner));this.restoreRollbacks.delete(rawOwner);return result;}catch(error){if(pending&&this.restoreRollbacks.get(rawOwner)===pending)try{await this.rollbackRestore(rawOwner);}catch(cleanup){error.restoreCleanupError=cleanup.message;}throw error;}}
 
  async open(owner,id,{requestId,mode='stream',rawOwner,receiverBytes}={}){
   if(!(token(id)||id===null&&mode==='materialize'&&Number.isSafeInteger(receiverBytes)&&receiverBytes>=0&&receiverBytes<=MAX_BYTES)||!token(requestId)||!['stream','materialize'].includes(mode))throw Error('Invalid immutable asset read.');const state=this.state(owner);let job,initialized;const ready=new Promise(resolve=>initialized=resolve);
