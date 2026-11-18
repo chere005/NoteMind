@@ -71,10 +71,12 @@ export function PDFReferenceWorkspace({doc,active,onClose,colour,width,showEdito
  const importPages=async(mode,dialogDocument=document,requestOptions=null)=>{
   const readText=mode===true||mode==='text'||mode==='both',includeImages=mode===false||mode==='images'||mode==='both';
   if(busy||importer.current||closing.current||!state.current)return;setBusy(true);
-  let controller,importSource,adapter,budget,inserted=0,flushed=0,flushRun=null,lastFlush=performance.now();
-  const persist=async()=>{if(flushRun){await flushRun;return persist();}if(flushed===inserted)return;const captured=inserted;flushRun=window.NoteMindNotes.flush({requireDurable:true});try{await flushRun;flushed=captured;lastFlush=performance.now();}finally{flushRun=null;}};
+  let controller,importSource,adapter,budget,target,disposing,inserted=0,flushed=0,flushRun=null,flushTimer=null,flushFailure=null,lastFlush=performance.now();
+  const clearPersist=()=>{clearTimeout(flushTimer);flushTimer=null;};
+  const schedulePersist=()=>{if(flushTimer||disposing||flushFailure||flushed===inserted)return;flushTimer=setTimeout(()=>{flushTimer=null;if(flushFailure)return;void persist().catch(error=>{flushFailure=error;clearPersist();controller?.cancel();setStatus(error.message);});},Math.max(0,1000-(performance.now()-lastFlush)));};
+  const persist=async()=>{clearPersist();if(flushRun){await flushRun;return persist();}if(flushed===inserted)return;const captured=inserted;flushRun=window.NoteMindNotes.flushTarget(target,{requireDurable:true});try{await flushRun;flushed=captured;lastFlush=performance.now();}finally{flushRun=null;if(!disposing)schedulePersist();}};
   try{
-   const s=importSource=state.current,selection=new AbortController();let target=requestOptions?.target,pages;
+   const s=importSource=state.current,selection=new AbortController();let pages;target=requestOptions?.target;
    if(requestOptions?.createTarget){controller={cancel:()=>selection.abort(),dispose:async()=>selection.abort()};importer.current=controller;pages=await choosePDFPages({document:dialogDocument,count:s.source.pageCount,page,signal:selection.signal});selection.signal.throwIfAborted();target=requestOptions.createTarget();}
    else target ||=window.NoteMindNotes.captureInsertion();
    adapter=window.NoteMindNotes.createPageImport(target,{createPageImport});
@@ -83,14 +85,14 @@ export function PDFReferenceWorkspace({doc,active,onClose,colour,width,showEdito
     text:(n,{signal})=>textPage(s.source,n,signal),isOwnerOpen:owner=>!closing.current&&refs.isOwnerOpen(owner.tab),
     render:async(n,{signal})=>{signal.throwIfAborted();const id='import-'+crypto.randomUUID(),cancel=()=>{void api.cancel(s.source.id,id).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{const pixels=await api.page(s.source.id,n,{maxDimension:2048,requestId:id});return{value:{...pixels,text:''},release(){}};}finally{signal.removeEventListener('abort',cancel)}},
     recognize:async(image,{signal})=>{signal.throwIfAborted();const id='pdf-ocr-'+crypto.randomUUID(),cancel=()=>{void window.notemind.ocrCancel(id).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{return await window.notemind.ocrRead({id,data:image.data,language:requestOptions?.language||'auto'});}finally{signal.removeEventListener('abort',cancel)}},
-    commit:async(owner,value,{signal})=>{const imageName=includeImages?'assets/pdf-page-'+crypto.randomUUID()+'.png':undefined;await budget.commit({...includeImages?{imageName,assets:{[imageName]:value.data}}:{},...readText?{text:value.text+'\n\n'}:{}},{signal});inserted++;if(inserted-flushed>=8||performance.now()-lastFlush>=1000)await persist();}
+    commit:async(owner,value,{signal})=>{const imageName=includeImages?'assets/pdf-page-'+crypto.randomUUID()+'.png':undefined;await budget.commit({...includeImages?{imageName,assets:{[imageName]:value.data}}:{},...readText?{text:value.text+'\n\n'}:{}},{signal});inserted++;if(inserted-flushed>=8||performance.now()-lastFlush>=1000)await persist();else schedulePersist();}
    });
-   const cancel=controller.cancel.bind(controller),dispose=controller.dispose.bind(controller);let disposing;
-   controller.owner=target;controller.cancel=()=>{selection.abort();cancel();};controller.dispose=()=>disposing||=(async()=>{try{await dispose();await persist();}finally{budget.dispose();adapter.dispose();}})();importer.current=controller;
+   const cancel=controller.cancel.bind(controller),dispose=controller.dispose.bind(controller);
+   controller.owner=target;controller.cancel=()=>{selection.abort();cancel();};controller.dispose=()=>disposing||=(async()=>{clearPersist();try{await dispose();await persist();}finally{clearPersist();budget.dispose();adapter.dispose();}})();importer.current=controller;
    pages ||=await choosePDFPages({document:dialogDocument,count:s.source.pageCount,page,signal:selection.signal});
-   const result=await controller.start({owner:target,pages,readText,includeImages,onProgress:setProgress});setStatus(result.cancelled?'Import cancelled':'');
+   const result=await controller.start({owner:target,pages,readText,includeImages,onProgress:setProgress});if(flushFailure)throw flushFailure;setStatus(result.cancelled?'Import cancelled':'');
   }catch(e){if(e.name!=='AbortError')setStatus(e.message);}finally{
-   try{if(controller)await controller.dispose();else{budget?.dispose();adapter?.dispose();}}catch(error){setStatus(error.message);}finally{budget?.dispose();adapter?.dispose();}
+   clearPersist();try{if(controller)await controller.dispose();else{budget?.dispose();adapter?.dispose();}}catch(error){setStatus(error.message);}finally{clearPersist();budget?.dispose();adapter?.dispose();}
    if(importer.current===controller)importer.current=null;
    if(importSource&&!activeRef.current&&!closing.current&&state.current===importSource)await api.retain(importSource.source.id,false).catch(error=>{if(!/expired/.test(error.message))setStatus(error.message);});setProgress(null);setBusy(false);
   }
