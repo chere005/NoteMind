@@ -33,7 +33,19 @@ let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceServ
 let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
 const sheetLoads=require('./sheet-load-transport.cjs').shared;
 const sheetReads=new(require('./sheet-read-requests.cjs').SheetReadRequests)({loads:sheetLoads});
-app.on('will-quit',()=>{sheetReads.dispose();sheetLoads.dispose();void sheetPersistenceService?.dispose();void cameraPersistenceService?.dispose();void sheetUploads.dispose();void cameraUploads.dispose();imagePickerIPC.dispose();void require('./archive-codec.cjs').dispose();});
+let coreQuitReady=false,coreQuitWaiting=null,coreQuitRetry=null;
+app.on('will-quit',event=>{
+ if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRetry?.();return;}
+ const invoke=run=>Promise.resolve().then(run),settle=async runs=>{const results=await Promise.allSettled(runs.map(invoke)),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(errors.length)throw new AggregateError(errors,'Core cleanup could not finish.');},retry=runs=>{void Promise.allSettled(runs.map(invoke));};
+ coreQuitWaiting=Promise.resolve().then(async()=>{
+  const producers=[()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
+  coreQuitRetry=null;
+  await settle([()=>sheetWrite,()=>cameraWrite]);
+  const persistence=[()=>sheetPersistenceService?.dispose(),()=>cameraPersistenceService?.dispose()];coreQuitRetry=()=>retry(persistence);await settle(persistence);
+  const archive=[()=>require('./archive-codec.cjs').dispose()];coreQuitRetry=()=>retry(archive);await settle(archive);
+  coreQuitRetry=null;coreQuitReady=true;app.quit();
+ }).catch(error=>{coreQuitWaiting=null;coreQuitRetry=null;console.error('Core cleanup could not finish:',error);});
+});
 
 let cameraWrite = Promise.resolve();
 
