@@ -60,6 +60,8 @@ export interface SurfaceHandle {
   flush(): void | Promise<void>
   /** The sheet's size on screen, in CSS pixels. */
   size(): Size
+  /** The currently displayed canonical area, including precision zoom and pan. */
+  view(): Rect
   /** A Bring in from the header: what it did is in the NOTE, so the next Ctrl+Z is the note's (as the box row's `leaveFor`). */
   leave(): void
   /** Freeze the displayed pixels before encoding, if they represent this exact immutable snapshot. */
@@ -491,6 +493,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;selection.clear();return true},
     flush: () => {finishGesture.current();return flushInkMutations(latest.current.page)||undefined},
     size: () => size.current,
+    view: () => ({...viewport.current}),
     leave,
     preview: snapshot => {
       const current=latest.current,ink=canvas.current,paperLayer=backdrop.current,shown=viewport.current,painted=paintedPaper.current
