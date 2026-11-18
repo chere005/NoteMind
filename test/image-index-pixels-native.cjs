@@ -1,12 +1,18 @@
 // Independent expected pixels are the existing HTMLCanvas PNG converter decoded
 // by the production Node PNG decoder. The candidate never encodes a PNG.
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
+const {installNativeFailureExit}=require('./native-failure-exit.cjs');
+const report={scope:'All14 original image profiles: Node decodePng(old HTMLCanvas PNG) versus owned unencoded index RGBA',versions:process.versions,rows:[],memory:[],files:{},ok:false};
+// Even Electron/tool imports and profile setup are inside the no-dialog guard.
+const removeBootstrapGuard=installNativeFailureExit({app:{exit:code=>{try{require('electron').app?.exit(code)}catch{}}},report:path.resolve('test-results/performance/image-index-pixels-bootstrap-'+process.pid+'.json'),telemetry:report});
+if(process.env.NOTEMIND_PIXEL_BOOTSTRAP_FAULT==='1')throw Error('Intentional pixel probe bootstrap fault.');
+const {app,BrowserWindow}=require('electron');
 require('./disable-native-pen.cjs');
-const {app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const {createHostImageConverter}=require('../src/image-index-raster-client.cjs');
 const source=require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),root=path.resolve('src');
 const out=path.resolve('test-results/performance/image-index-pixels-'+source.slice(0,7)+'.json'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-index-pixels-'));
-const report={source,profile,scope:'All14 original image profiles: Node decodePng(old HTMLCanvas PNG) versus owned unencoded index RGBA',versions:process.versions,rows:[],memory:[],files:{},ok:false};
-require('./native-failure-exit.cjs').installNativeFailureExit({app,report:out,telemetry:report});
+Object.assign(report,{source,profile});removeBootstrapGuard();installNativeFailureExit({app,report:out,telemetry:report});
+console.log(JSON.stringify({event:'start',pid:process.pid,source,artifact:out}));
 fs.mkdirSync(path.dirname(out),{recursive:true});
 for(const file of ['image-index-raster-worker.js','image-index-raster-host.js','image-index-raster-client.cjs','document-byte-tools.js','document-worker-bytes.cjs','image-conversion-worker.js','ocr/png.ts'])report.files[file]=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex');
 const code=require('esbuild').buildSync({entryPoints:[path.join(root,'ocr/png.ts')],platform:'node',format:'cjs',bundle:true,write:false}).outputFiles[0].text,moduleValue={exports:{}};

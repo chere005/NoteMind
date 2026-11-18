@@ -1,0 +1,5 @@
+const{test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process');
+test('pixel probe records bootstrap failure before importing Electron or the compiler, with actual child exit',async()=>{
+ const child=spawn(process.execPath,[path.resolve('test/image-index-pixels-native.cjs')],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1',NOTEMIND_PIXEL_BOOTSTRAP_FAULT:'1'},stdio:'pipe'});let stderr='';child.stderr.on('data',value=>stderr+=value);const code=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve);});
+ assert.equal(code,1,stderr);const report=JSON.parse(fs.readFileSync(path.resolve('test-results/performance/image-index-pixels-bootstrap-'+child.pid+'.json'),'utf8'));assert.equal(report.ok,false);assert.equal(report.passed,false);assert.match(report.fatal.message,/Intentional pixel probe bootstrap fault/);assert.equal(report.fatal.pid,child.pid);assert.throws(()=>process.kill(child.pid,0),{code:'ESRCH'});
+});
