@@ -11,7 +11,7 @@ class TextReader {
  constructor({workerFactory=(file,options)=>new Worker(file,options),threads=Math.max(1,Math.min(2,require('node:os').availableParallelism()-1)),maxPending=64,maxBytes=128*1024*1024,idleMs=15000,maxCacheBytes=8*1024*1024}={}){
   if(!Number.isSafeInteger(maxCacheBytes)||maxCacheBytes<0)throw Error('Invalid OCR cache budget.');this.formats=new Set();this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
  }
- read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{}}={}){
+ read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{},retireOnCompletion=false}={}){
   if(this.disposed)return Promise.reject(Error('The text reader is closing.'));
   if(this.stopFailure)return Promise.reject(Error('The text reader is still stopping.'));
   if(signal?.aborted)return Promise.reject(aborted());
@@ -19,23 +19,24 @@ class TextReader {
   if(!Buffer.isBuffer(bytes))bytes=Buffer.from(bytes);
   if(bytes.length>40*1024*1024||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return Promise.reject(Error('The text reader needs a PNG image of up to 40 MB.'));
   const key=createHash('sha256').update(bytes).update(language).digest('hex');
-  return this.enqueue({bytes,key,inputBytes:bytes.length},{id,language,signal,priority,textOnly,onProgress});
+  return this.enqueue({bytes,key,inputBytes:bytes.length},{id,language,signal,priority,textOnly,onProgress,retireOnCompletion});
  }
- readPixels(pixels,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{},takeOwnership=false,onPreempt}={}){
+ readPixels(pixels,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{},takeOwnership=false,onPreempt,retireOnCompletion=false}={}){
   if(this.disposed)return Promise.reject(Error('The text reader is closing.'));
   if(this.stopFailure)return Promise.reject(Error('The text reader is still stopping.'));
   if(signal?.aborted)return Promise.reject(aborted());
   if(!available())return Promise.reject(Error('The text reader files are missing.'));
   let value;try{if(takeOwnership!==true)throw Error('Private pixel reading requires explicit ownership.');value=require('./ocr-pixels.cjs').validatePixels(pixels,{owned:true});if(priority==='background'&&(typeof onPreempt!=='function'||!signal))throw Error('Background pixel reading requires its cancellable source owner.');}catch(error){return Promise.reject(error);}
-  return this.enqueue({pixels:value,key:require('./ocr-pixels.cjs').pixelKey(value,language),inputBytes:value.data.byteLength,onPreempt},{id,language,signal,priority,textOnly,onProgress});
+  return this.enqueue({pixels:value,key:require('./ocr-pixels.cjs').pixelKey(value,language),inputBytes:value.data.byteLength,onPreempt},{id,language,signal,priority,textOnly,onProgress,retireOnCompletion});
  }
- enqueue(input,{id,language,signal,priority,textOnly,onProgress}){
+ enqueue(input,{id,language,signal,priority,textOnly,onProgress,retireOnCompletion=false}){
+  if(typeof retireOnCompletion!=='boolean')return Promise.reject(Error('Invalid text reader ownership.'));
   const {key,inputBytes}=input;
   if(this.cache.has(key)){if(input.pixels)input.pixels.data.buffer.transfer(0);return Promise.resolve(this.publicResult(this.cache.get(key).value,textOnly));}
   if(this.jobs.has(id))return Promise.reject(Error('This reading is already running.'));
   const background=priority==='background',jobLimit=background?Math.max(1,this.maxPending-1):this.maxPending,byteLimit=background?this.maxBytes-Math.min(40*1024*1024,this.maxBytes/2):this.maxBytes;
   if(this.jobs.size>=jobLimit||this.bytes+inputBytes>byteLimit)return Promise.reject(Error('Too many images are waiting for text recognition. Try again after the current readings finish.'));
-  return new Promise((resolve,reject)=>{const job={...input,id,key,language,priority:background?'background':'foreground',textOnly,onProgress,resolve,reject,worker:null};if(input.pixels)job.pixels={width:input.pixels.width,height:input.pixels.height,data:new Uint8Array(input.pixels.data.buffer.transfer())};this.jobs.set(id,job);this.bytes+=inputBytes;this.queue.push(job);this.progress(job,'Queued');if(signal){job.abort=()=>this.cancel(id);signal.addEventListener('abort',job.abort,{once:true});job.cleanup=()=>signal.removeEventListener('abort',job.abort);if(signal.aborted){this.cancel(id);return;}}if(job.priority==='foreground')this.preemptBackground();this.pump();});
+  return new Promise((resolve,reject)=>{const job={...input,id,key,language,retireOnCompletion,priority:background?'background':'foreground',textOnly,onProgress,resolve,reject,worker:null};if(input.pixels)job.pixels={width:input.pixels.width,height:input.pixels.height,data:new Uint8Array(input.pixels.data.buffer.transfer())};this.jobs.set(id,job);this.bytes+=inputBytes;this.queue.push(job);this.progress(job,'Queued');if(signal){job.abort=()=>this.cancel(id);signal.addEventListener('abort',job.abort,{once:true});job.cleanup=()=>signal.removeEventListener('abort',job.abort);if(signal.aborted){this.cancel(id);return;}}if(job.priority==='foreground')this.preemptBackground();this.pump();});
  }
  progress(job,phase){try{job.onProgress(phase);}catch{}}
  clearIdleTimer(){this.idleGeneration++;clearTimeout(this.idleTimer);this.idleTimer=null;}
@@ -77,7 +78,7 @@ class TextReader {
  finish(job,error,result){
   if(this.jobs.get(job.id)!==job)return;this.jobs.delete(job.id);this.bytes-=job.inputBytes;if(job.pixels?.data.byteLength)job.pixels.data.buffer.transfer(0);job.bytes=null;job.pixels=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
   let value;if(!error)try{value={text:result.text,lines:result.lines,language:job.language,timing:result.timing};this.rememberResult(job.key,value);}catch(failure){error=failure;}
-  if(worker){if(error)this.release(worker);else this.park(worker);}
+  if(worker){if(error||job.retireOnCompletion)this.release(worker);else this.park(worker);}
   if(error)job.reject(error);else job.resolve(this.publicResult(value,job.textOnly));this.pump();
  }
 
