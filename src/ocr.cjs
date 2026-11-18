@@ -6,10 +6,10 @@ const folder=path.join(__dirname,'helpers','text-ocr');
 const files=['worker.mjs','ort/ort-wasm-simd-threaded.mjs','ort/ort-wasm-simd-threaded.wasm','models/ch_PP-OCRv5_det_mobile.onnx','models/en_PP-OCRv5_rec_mobile.onnx','models/ch_PP-OCRv5_rec_mobile.onnx'];
 const available=()=>files.every(f=>existsSync(path.join(folder,f)));
 const aborted=()=>Object.assign(Error('Reading cancelled.'),{name:'AbortError'});
-function readingOrder(lines){const rows=[];for(const line of [...lines].sort((a,b)=>a.y-b.y||a.x-b.x)){const cy=line.y+line.height/2;const row=rows.find(r=>Math.abs(r.cy-cy)<Math.max(r.height,line.height)*.45);if(row){row.lines.push(line);row.height=Math.max(row.height,line.height)}else rows.push({cy,height:line.height,lines:[line]});}return rows.sort((a,b)=>a.cy-b.cy).map(r=>r.lines.sort((a,b)=>a.x-b.x).map(l=>l.text).join(' ')).join('\n');}
+
 class TextReader {
  constructor({workerFactory=(file,options)=>new Worker(file,options),threads=Math.max(1,Math.min(2,require('node:os').availableParallelism()-1)),maxPending=64,maxBytes=128*1024*1024,idleMs=15000,maxCacheBytes=8*1024*1024}={}){
-  if(!Number.isSafeInteger(maxCacheBytes)||maxCacheBytes<0)throw Error('Invalid OCR cache budget.');this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
+  if(!Number.isSafeInteger(maxCacheBytes)||maxCacheBytes<0)throw Error('Invalid OCR cache budget.');this.formats=new Set();this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
  }
  read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{}}={}){
   if(this.disposed)return Promise.reject(Error('The text reader is closing.'));
@@ -58,16 +58,22 @@ class TextReader {
  }
  preemptBackground(){for(const job of this.jobs.values())if(job.worker&&job.priority==='background'){const worker=job.worker;job.worker=null;clearTimeout(job.timer);this.queue.push(job);this.progress(job,'Queued');this.release(worker);}}
  complete(job,error,result){
+  if(!this.jobs.has(job.id))return;if(error){job.formatController?.abort();return this.finish(job,error);}
+  if(job.formatting)return;if(!Array.isArray(result?.lines))return this.finish(job,Error('The text reader returned an invalid result.'));
+  job.formatting=true;const controller=job.formatController=new AbortController(),pending=require('./ocr-reading-order.cjs').readingOrder(result.lines,{signal:controller.signal});this.formats.add(pending);
+  void pending.then(text=>{this.formats.delete(pending);if(this.jobs.has(job.id))this.finish(job,null,{...result,text});else this.pump();},failure=>{this.formats.delete(pending);if(this.jobs.has(job.id))this.finish(job,failure);else this.pump();});
+ }
+ finish(job,error,result){
   if(!this.jobs.has(job.id))return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.bytes=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
-  let value;
-  if(!error)try{if(!Array.isArray(result?.lines))throw Error('The text reader returned an invalid result.');value={text:readingOrder(result.lines),lines:result.lines,language:job.language,timing:result.timing};this.rememberResult(job.key,value);}catch(failure){error=failure;}
+  let value;if(!error)try{value={text:result.text,lines:result.lines,language:job.language,timing:result.timing};this.rememberResult(job.key,value);}catch(failure){error=failure;}
   if(worker){if(error)this.release(worker);else this.park(worker);}
   if(error)job.reject(error);else job.resolve(this.publicResult(value,job.textOnly));this.pump();
  }
+
  publicResult(value,textOnly){return textOnly?{text:value.text,language:value.language,timing:structuredClone(value.timing)}:structuredClone(value);}
  rememberResult(key,value){if(this.disposed||this.cacheCounting)return;const admit=bytes=>{if(this.disposed||!Number.isFinite(bytes)||bytes>this.maxCacheBytes)return;const prior=this.cache.get(key);if(prior){this.cache.delete(key);this.cacheBytes-=prior.bytes;}while(this.cache.size&&(this.cache.size>=32||this.cacheBytes+bytes>this.maxCacheBytes)){const first=this.cache.keys().next().value;this.cacheBytes-=this.cache.get(first).bytes;this.cache.delete(first);}this.cache.set(key,{value,bytes});this.cacheBytes+=bytes;},bytes=require('./ocr-cache-bytes.cjs').resultBytes(value,this.maxCacheBytes,{cancelled:()=>this.disposed});if(bytes?.then){this.cacheCounting=true;const pending=bytes.then(admit).finally(()=>{this.cacheCounting=false;if(this.cachePending===pending)this.cachePending=null;});this.cachePending=pending;}else admit(bytes);}
  pump(){
-  if(this.disposed||this.stopFailure||(this.workers.size&&!this.idleWorker)||!this.queue.length)return;
+  if(this.disposed||this.stopFailure||this.formats.size||(this.workers.size&&!this.idleWorker)||!this.queue.length)return;
   const next=this.queue.findIndex(job=>job.priority==='foreground'),job=this.queue.splice(next<0?0:next,1)[0];if(!this.jobs.has(job.id)){this.pump();return;}
   let worker=this.idleWorker;if(worker){this.idleWorker=null;this.clearIdleTimer();}
   else try{worker=this.workerFactory(path.join(folder,'worker.mjs'),{workerData:{folder,threads:this.threads}});this.attach(worker);}catch(error){this.complete(job,error);return;}
@@ -77,7 +83,7 @@ class TextReader {
  }
  cancel(id){const job=this.jobs.get(id);if(!job)return;this.queue=this.queue.filter(value=>value!==job);this.complete(job,aborted());}
  retireIdle(){if(this.idleWorker)this.release(this.idleWorker);return this.awaitStopped();}
- awaitStopped(){return Promise.all([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise)).then(()=>{});}
+ awaitStopped(){return Promise.allSettled([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise).concat([...this.formats])).then(()=>{});}
  dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.cache.clear();this.cacheBytes=0;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=Promise.allSettled([this.awaitStopped(),this.cachePending]).then(()=>{});}
 }
 module.exports={TextReader,available};
