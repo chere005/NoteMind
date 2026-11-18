@@ -144,18 +144,39 @@ const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225]
 
 
 export function detectorInput(image: Rgba, size: { width: number; height: number }, release?: (data: Float32Array) => void): Float32Array {
-  const rgb = sampleQuad(image, { x: 0, y: 0 }, { x: image.width, y: 0 }, { x: 0, y: image.height }, size.width, size.height, release)
+  const origin = { x: 0, y: 0 }, u = { x: image.width, y: 0 }, v = { x: 0, y: image.height }
+  const outW = size.width, outH = size.height, plane = outW * outH, take = sampler(image)
+  const spanU = Math.hypot(u.x, u.y) / outW, spanV = Math.hypot(v.x, v.y) / outH
+  const k = Math.max(1, Math.min(4, Math.ceil(Math.max(spanU, spanV))))
+  const rgb = new Float32Array(3)
+  let out: Float32Array | undefined, published = false
   try {
-  const plane = size.width * size.height
-  const out = new Float32Array(plane * 3)
-  for (let p = 0; p < plane; p += 1) {
-    for (let c = 0; c < 3; c += 1) {
-      const value = rgb[p * 3 + (2 - c)]! / 255  // BGR
-      out[c * plane + p] = (value - MEAN[c]!) / STD[c]!
-    }
-  }
-  return out
-  } finally { release?.(rgb) }
+    try {
+      out = new Float32Array(plane * 3)
+      for (let j = 0; j < outH; j += 1) {
+        for (let i = 0; i < outW; i += 1) {
+          let r = 0, g = 0, b = 0
+          for (let sj = 0; sj < k; sj += 1) {
+            for (let si = 0; si < k; si += 1) {
+              const s = (i + (si + 0.5) / k) / outW, t = (j + (sj + 0.5) / k) / outH
+              take(origin.x + u.x * s + v.x * t, origin.y + u.y * s + v.y * t, rgb)
+              r += rgb[0]!; g += rgb[1]!; b += rgb[2]!
+            }
+          }
+          // Match the old full RGB array's float32 average before normalization.
+          const n = k * k
+          rgb[0] = r / n; rgb[1] = g / n; rgb[2] = b / n
+          const p = j * outW + i
+          for (let c = 0; c < 3; c += 1) {
+            const value = rgb[2 - c]! / 255  // BGR
+            out[c * plane + p] = (value - MEAN[c]!) / STD[c]!
+          }
+        }
+      }
+    } finally { release?.(rgb) }
+    published = true
+    return out
+  } finally { if (!published && out) release?.(out) }
 }
 
 const cross = (o: Point, a: Point, b: Point): number => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
