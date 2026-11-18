@@ -1,3 +1,7 @@
+## Installation update — November 18, 2026
+
+After the handoff, Sean explicitly requested installation. **0.37.0 is now installed at `/Applications/NoteMind.app`**, with its deep strict signature verified. No installed NoteMind process was running during replacement. The previous app and prelaunch profile are preserved at `/Users/example/Documents/NoteMind/Installation Backups/20261118T151902Z`. The app was not launched by the installer. Qualification boundaries below remain unchanged; earlier installation statements describe the 8 AM snapshot.
+
 # NoteMind review handoff
 
 **This is a tested WIP handoff, not a production-completion claim.** The installed 0.35.0 application was left untouched. Candidate source is 0.37.0. No new version was installed or released.
