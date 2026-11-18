@@ -51,3 +51,9 @@ for(const[key,extra]of [['ArrowRight',{}],['Home',{}],['End',{}],['ArrowDown',{a
  const h=harness(6);let closed=0;h.props.onClose=()=>closed++;h.render();const event=h.event(key,{defaultPrevented:true,nativeEvent:{isComposing:false},stopPropagation(){this.stopped=true},currentTarget:{ownerDocument:h.scroller.ownerDocument},...extra});
  if(key==='Escape')h.find(node=>node.type==='section').props.onKeyDown(event);else page(h,0).props.onKeyDown(event);h.render();assert.deepEqual(h.calls,[],key);assert.equal(h.focused,null,key);assert.equal(closed,0,key);assert.equal(event.prevented,undefined,key);h.unmount();
 });
+
+test('manual overview scrolling retains a visible keyboard entry without stealing outside focus',()=>{
+ const h=harness(4000);h.blur();h.scroller.scrollTop=19000;h.find(node=>node.props?.role==='grid').props.onScroll({currentTarget:h.scroller});h.render();const entries=h.all(node=>node.type==='button'&&node.props.tabIndex===0);assert.equal(entries.length,1);assert.ok(entries[0].props['aria-label'].startsWith('Page '));assert.equal(h.focused,null);assert.equal(h.props.activeId,'p0');assert.ok(h.all(node=>node.props?.role==='gridcell').length<=15);
+ const entry=entries[0],name=entry.props['aria-label'].split(',')[0];h.focus(name);entry.props.onKeyDown(h.event('ArrowRight'));h.render();assert.notEqual(h.focused,name);assert.equal(h.all(node=>node.type==='button'&&node.props.tabIndex===0).length,1);assert.equal(h.props.activeId,'p0');
+ h.blur();h.scroller.scrollTop=0;h.find(node=>node.props?.role==='grid').props.onScroll({currentTarget:h.scroller});h.render();const returned=h.all(node=>node.type==='button'&&node.props.tabIndex===0);assert.equal(returned.length,1);assert.equal(returned[0].props['aria-current'],'page');assert.equal(h.focused,null);h.unmount();
+});
