@@ -90,9 +90,9 @@ function sourceCaret(){const caret=sourceCarets.get(activeTab);if(caret&&caret.d
 function rememberSourceCaret(){if(activeTab)sourceCarets.set(activeTab,{document:new WeakRef(doc),text:doc.text,start:source.selectionStart,end:source.selectionEnd,direction:source.selectionDirection});}
 function refreshEditor({contentChanged=true}={}){
  // The inactive view is disposable; currentText() and doc.text own the text.
- const caret=sourceCaret(),sourceWasHidden=source.hidden;rich.hidden=!visual;source.hidden=visual;
- if(visual){source.value='';if(contentChanged)rich.innerHTML=render(doc.text);}
- else{rich.innerHTML='';if(contentChanged){source.value=doc.text;if(sourceWasHidden&&caret)source.setSelectionRange(caret.start,caret.end,caret.direction);}}
+ const caret=sourceCaret(),sourceWasHidden=source.hidden;if(rich.hidden!==!visual)rich.hidden=!visual;if(source.hidden!==visual)source.hidden=visual;
+ if(visual){if(source.textLength!==0)source.value='';if(contentChanged)rich.innerHTML=render(doc.text);}
+ else{if(rich.firstChild)rich.innerHTML='';if(contentChanged){source.value=doc.text;if(sourceWasHidden&&caret)source.setSelectionRange(caret.start,caret.end,caret.direction);}}
  richChanged=false;
 }
 function switchMode(toVisual) { if (visual === toVisual) return; doc.text = currentText(); sourceCaret(); if(!visual)rememberSourceCaret(); visual = toVisual; refreshEditor(); $('toolbar').hidden = false; $('visual').classList.toggle('selected', visual); $('markdown').classList.toggle('selected', !visual); $('modeLabel').textContent = visual ? 'Visual editor' : 'Markdown editor'; if (visual) visualAccess(); else $('status').textContent = 'Ready'; activeTab.visual=visual; window.NoteMindNotes?.changedView();(visual?rich:source).focus({preventScroll:true}); }
