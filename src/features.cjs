@@ -6,7 +6,7 @@ const {pack, unpack} = require('./zip.cjs');
 module.exports = function installFeatures(window, projectService) {
  const win = () => window();
  const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain),outputWrites=new Set();let outputClosed=false,outputDisposal=null,outputQuitReady=false,outputQuitWaiting=null;
- function outputWrite(run){if(outputClosed)return Promise.reject(Error('Drawing output is closing.'));const pending=Promise.resolve().then(run).finally(()=>outputWrites.delete(pending));outputWrites.add(pending);return pending;}
+ function outputWrite(run){if(outputClosed)return Promise.reject(Error('NoteMind file writes are closing.'));const pending=Promise.resolve().then(run).finally(()=>outputWrites.delete(pending));outputWrites.add(pending);return pending;}
  function dispose(){outputClosed=true;if(outputDisposal)return outputDisposal;return outputDisposal=Promise.resolve().then(async()=>{while(outputWrites.size)await Promise.allSettled([...outputWrites]);await drawingSaves.dispose();}).catch(error=>{outputDisposal=null;throw error;});}
  app.on('will-quit',event=>{if(outputQuitReady)return;event?.preventDefault?.();const pending=dispose();if(!outputQuitWaiting)outputQuitWaiting=pending.then(()=>{outputQuitReady=true;app.quit();}).catch(error=>{outputQuitWaiting=null;console.error('Drawing output cleanup could not finish:',error);});});
  ipcMain.on('window-close',()=>win()?.close());
@@ -19,12 +19,12 @@ module.exports = function installFeatures(window, projectService) {
  const readPreference=async key=>{if(!preferenceKeys.includes(key))throw Error('Invalid preference');try{return JSON.parse(await fs.readFile(preferenceFile(key),'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}};
  ipcMain.handle('preference-get',(_,key)=>readPreference(key));
  const preferenceWrites=new Map();
- ipcMain.handle('preference-set',async(_,key,value)=>{
+ ipcMain.handle('preference-set',(_,key,value)=>outputWrite(async()=>{
   if(!preferenceKeys.includes(key))throw Error('Invalid preference');
   if(key==='toolPresets'&&(typeof value!=='string'||Buffer.byteLength(value)>32768))throw Error('Invalid tool presets.');
   const next=(preferenceWrites.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{await fs.mkdir(path.dirname(preferenceFile(key)),{recursive:true});const temp=preferenceFile(key)+'.'+require('node:crypto').randomUUID()+'.tmp';try{await fs.writeFile(temp,JSON.stringify(value));await fs.rename(temp,preferenceFile(key));}finally{await fs.unlink(temp).catch(()=>{});}});
   preferenceWrites.set(key,next);try{await next;}finally{if(preferenceWrites.get(key)===next)preferenceWrites.delete(key);}
- });
+ }));
  app.whenReady().then(async()=>{await fs.mkdir(path.join(home,'preferences'),{recursive:true});const watcher=require('node:fs').watch(path.join(home,'preferences'),(_,file)=>{const key=String(file).replace(/\.json$/,'');if(!preferenceKeys.includes(key))return;readPreference(key).then(value=>{const w=win();if(w&&!w.isDestroyed())w.webContents.send('preference-changed',{key,value});}).catch(()=>{});});app.on('will-quit',()=>watcher.close());});
  ipcMain.handle('workspace-list',()=>registry.migrate());
  ipcMain.handle('workspace-put',(_,workspace,remove)=>registry.put(workspace,remove));
