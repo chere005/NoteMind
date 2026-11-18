@@ -19,7 +19,7 @@ class PreviewHTML {
  cellEnd(){this.close('cell');}
  rowEnd({width,first}){for(let n=this.currentCell;n<width;n++)this.emit(first?'<th></th>':'<td></td>');this.close('row');if(first)this.close('rowgroup');}
  tableEnd(){if(this.inBody){this.close('rowgroup');this.inBody=false;}this.close('table');}
- async drain(){this.check();for(const item of this.pending.splice(0)){const {value}=item;if(item.listCount){const parent=[...this.writtenStack].reverse().find(entry=>['list','ol','ul'].includes(entry.kind));if(parent&&parent.open.startsWith('<ol'))parent.reopen='<ol start="'+item.listCount+'">';continue;}
+ async drain(){this.check();for(const item of this.pending.splice(0)){const {value}=item;if(Object.hasOwn(item,'listCount')){const parent=[...this.writtenStack].reverse().find(entry=>['list','ol','ul'].includes(entry.kind));if(parent&&parent.open.startsWith('<ol'))parent.reopen='<ol start="'+item.listCount+'">';continue;}
    if(item.open||item.close||value.startsWith('<')){await this.take(value,item);continue;}
    for(let at=0;at<value.length;){let end=Math.min(value.length,at+4096);if(end<value.length){if(value.charCodeAt(end-1)>=0xd800&&value.charCodeAt(end-1)<=0xdbff)end--;const amp=value.lastIndexOf('&',end-1);if(amp>=at&&value.indexOf(';',amp)>=end)end=amp;}await this.take(value.slice(at,end));at=end;}
   }this.check();}
