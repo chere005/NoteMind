@@ -25,10 +25,10 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
     const settled=Promise.resolve().then(()=>{if(state.invalid||host.isDestroyed?.()||frame(host)!==state.frame){gone();throw abort();}return host.executeJavaScript(code)}).then(async value=>{
      // This private WebContents method returns structured-cloned Main values,
      // never caller-borrowed views. Even a malformed view owns its whole clone.
-     if(binary&&ArrayBuffer.isView(value?.data)){
-      const backing=value.data.buffer;
+     if(binary&&(ArrayBuffer.isView(value?.data)||types.isArrayBuffer(value?.data)||types.isSharedArrayBuffer(value?.data))){
+      const backing=ArrayBuffer.isView(value.data)?value.data.buffer:value.data;
       if(types.isArrayBuffer(backing)&&!isBinaryReceiver(value.data)){
-       await retireBinaryReceiver(new Uint8Array(backing));
+       if(backing.byteLength)await retireBinaryReceiver(new Uint8Array(backing));
        const error=Object.assign(Error('Invalid private image output clone.'),{code:'DOCUMENT_BYTES_RELEASE_UNCONFIRMED',resourcesReleased:false});
        if(state.inflight.delete(ticket))reject(error);else state.lateBinaryReleases++;return;
       }
