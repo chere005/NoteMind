@@ -1,6 +1,6 @@
 (() => {
  const api=window.NoteMindDocumentSync?.api(window.notemind.notes)||window.notemind.notes;
- let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),closingDrafts=new Map(),closedDrafts=new WeakMap(),startupRun=null;
+ let ready=false,timer=null,queue=Promise.resolve(),indexTimers=new Map(),closingDrafts=new Map(),closedDrafts=new WeakMap(),startupRun=null,importTargetDepth=0;
  const automaticTitleInfo=text=>{for(let at=0;at<=text.length;){const end=text.indexOf('\n',at),line=text.slice(at,end<0?text.length:end).replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i,'').replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/[*_`=]/g,'').trim();if(line)return{title:line.slice(0,100),end:end<0?text.length:end,found:true};if(end<0)break;at=end+1;}return{title:'Untitled',end:text.length,found:false};};
  const automaticTitle=text=>automaticTitleInfo(text).title;
  const serial=fn=>{const next=queue.then(fn);queue=next.then(()=>{},()=>{});return next;};
@@ -10,6 +10,7 @@
  function captureDurable(tab,value=snapshot(tab)){return window.NoteMindPDFReferences?.captureSnapshot(tab,value)||value;}
  async function prepareDurable(tab,value){return window.NoteMindPDFReferences?.prepareSnapshot(tab,value)||value;}
  function captureInsertion(){ensureActiveTab();const tab=activeTab;rememberCurrent();window.NoteMindHistory?.initialize(tab);let range=null;if(visual)try{const selected=getSelection();range=selected?.rangeCount&&rich.contains(selected.anchorNode)?selected.getRangeAt(0).cloneRange():carets.get(tab.id)?.cloneRange();}catch{}return {tab,text:tab.doc.text,start:visual?null:source.selectionStart,end:visual?null:source.selectionEnd,range};}
+ function createImportTarget(value){importTargetDepth++;try{addTab(value);return captureInsertion();}finally{importTargetDepth--;}}
  function insertionTab(target){const tab=target?.tab;if(!tab||!tabs.includes(tab))throw Error('The original Notepad is no longer open.');if(tab.doc.path&&!/\.(nm|wm|md)$/i.test(tab.doc.path))throw Error('Save the original Notepad as a .nm or .md file before inserting graphics or attachments.');return tab;}
  function insertionState(target){const tab=target?.tab;if(!tab||!tabs.includes(tab))throw Error('The original Notepad is no longer open.');return {tab,document:tab.doc,revision:tab.editVersion||0,text:tab===activeTab?currentText():tab.doc.text,assets:tab.doc.assets,meta:tab.doc.meta,visual:tab===activeTab?visual:tab.visual};}
  function restoreInsertion(target){const same=currentText()===target.text;if(visual){let range;if(same&&target.range&&rich.contains(target.range.startContainer))range=target.range.cloneRange();else{range=document.createRange();range.selectNodeContents(rich);range.collapse(false);}carets.set(target.tab.id,range.cloneRange());return range;}const start=same&&target.start!==null?target.start:source.value.length,end=same&&target.end!==null?target.end:start;source.setSelectionRange(start,end);return null;}
@@ -100,7 +101,7 @@
   tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await api.draft(await prepareDurable(tab,captureDurable(tab))));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
- function changedView(){decorate();window.NoteMindHistory?.initialize(activeTab);schedule(400);}
+ function changedView(){decorate();window.NoteMindHistory?.initialize(activeTab);if(!importTargetDepth)schedule(400);}
  function ensureActiveTab(){if(activeTab&&tabs.includes(activeTab))return;const chosen=tabs.find(tab=>tab?.doc&&typeof tab.doc.text==='string');if(chosen){activeTab=null;activateTab(chosen);}else{tabs=[];activeTab=null;addTab({path:null,text:'',assets:{}});}}
  function startup(old){if(startupRun)return startupRun;startupRun=restore(old);return startupRun;}
  async function restore(old){
@@ -144,5 +145,5 @@
  window.addEventListener('camera-flush',e=>e.detail.promises.push(flush({requireDurable:e.detail.requireDurable===true})));
  window.addEventListener('notemind-command',e=>{if(e.detail==='quickNote'){$('new').click();rich.focus();}if(e.detail==='indexImages')action(indexCurrent);if(e.detail==='deleteNote'){const focused=window.NoteMindSidebar?.focusedDelete();if(focused)action(focused);else if(!activeTab.placeholder)action(()=>trash({path:doc.path,id:doc.id,title:doc.title}));}});
  api.onIndexProgress(value=>{if(value.id===doc.id)$('status').textContent='Indexing image text…';});
- window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,flushTarget,flushRevision,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,insertionState,createPageImport,captureDurable,prepareDurable,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
+ window.NoteMindNotes={session,api,closeDraft,reopenClosing,changed,changedView,schedule,flush,flushTarget,flushRevision,saveActive,startup,dialog,command,openRecord,trash,renameDraft,duplicateDraft,saveDraft,indexCurrent,snapshot,captureInsertion,createImportTarget,insertionState,createPageImport,captureDurable,prepareDurable,insertTextFor,insertMarkdownFor,insertAssetFor,automaticTitle,get ready(){return ready;}};
 })();
