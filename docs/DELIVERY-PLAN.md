@@ -1,3 +1,30 @@
+## November 18, 6:40 AM Central checkpoint
+
+The handoff target is 8 AM Central today. Installed NoteMind 0.35.0 remains untouched. Source is 0.37.0; no release, main push or install has occurred.
+
+| Area | Verified state | Remaining qualification |
+|---|---|---|
+| Fixes and approved features | Integrated, including final Word stop/retry ordering and the browser lazy-image bootstrap. | Repeat the full suite after the last implementation leaf and generated assets. |
+| Full regression suite | Last completed run at `5a13e75`: 3,333 passed, zero failed, one explicitly gated large-history test skipped. | Latest Word ordering and browser bootstrap changes are newer than that run. The gated history test subsequently passed separately. |
+| Drawing scale | Original two-million distinct dot strokes and 100,000 pressure strokes × 20 points passed all five fixed pixel oracles under the unchanged aggregate memory limit. | Final package fidelity and startup smoke. Physical Wacom input has not been exercised by these hidden tests. |
+| PDF reference and markup | Fresh integrated native UI run: 100 pages; fit, ink Undo/Redo, selection during navigation, cancellation, source pinning, search, 100-page export and four rotations passed. Peak 992,477,184 bytes. | Final package fidelity. |
+| Image history | Original 100 distinct 1800×2400 JPEGs: fresh, known, unchanged and repaired CAS passed; zero cumulative whole-asset materialization, one 196,608-byte streaming read at a time. | This is history evidence, not an OCR result. |
+| Full mixed image/OCR workflow | All 104 image display phases completed, but the first OCR request exceeded the unchanged 1 GiB aggregate target at 1,142,669,312 bytes. Actual run exit 1; all four captured processes exited. | A bounded exact-byte WASM startup-copy fix is assigned. It must be measured with original positive OCR fixtures and the full workload; no full-100 success is claimed. |
+| Large source editor | Separate 16 MiB counter and inactive-editor retirement checks pass. Active native textarea layout still exceeds the target before counting begins. | An isolated viewport-editor prototype and a complete consumer/IME/history dependency map are assigned. Production replacement requires its own parity proof. |
+| Final audits | Fresh bugs, UI/UX and whole-app performance reports are integrated; reproduced follow-up fixes are merged. | Independent reread of the last PDF sibling-drain change and the new OCR ownership change. |
+
+### Remaining time allocation
+
+| Central time | Work and pause point |
+|---|---|
+| 6:40–7:00 | Finish the bounded OCR copy change and its exact-result run; prepare the isolated editor proof. Merge confirmed fixes serially. |
+| 7:00–7:30 | Full preflight on the final coherent source, signed candidate build, source/package hash comparison and hidden startup checks. Repeat affected stress gates while retaining original inputs and limits. |
+| 7:30–8:00 | Preserve exact receipts, update the handoff and roadmap, and leave a committed, reviewable state. A failed qualification stays failed; the cutoff does not make it a stable release. |
+
+The next whole-timeline update is due at 7 AM Central. No TaskMind proposals are being created, following Sean's explicit instruction to keep this work here.
+
+Current local evidence is under `test-results/performance-0.37/`: `real-raster-final-web-owned-hash-587d7ac.json`, its `*-post-proof.json`, `public-history-100-final-cee578d.json`, `pdf-reference-ui-final-cee578d.log`, `first-bundle-ui-final-cee578d.log`, and `preflight-final-a.log`. The raster receipt documents an inherited stale external-driver hash separately from the actual runtime wrapper's matching loaded-file hashes; it must not be described as an entirely clean pre-run manifest.
+
 # NoteMind delivery plan
 
 Updated November 18, 2026, 6 AM Central. Target handoff: **8 AM Central today**. Installed 0.35.0 is untouched. No new release is qualified, pushed to main or installed. A failed acceptance gate remains a failure at the deadline.
