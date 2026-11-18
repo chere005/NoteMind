@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const cp = require('node:child_process');
+const {refreshPortableRuntime,refreshLinuxEntry,refreshWindowsEntry}=require('./portable-runtime.cjs');
 const { validateMacTarget } = require('./mac-target.cjs');
 if (process.platform === 'darwin') {
   const executable = 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron';
@@ -27,7 +28,7 @@ const runtime = 'node_modules/electron/dist';
 if (fs.existsSync(runtime)) {
   const runtimeEntry = process.platform === 'darwin' ? 'dist/NoteMind/NoteMind.app' : process.platform === 'win32' ? 'dist/NoteMind/electron.exe' : 'dist/NoteMind/electron';
   if(process.platform==='darwin'){fs.rmSync(runtimeEntry,{recursive:true,force:true});fs.cpSync(runtime, 'dist/NoteMind', {recursive:true,verbatimSymlinks:true});fs.renameSync('dist/NoteMind/Electron.app',runtimeEntry);}
-  else if(!fs.existsSync(runtimeEntry))fs.cpSync(runtime, 'dist/NoteMind', {recursive:true,verbatimSymlinks:true});
+  else refreshPortableRuntime(runtime, 'dist/NoteMind');
   const appDir = process.platform === 'darwin' ? 'dist/NoteMind/NoteMind.app/Contents/Resources/app' : 'dist/NoteMind/resources/app';
   fs.mkdirSync(appDir, { recursive: true });
   fs.cpSync('src', `${appDir}/src`, { recursive: true });
@@ -37,7 +38,8 @@ if (fs.existsSync(runtime)) {
   for (const name of ['koffi', '@koromix']) if (fs.existsSync(`node_modules/${name}`) && !fs.existsSync(`${appDir}/node_modules/${name}`)) fs.cpSync(`node_modules/${name}`, `${appDir}/node_modules/${name}`, { recursive: true });
   const dependencies=new Set();function copyDependency(name,from=process.cwd()){if(name.startsWith("@types/")||require("node:module").isBuiltin(name))return;const {root:folder,pkg}=require('./package-root.cjs')(name,from);if(dependencies.has(pkg.name))return;dependencies.add(pkg.name);fs.cpSync(folder,`${appDir}/node_modules/${pkg.name}`,{recursive:true});for(const child of Object.keys(pkg.dependencies||{}))copyDependency(child,folder);}
   for(const name of ['docx','mammoth','markdown-it','turndown','turndown-plugin-gfm','image-size','highlight.js','utif','stream-json','pdf-lib'])copyDependency(name);
-  if (process.platform === 'win32' && !fs.existsSync('dist/NoteMind/NoteMind.exe')) fs.copyFileSync('dist/NoteMind/electron.exe', 'dist/NoteMind/NoteMind.exe');
+  if (process.platform === 'linux') refreshLinuxEntry('dist/NoteMind');
+  if (process.platform === 'win32') refreshWindowsEntry('dist/NoteMind');
   if(process.platform==='win32')cp.execFileSync(process.execPath,['scripts/stamp-icon.cjs'],{stdio:'inherit',windowsHide:true});
   if(process.platform==='darwin')cp.execFileSync(process.execPath,['scripts/package-mac.cjs'],{stdio:'inherit'});
   console.log('Built the portable application in dist/NoteMind.');

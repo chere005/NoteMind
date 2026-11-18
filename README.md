@@ -6,7 +6,7 @@ A desktop Notepad application with a visual/Markdown editor, a folder and projec
 
 Install Node.js and Python, then `npm install`, `npm run build`, and `npm start`.
 
-The portable Windows application is `dist/NoteMind/NoteMind.exe`. On Apple Silicon macOS the build creates `dist/NoteMind/NoteMind.app`, signed locally for this machine; it is not notarized for distribution.
+The portable Windows application is `dist/NoteMind/NoteMind.exe`. On Linux, launch `dist/NoteMind/NoteMind` and keep the generated runtime files alongside it. On Apple Silicon macOS the build creates `dist/NoteMind/NoteMind.app`, signed locally for this machine; it is not notarized for distribution.
 
 The app logo lives in `assets/logo.svg`. The build renders its master PNG and platform icons from that source, using the same monoline style as CalMind and PlanMind.
 
