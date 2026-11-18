@@ -93,12 +93,15 @@ async function copyInScope(source,target,{duplicate=false,move=false}={}){
   if(move){await absent(target);await fs.rename(source,target);}else await fs.cp(source,target,{recursive:true,force:false,errorOnExist:true});return;
  }
  return withFileLock(source,async()=>{
-  const bytes=await fs.readFile(source),doc=await read(source,bytes.toString('utf8'));
+  const sourceIdentity=await fs.lstat(source,{bigint:true}),bytes=await fs.readFile(source),doc=await read(source,bytes.toString('utf8'));
+  const sameSource=stat=>stat.dev===sourceIdentity.dev&&stat.ino===sourceIdentity.ino&&stat.size===sourceIdentity.size&&stat.mtimeNs===sourceIdentity.mtimeNs&&stat.ctimeNs===sourceIdentity.ctimeNs;
+  const checkSource=async()=>{if(!sameSource(await fs.lstat(source,{bigint:true}))||!bytes.equals(await fs.readFile(source))||!sameSource(await fs.lstat(source,{bigint:true})))throw Error('The file changed while it was being moved. Try again.');};
   if(duplicate)doc.id=crypto.randomUUID();
-  await absent(target);const prepared=await prepare(doc,target,{metadata:false});
-  if(!bytes.equals(await fs.readFile(source)))throw Error('The file changed while it was being moved. Try again.');
-  await replaceIfUnchanged(target,Buffer.from(prepared.text),null,{afterCommit:()=>writeMetadata(prepared,target)});
-  if(move){try{if(!bytes.equals(await fs.readFile(source)))throw Error('The file changed while it was being moved. Try again.');await fs.unlink(source);}catch(error){await fs.unlink(target).catch(()=>{});throw error;}}
+  await absent(target);const prepared=await prepare(doc,target,{metadata:false});let publication;
+  const targetOwned=async()=>{if(!publication)return false;const matches=stat=>stat.isFile()&&!stat.isSymbolicLink()&&stat.dev===publication.dev&&stat.ino===publication.ino&&Number(stat.size)===publication.bytes;try{if(!matches(await fs.lstat(target,{bigint:true})))return false;const current=await require('./source-file-revision.cjs').sourceFileRevision(target);return current?.bytes===publication.bytes&&current.sha256===publication.sha256&&matches(await fs.lstat(target,{bigint:true}));}catch(error){if(error.code==='ENOENT'||/changed while/.test(error.message))return false;throw error;}};
+  await checkSource();
+  await replaceIfUnchanged(target,Buffer.from(prepared.text),null,{afterCommit:async receipt=>{publication=receipt;if(!await targetOwned())throw Error('The destination changed outside NoteMind. Both files remain in place.');await writeMetadata(prepared,target);}});
+  if(move){try{await checkSource();if(!await targetOwned())throw Error('The move destination changed outside NoteMind. Both files remain in place.');await checkSource();await fs.unlink(source);}catch(error){try{if(await targetOwned())await fs.unlink(target);}catch(cleanup){error.moveCleanupError=cleanup.message;}throw error;}}
  });
 }
 // A raw copy remains compatible with old snapshots; the adjacent Notepad preserves editable assets.
