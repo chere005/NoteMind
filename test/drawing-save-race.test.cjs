@@ -1,4 +1,4 @@
-const { test } = require('node:test'), assert = require('node:assert/strict');
+const { test } = require('node:test'), assert = require('node:assert/strict'), {SheetActions}=require('../src/close-flush-drain.js');
 const fs = require('node:fs'), vm = require('node:vm'), { buildSync } = require('esbuild');
 
 const signatureModule = { exports: {} };
@@ -21,7 +21,7 @@ function pendingSave(sheets) {
     setSheets(update) { context.currentSheets = update(context.currentSheets); },
     window: { notemind: { savePane(data,svg,file,options) { context.savedData = data;context.saveTarget={file,options};dispatchedResolve();return new Promise(resolve => { complete = resolve; }); } } },
   };
-  context.bindDrawingSaveChunks=value=>value;context.saveDrawingPane=(api,...args)=>api.savePane(...args);context.pendingSheetActions={current:new Set()};context.page={current:sheets[0].page};context.liveSheets={get current(){return context.currentSheets;}};context.sheetsSnapshot=()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.ensureSheetReady=async page=>context.currentSheets.find(item=>item.page===page);
+  context.bindDrawingSaveChunks=value=>value;context.saveDrawingPane=(api,...args)=>api.savePane(...args);context.pendingSheetActions={current:new SheetActions()};context.page={current:sheets[0].page};context.liveSheets={get current(){return context.currentSheets;}};context.sheetsSnapshot=()=>context.currentSheets.map(s=>({name:s.name,aspect:s.page.aspect,strokes:s.page.strokes,paper:s.paper}));context.ensureSheetReady=async page=>context.currentSheets.find(item=>item.page===page);
   vm.runInNewContext(implementation + ';globalThis.save = saveSheet;globalThis.closeDrawing=closeSheet;', context);
   return { context,dispatched, complete: file => complete(file) };
 }
@@ -60,7 +60,7 @@ test('keeping a newly saved drawing in the project updates the current sheet obj
 });
 
 test('a rejected asynchronous keep does not mark the drawing as kept', async () => {
- const first=sheet('First');let complete;const events=[],context={pendingSheetActions:{current:new Set()},page:{current:first.page},sheets:[first],active:0,kept:[first],captureReadyDrawing:()=>({frozen:true}),denseDrawing:()=>false,drawingPreview:()=>new Promise(resolve=>complete=resolve),editableSheet:()=>({name:'First'}),btoa:value=>value,refresh(){},setSheets:update=>{context.kept=update(context.kept)},window:{NoteMindNotes:{captureInsertion:()=>({tab:'original'})},dispatchEvent:event=>{events.push(event);return false}},CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options)}}};
+ const first=sheet('First');let complete;const events=[],context={pendingSheetActions:{current:new SheetActions()},page:{current:first.page},sheets:[first],active:0,kept:[first],captureReadyDrawing:()=>({frozen:true}),denseDrawing:()=>false,drawingPreview:()=>new Promise(resolve=>complete=resolve),editableSheet:()=>({name:'First'}),btoa:value=>value,refresh(){},setSheets:update=>{context.kept=update(context.kept)},window:{NoteMindNotes:{captureInsertion:()=>({tab:'original'})},dispatchEvent:event=>{events.push(event);return false}},CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options)}}};
  context.page={current:first.page};context.liveSheets={current:[first]};context.ensureSheetReady=async()=>first;
  const start=source.indexOf('onKeep:async(to,on)=>{')+'onKeep:'.length,end=source.indexOf('} onHide=',start),text=source.slice(start,end).replace(/}}$/, '}');vm.runInNewContext('globalThis.keep='+text,context);
  const pending=context.keep('note',true);context.sheets=[sheet('Later')];complete('preview');await pending;assert.equal(events.length,1);assert.equal(events[0].cancelable,true);assert.equal(events[0].detail.insertion.tab,'original');assert.equal(context.kept[0].keptNote,undefined);
