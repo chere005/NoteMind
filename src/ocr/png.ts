@@ -149,7 +149,9 @@ export function decodePng(bytes: Uint8Array): Rgba {
           out[o + 1] = sample(rows, row, x, 1)
           out[o + 2] = sample(rows, row, x, 2)
           out[o + 3] = channels === 4 ? sample(rows, row, x, 3)
-            : transparentRGB && transparentRGB.every((value, c) => rawSample(rows, row, x, c) === value) ? 0 : 255
+            : transparentRGB && rawSample(rows, row, x, 0) === transparentRGB[0]
+              && rawSample(rows, row, x, 1) === transparentRGB[1]
+              && rawSample(rows, row, x, 2) === transparentRGB[2] ? 0 : 255
         }
       }
     }
