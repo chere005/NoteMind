@@ -9,7 +9,7 @@ class WorkerClient {
  dispose(error=Error('PDF reference closed.')){if(this.closed)return;this.closed=true;this.service.clients.delete(this.contents);for(const job of this.pending.values()){clearTimeout(job.timer);job.reject(error);}this.pending.clear();if(!this.window.isDestroyed())this.window.destroy();}
 }
 class PDFReferenceService {
- constructor({root=path.join(process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),'PDF Markup'),jobs=new PDFReferenceJobs(root),clientFactory,maximumSessions=2}={}){Object.assign(this,{root,jobs,maximumSessions});this.clients=new Map();this.owners=new Map();this.clientFactory=clientFactory||(()=>new WorkerClient(this));this.closed=false;ipcMain.on('pdf-reference:reply',(event,packet)=>this.clients.get(event.sender)?.receive(packet));app.once('will-quit',()=>{void this.dispose();});}
+ constructor({root=path.join(process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),'PDF Markup'),jobs=new PDFReferenceJobs(root),clientFactory,maximumSessions=2}={}){Object.assign(this,{root,jobs,maximumSessions});this.clients=new Map();this.owners=new Map();this.clientFactory=clientFactory||(()=>new WorkerClient(this));this.closed=false;this.disposal=null;this.quitReady=false;this.quitWaiting=null;ipcMain.on('pdf-reference:reply',(event,packet)=>this.clients.get(event.sender)?.receive(packet));app.on('will-quit',event=>{if(this.quitReady)return;event?.preventDefault?.();if(!this.quitWaiting)this.quitWaiting=this.dispose().then(()=>{this.quitReady=true;app.quit();}).catch(error=>{this.quitWaiting=null;console.error('PDF cleanup could not finish:',error);});});}
  owner(sender){if(this.closed||!sender||sender.isDestroyed?.())throw Error('The PDF window is closed.');let value=this.owners.get(sender);if(!value){value=new Map();this.owners.set(sender,value);sender.once('destroyed',()=>{for(const state of value.values())state.client.dispose();this.owners.delete(sender);});}return value;}
  get(sender,id){const owned=this.owner(sender),state=owned.get(id);if(!state)throw Error('This PDF reference has expired. Reopen it.');owned.delete(id);owned.set(id,state);return state;}
  async open(sender,{file,password,attachment,previousHash}={}){
@@ -53,7 +53,7 @@ class PDFReferenceService {
   })();state.exports ||= new Set();state.exports.add(run);try{return await run;}finally{state.exports.delete(run);}
  }
 
- async dispose(){if(this.closed)return;this.closed=true;for(const owned of this.owners.values())for(const state of owned.values())state.client.dispose();this.owners.clear();await this.jobs.dispose();}
+ dispose(){if(this.disposal)return this.disposal;this.closed=true;return this.disposal=Promise.resolve().then(async()=>{for(const owned of this.owners.values())for(const state of owned.values())state.client.dispose();this.owners.clear();await this.jobs.dispose();}).catch(error=>{this.disposal=null;throw error;});}
 }
 module.exports={PDFReferenceService,WorkerClient};
 
