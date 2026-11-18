@@ -54,6 +54,9 @@ test('binary output is opt-in and cannot consume a borrowed factory or a partial
   await assert.rejects(executeBytes(h.execute,'image',[Buffer.alloc(100)],{binaryOutput:true}),error=>error.resourcesReleased===false&&/receiver backing/.test(error.message));assert.equal(view.byteLength,100);assert.equal(h.bytes.stats().pendingBinaryChunks,1);h.bytes.ackBinary(h.pending.id,h.pending.chunk);h.bytes.release(h.pending.id);assert.equal(view.byteLength,100);
  }
 });
+test('a malformed foreign chunk token retires its complete receiver and returns an explicit quarantined sender',async()=>{
+ const h=fixture({mutate:part=>part.chunk='foreign:1'});await assert.rejects(executeBytes(h.execute,'image',[Buffer.alloc(100)],{binaryOutput:true}),error=>error.resourcesReleased===false&&error.code==='DOCUMENT_BYTES_RELEASE_UNCONFIRMED');assert.equal(h.receiver[0].data.byteLength,0);assert.equal(h.sender[0].data.byteLength,100);assert.equal(h.bytes.stats().pendingBinaryChunks,1);h.bytes.ackBinary(h.pending.id,h.pending.chunk);h.bytes.release(h.pending.id);assert.equal(h.bytes.stats().bytes,0);
+});
 test('chunk acknowledgement namespaces cannot cross concurrent transfers or reclaim another pending sender',()=>{
  const bytes=factory({consumeOwned:true,uuid:randomUUID}),a=bytes.begin(0),b=bytes.begin(0),source=Uint8Array.of(3,4),ta=bytes.publish(a,source),tb=bytes.publish(b,source),ca=bytes.readBinary(a,ta.documentByteOutput,0),cb=bytes.readBinary(b,tb.documentByteOutput,0);
  assert.throws(()=>bytes.ackBinary(b,ca.chunk),/acknowledgement/);assert.equal(cb.data.byteLength,2);assert.equal(ca.data.byteLength,2);bytes.ackBinary(a,ca.chunk);assert.equal(bytes.ackBinary(a,ca.chunk),true);assert.equal(cb.data.byteLength,2);bytes.ackBinary(b,cb.chunk);bytes.release(a);bytes.release(b);assert.deepEqual([...source],[3,4]);

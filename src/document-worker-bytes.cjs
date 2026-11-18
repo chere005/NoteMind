@@ -32,7 +32,7 @@ async function executeBytes(execute,name,args,{signal,yieldTask=task,binaryOutpu
        abort(signal);bytes.set(chunk,at);at+=chunk.byteLength;
       }finally{
        await retireOwned(chunk);
-       if(!validChunk(part.chunk))throw Error('Private document chunk acknowledgement is unavailable.');
+       if(!validChunk(part.chunk)){binaryUncertain=true;throw Object.assign(Error('Private document chunk acknowledgement is unavailable.'),{code:'DOCUMENT_BYTES_RELEASE_UNCONFIRMED',resourcesReleased:false});}
        if(await binaryRPC('ackBinary',[id,part.chunk])!==true)throw Error('Private document chunk acknowledgement was interrupted.');
        if(receiverFailure.error)throw Error('Private document receiver cleanup required a retry.',{cause:receiverFailure.error});
       }
