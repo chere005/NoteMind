@@ -17,6 +17,17 @@ test('scoped document saves use the owned service identity and close waits for t
 test('an opening reference cannot create a late renderer after disposal or initiating-owner loss during eviction',async()=>{
  for(const disposing of[true,false]){
   const f=fixture(),a=await f.service.open(f.sender,{file:'/a.pdf'});await f.service.open(f.sender,{file:'/b.pdf'});const gate=deferred(),saved=f.service.inkDocument(f.sender,{text:'',assets:{}},{mode:'save',id:a.id,page:1},{run:()=>gate.promise});f.service.retain(f.sender,a.id,false);
-  const opening=f.service.open(f.sender,{file:'/c.pdf'}),rejected=assert.rejects(opening,/PDF window is closed/);await tick();assert.equal(f.clients.length,2);if(disposing)await f.service.dispose();else f.sender.emit('destroyed');gate.resolve({revision:'finished'});await saved;await rejected;assert.equal(f.clients.length,2);assert.equal(f.service.owners.size,0);assert.ok(f.clients.every(client=>client.closed));await f.service.dispose();
+  const opening=f.service.open(f.sender,{file:'/c.pdf'}),rejected=assert.rejects(opening,/PDF window is closed/);await tick();assert.equal(f.clients.length,2);let closing;if(disposing)closing=f.service.dispose();else f.sender.emit('destroyed');gate.resolve({revision:'finished'});await saved;await rejected;await closing;await tick();assert.equal(f.clients.length,2);assert.equal(f.service.owners.size,0);assert.ok(f.clients.every(client=>client.closed));await f.service.dispose();
  }
+});
+
+test('PDF disposal joins external archive ink receipts and export dialogs before closing their source consumers',async()=>{
+ for(const exporting of[false,true]){
+  const f=fixture(),opened=await f.service.open(f.sender,{file:'/source.pdf'}),gate=deferred();let operation;
+  if(exporting){f.dialog.showSaveDialog=()=>gate.promise;operation=f.service.export(f.sender,opened.id);}else operation=f.service.inkDocument(f.sender,{text:'',assets:{}},{mode:'save',id:opened.id,page:1},{run:()=>gate.promise});
+  await tick();let done=false;const closing=f.service.dispose().then(()=>done=true);await tick();assert.equal(done,false);assert.equal(f.clients[0].closed,false);gate.resolve(exporting?{canceled:true}:{revision:'external-durable'});await operation;await closing;assert.equal(done,true);assert.equal(f.clients[0].closed,true);assert.equal(f.service.retiredOwners.size,0);
+ }
+});
+test('owner destruction keeps the private PDF source alive through a pending first-source backup',async()=>{
+ const gate=deferred();let first=true;const f=fixture({save:()=>{if(first){first=false;return gate.promise;}return{revision:'backed-up'};}}),opened=await f.service.open(f.sender,{file:'/source.pdf'}),saving=f.service.save(f.sender,opened.id,{page:1,bytes:new Uint8Array([1])});await tick();f.sender.emit('destroyed');assert.equal(f.clients[0].closed,false);assert.equal(f.service.owners.size,0);gate.resolve({needsSource:true,bytes:new Uint8Array([1])});assert.equal((await saving).revision,'backed-up');await tick();assert.equal(f.clients[0].closed,true);assert.equal(f.service.retiredOwners.size,0);assert.throws(()=>f.service.owner(f.sender),/PDF window is closed/);await f.service.dispose();
 });

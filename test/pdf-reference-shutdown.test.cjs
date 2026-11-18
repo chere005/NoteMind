@@ -20,6 +20,6 @@ test('PDF cleanup failure stays observed and a later quit retries the cleanup be
  f.app.quit();await tick();assert.equal(attempts,2);assert.deepEqual(f.quits,[{prevented:true},{prevented:true}]);retry.resolve();await tick();assert.deepEqual(f.quits,[{prevented:true},{prevented:true},{prevented:false}]);
 });
 test('direct PDF disposal failure remains retryable without reopening sources or skipping another client',async()=>{
- let attempts=0,jobsDisposed=0,secondClosed=0;const f=fixture({async dispose(){jobsDisposed++;}}),owner={};f.service.owners.set(owner,new Map([['first',{client:{dispose(){if(++attempts===1)throw Error('renderer close failed');}}}],['second',{client:{dispose(){secondClosed++;}}}]]));
- await assert.rejects(f.service.dispose(),/renderer close failed/);assert.equal(f.service.closed,true);assert.equal(f.service.owners.size,1);assert.equal(jobsDisposed,0);await f.service.dispose();assert.equal(attempts,2);assert.equal(secondClosed,1);assert.equal(f.service.owners.size,0);assert.equal(jobsDisposed,1);
+ let attempts=0,jobsDisposed=0,secondClosed=0;const f=fixture({async dispose(){jobsDisposed++;}}),owner={};f.service.owners.set(owner,new Map([['first',{saves:new Set(),client:{dispose(){if(++attempts===1)throw Error('renderer close failed');}}}],['second',{saves:new Set(),client:{dispose(){secondClosed++;}}}]]));
+ await assert.rejects(f.service.dispose(),/renderer close failed/);assert.equal(f.service.closed,true);assert.equal(f.service.retiredOwners.size,1);assert.equal(jobsDisposed,0);await f.service.dispose();assert.equal(attempts,2);assert.equal(secondClosed,1);assert.equal(f.service.owners.size,0);assert.equal(f.service.retiredOwners.size,0);assert.equal(jobsDisposed,1);
 });
