@@ -4,7 +4,7 @@ const electron=require('electron'),Module=require('node:module'),fs=require('nod
 if(process.platform==='darwin')electron.app.dock.hide();
 process.on('SIGTERM',()=>electron.app.exit(0));
 const original=Module._load;
-Module._load=function(request,parent,isMain){const loaded=original.call(this,request,parent,isMain);if(request!=='electron')return loaded;return {...loaded,BrowserWindow:class extends loaded.BrowserWindow{constructor(options){super({...options,show:false});this.show=()=>{};this.focus=()=>{};}}};};
+Module._load=function(request,parent,isMain){const loaded=original.call(this,request,parent,isMain);if(request!=='electron')return loaded;return {...loaded,BrowserWindow:class extends loaded.BrowserWindow{constructor(options){super({...options,show:false,focusable:false});this.show=()=>{};this.focus=()=>{};}}};};
 electron.app.disableHardwareAcceleration();
 electron.app.on('browser-window-created',(_,window)=>window.webContents.once('did-finish-load',()=>fs.writeFileSync(path.join(process.env.NOTEMIND_DATA,'test-ready'),String(process.pid))));
 electron.app.on('second-instance',()=>fs.writeFileSync(path.join(process.env.NOTEMIND_DATA,'test-focused'),String(process.pid)));
