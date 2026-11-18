@@ -1,12 +1,9 @@
 const fs=require('node:fs/promises');
 const path=require('node:path');
-const {render,toMarkdown,md,mime}=require('./document-renderer.cjs');
-const mammoth=require('mammoth');
-const D=require('docx');
-const syntaxCSS=require('node:fs').readFileSync(path.join(__dirname,'syntax.css'),'utf8');
+let D,syntaxCSS;const renderer=()=>require('./document-renderer.cjs');
 async function importWord(bytes,{signal}={}){
  const check=()=>{if(signal?.aborted)throw Object.assign(Error('Conversion cancelled.'),{name:'AbortError'});};check();
- const assets={};let count=0;
+ const mammoth=require('mammoth'),{toMarkdown}=renderer(),assets={};let count=0;
  const result=await mammoth.convertToHtml({buffer:bytes},{styleMap:['highlight => mark','u => u'],convertImage:mammoth.images.imgElement(async image=>{check();let ext=({'image/png':'png','image/jpeg':'jpg','image/gif':'gif','image/svg+xml':'svg','image/tiff':'tiff'})[image.contentType];if(!ext)throw Error('Unsupported Word image: '+image.contentType);let data=await image.read('base64');check();if(ext==='tiff'){data=require('./tiff-images.cjs').tiffToPng(Buffer.from(data,'base64')).toString('base64');ext='png';}const name='assets/word-image-'+(++count)+'.'+ext;assets[name]=data;return {src:name};})});
  check();return {path:null,text:toMarkdown(result.value),assets,warnings:result.messages.map(m=>m.message)};
 }
@@ -18,6 +15,7 @@ function inline(tokens,assets,style={}){
  }}return output;
 }
 async function exportWord(doc,images={},options={}){
+ D ||= require('docx');const {md}=renderer();
  images={...images,__attachments:doc.meta?.attachments||{}};const tokens=md.parse(doc.text,{}),children=[],lists=[],numbering=[];let heading,quote=0,listInstance=0;
  for(let i=0;i<tokens.length;i++){const t=tokens[i];
   if(t.type==='heading_open')heading=Number(t.tag.slice(1));
@@ -39,5 +37,5 @@ async function exportWord(doc,images={},options={}){
  const file=new D.Document({creator:'NoteMind',title:doc.title||'Notepad',styles:{default:{document:{run:{font:'Calibri',size:22},paragraph:{spacing:{after:120}}}}},numbering:{config:numbering},sections:[{properties:{page:{size:options.pageSize==='A4'?{width:11906,height:16838}:{width:12240,height:15840},margin:{top:1080,right:1080,bottom:1080,left:1080}}},footers:{default:new D.Footer({children:[new D.Paragraph({alignment:D.AlignmentType.CENTER,children:[new D.TextRun({children:[D.PageNumber.CURRENT]})]})]})},children:children.length?children:[new D.Paragraph('')]}]});
  return D.Packer.toBuffer(file);
 }
-function printHtml(doc,options={}){return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:'+(options.preview?' blob:':'')+(options.files?' file:':'')+'; style-src \'unsafe-inline\'">'+(options.truncated?'<meta name="notemind-preview-truncated" content="1">':'')+'<style>@page{margin:0}body{font:11pt/1.5 Calibri,Arial,sans-serif;color:#191919}h1,h2,h3,h4,h5,h6{break-after:avoid}h1{font-size:25pt}h2{font-size:19pt}img{max-width:100%;max-height:240mm;object-fit:contain}table{border-collapse:collapse;width:100%;break-inside:avoid}td,th{border:1px solid #aaa;padding:6px;text-align:left}th{font-weight:normal}pre{white-space:pre-wrap;background:#f3f3f3;padding:10px}blockquote{border-left:3px solid #bbb;margin-left:0;padding-left:15px}a{color:#245ca4}p,li{orphans:3;widows:3}'+syntaxCSS+'</style><body class="syntax-light">'+render(doc.text,doc.assets,doc.meta,options.imageUrl,options.imageSize,{metadataAttachments:true}).replace(/<button\b[^>]*>[\s\S]*?<\/button>/gi,'')+'</body>';}
+function printHtml(doc,options={}){const {render}=renderer();syntaxCSS??=require('node:fs').readFileSync(path.join(__dirname,'syntax.css'),'utf8');return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:'+(options.preview?' blob:':'')+(options.files?' file:':'')+'; style-src \'unsafe-inline\'">'+(options.truncated?'<meta name="notemind-preview-truncated" content="1">':'')+'<style>@page{margin:0}body{font:11pt/1.5 Calibri,Arial,sans-serif;color:#191919}h1,h2,h3,h4,h5,h6{break-after:avoid}h1{font-size:25pt}h2{font-size:19pt}img{max-width:100%;max-height:240mm;object-fit:contain}table{border-collapse:collapse;width:100%;break-inside:avoid}td,th{border:1px solid #aaa;padding:6px;text-align:left}th{font-weight:normal}pre{white-space:pre-wrap;background:#f3f3f3;padding:10px}blockquote{border-left:3px solid #bbb;margin-left:0;padding-left:15px}a{color:#245ca4}p,li{orphans:3;widows:3}'+syntaxCSS+'</style><body class="syntax-light">'+render(doc.text,doc.assets,doc.meta,options.imageUrl,options.imageSize,{metadataAttachments:true}).replace(/<button\b[^>]*>[\s\S]*?<\/button>/gi,'')+'</body>';}
 module.exports={importWord,exportWord,printHtml};
