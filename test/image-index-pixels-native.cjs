@@ -6,6 +6,7 @@ const {createHostImageConverter}=require('../src/image-index-raster-client.cjs')
 const source=require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),root=path.resolve('src');
 const out=path.resolve('test-results/performance/image-index-pixels-'+source.slice(0,7)+'.json'),profile=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-index-pixels-'));
 const report={source,profile,scope:'All14 original image profiles: Node decodePng(old HTMLCanvas PNG) versus owned unencoded index RGBA',versions:process.versions,rows:[],memory:[],files:{},ok:false};
+require('./native-failure-exit.cjs').installNativeFailureExit({app,report:out,telemetry:report});
 fs.mkdirSync(path.dirname(out),{recursive:true});
 for(const file of ['image-index-raster-worker.js','image-index-raster-host.js','image-index-raster-client.cjs','document-byte-tools.js','document-worker-bytes.cjs','image-conversion-worker.js','ocr/png.ts'])report.files[file]=crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex');
 const code=require('esbuild').buildSync({entryPoints:[path.join(root,'ocr/png.ts')],platform:'node',format:'cjs',bundle:true,write:false}).outputFiles[0].text,moduleValue={exports:{}};
@@ -14,7 +15,6 @@ const {decodePng}=moduleValue.exports,hash=bytes=>crypto.createHash('sha256').up
 const client=createHostImageConverter();let win,timer,deadline,finished=false;
 app.setPath('userData',profile);app.dock?.hide();app.on('window-all-closed',()=>{});
 for(const flag of ['disable-renderer-backgrounding','disable-background-timer-throttling','disable-backgrounding-occluded-windows'])app.commandLine.appendSwitch(flag);
-require('./native-failure-exit.cjs').installNativeFailureExit({app,report:out,telemetry:report});
 function sample(){const processes=app.getAppMetrics().map(row=>({pid:row.pid,type:row.type,bytes:row.memory.workingSetSize*1024})),total=processes.reduce((sum,row)=>sum+row.bytes,0);report.memory.push({at:Date.now(),processes,total});if(total>1024*1024*1024)throw Error('Independent Node PNG pixel authority exceeded unchanged1GiB.');}
 function finish(error){if(finished)return;finished=true;clearInterval(timer);clearTimeout(deadline);report.ok=!error;report.peak=Math.max(0,...report.memory.map(row=>row.total));if(error)report.error=error.stack||String(error);report.finished=new Date().toISOString();fs.writeFileSync(out,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({ok:report.ok,rows:report.rows.length,peak:report.peak,error:report.error,artifact:out}));app.exit(error?1:0);}
 const discard=bytes=>{if(bytes?.byteLength&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)bytes.buffer.transfer(0);};
