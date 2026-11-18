@@ -33,8 +33,8 @@ class Column {
   release() { for (const page of this.pages) if(page)discard(page.buffer); this.pages.length = 0; }
 }
 class Cache {
-  constructor() { this.values = new Map(); }
-  get(key, make) { let value = this.values.get(key); if (!value) { value = make(); this.values.set(key, value); if (this.values.size > 256) this.values.delete(this.values.keys().next().value); } return value; }
+  constructor() { this.values = new Map(); this.order = new Array(256); this.next = 0; }
+  get(key, make) { let value = this.values.get(key); if (!value) { value = make(); if (!this.values.has(key)) { if (this.values.size === 256) this.values.delete(this.order[this.next]); this.order[this.next] = key; this.next = (this.next + 1) & 255; } this.values.set(key, value); } return value; }
 }
 const discard = buffer => { if (typeof buffer.transfer === 'function') buffer.transfer(0); else structuredClone(buffer, {transfer: [buffer]}); };
 const isIndex = key => typeof key === 'string' && /^(0|[1-9]\d*)$/.test(key);
