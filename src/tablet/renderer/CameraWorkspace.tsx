@@ -183,7 +183,7 @@ export function CameraWorkspace({rescan,onRescan,colour, width, onClose, onActiv
 
  const zoomBox=b=>setZoom({x:(shown.x+b.x*shown.width)/size.width,y:(shown.y+b.y*shown.height)/size.height,width:b.width*shown.width/size.width,height:b.height*shown.height/size.height});
 
- useEffect(()=>{const key=e=>{if(!cameraActive)return;if(e.key==='Escape'){setBox(null);setCorners(null);setZoomArmed(false);setZoom(null);setHeld(null);} };window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[cameraActive]);
+ useEffect(()=>{const key=e=>{if(!cameraActive||e.defaultPrevented||e.isComposing||e.keyCode===229||e.key!=='Escape')return;const owner=e.target?.ownerDocument||stage.current?.ownerDocument||document,target=e.target?.ownerDocument?e.target:owner.activeElement;if(target?.isContentEditable||target?.closest?.('input,textarea,select,[contenteditable]')||owner.querySelector?.('dialog[open],.float-menu,[data-pen="sheet"]'))return;setBox(null);setCorners(null);setZoomArmed(false);setZoom(null);setHeld(null);};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[cameraActive]);
 
  const point=e=>{const at=elementPoint(stage.current,e),p=screenToInk({x:at.x,y:at.y},view);return {x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))};};
 
