@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Updated November 18, 2026, 4:47 AM Central. Target handoff: **8 AM Central today**. Installed 0.35.0 is untouched. No new release is qualified, pushed to main or installed. A failed acceptance gate remains a failure at the deadline.
+Updated November 18, 2026, 5 AM Central. Target handoff: **8 AM Central today**. Installed 0.35.0 is untouched. No new release is qualified, pushed to main or installed. A failed acceptance gate remains a failure at the deadline.
 
 ## Incremental timeline
 
@@ -11,15 +11,16 @@ Updated November 18, 2026, 4:47 AM Central. Target handoff: **8 AM Central today
 | 6–7:15 AM | Run the highest-value frozen native gates sequentially: drawing/storage, PDF/reference/import/export/recovery, and large-image indexing. Recheck changed ownership and performance paths. |
 | 7:15–8 AM | Preserve actual results and artifacts, finish source/package review and prepare the exact Claude handoff. Qualify a stable increment only if its required gates pass. |
 
-These are estimates, not permission to skip tests or call failing workloads stable. The safe pause point is a committed, reproducible source checkpoint with preserved evidence. One heavy/native/build at a time; Sean's running app and data remain undisturbed. The 4 AM update was delivered; next whole-timeline report is 5 AM. No TaskMind entries for this task.
+These are estimates, not permission to skip tests or call failing workloads stable. The safe pause point is a committed, reproducible source checkpoint with preserved evidence. One heavy/native/build at a time; Sean's running app and data remain undisturbed. The 5 AM update was delivered; next whole-timeline report is 6 AM. No TaskMind entries for this task.
 
 ## Current checkpoint
 
 - The three fresh whole-app source audits have run. Bug review: 14 finding groups, 207 focused checks; UI review: 15 finding groups, 227 focused checks. Their confirmed fixes are integrated through Root `20a1de8`; performance review is closing the last reproduced repeated-Find work. These are focused checks, not a full-suite or package acceptance claim.
-- Candidate `8fa9d856` built and signed successfully, but predates the latest audit follow-ups. Its unchanged production Web full-100-image mixed gate fails at 1,092,501,504 B after all 104 display/typing/autosave/tab-return phases and before the first OCR reply. The 1 GiB aggregate limit is unchanged.
-- The experimental file/cold native-process full-100 run is frozen and still active. It has dispatched no model worker; this is a pre-OCR liveness diagnostic, not inference or memory acceptance. No experimental native backend has been adopted.
+- Candidate `5f9fda9` built and signed successfully, but predates the latest Find cache and geometry batches. Production Web at `8fa9d856` fails at 1,092,501,504 B. The new file/cold experimental process run starts OCR after the scheduler fix, then fails first recognition at 1,091,354,624 B; zero replies, all 104 display phases complete. The 1 GiB aggregate limit is unchanged.
+- An early activity timer can strand queued background indexing without another wake. The actual-source repro fails four cases before the fix; 60 affected checks pass after. Root `b802983` integrates generation/handle-owned deadline rearming. The preceding zero-start run remains only consistent with this cause because it lacks scheduler telemetry. The subsequent run records active indexing and one actual model helper; all five captured PIDs exited and all 774 frozen identities match. No experimental native backend has been adopted.
 - Native UI backing retirement is measured: hidden drawing canvases 134,217,732 to 12 logical bytes; inactive camera canvas 67,108,864 to 4 bytes, with exact restored pixels and owned exits. Physical Wacom buttons remain outside these synthetic native checks.
 - The 16 MiB footer source benchmark reduces measured peak memory by 48.6% but is 9.86 times slower in the matched VM-stage measurement. Native large-source fixture runs hit the memory guard before the counter worker starts; faithful source-control attribution and latency closure remain required. No whole-app speedup is claimed.
+- The exact repeated-point two-million-stroke storage probe passes at `2ab0c01`, 522,321,920 B owned peak, exact geometry/identity and actual exits. Observed load is 5139.2 ms, metadata save 1047.2 ms, close 1.58 ms. Root `18f5040` now removes redundant per-stroke asynchronous chunk lookups and iterates bounded validated leaves; 30 focused checks pass, with heavy timing repeat pending. Native Find after duplicate-refresh removal builds all 150,000 ranges in 69.3 ms, but Next still builds another 150,000 in 103.8 ms. Root `3c60b73` adds invalidation-safe range reuse; 25 focused checks pass, native paired repeat pending.
 - Full preflight, final-source build, final frozen stress/recovery/soak and complete stage rankings have not passed yet. Deadline work prioritizes an evidence-backed source/package handoff over unqualified installation.
 
 ## Latest measured state
