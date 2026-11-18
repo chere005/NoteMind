@@ -14,3 +14,5 @@ src/pdf-ink-browser.js
 src/pdf-reference-worker.js
 
 src/overview-thumbnail-worker.js
+
+src/notes-footer-markdown.js

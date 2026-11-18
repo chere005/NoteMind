@@ -9,8 +9,8 @@
   if(state.inWord){const prefix=text.match(continuation);if(prefix)at=prefix[0].length;else state.inWord=false;if(at===text.length)return;}
   letters.lastIndex=at;let match,end=-1;while((match=letters.exec(text))){state.count++;end=letters.lastIndex;}state.inWord=end===text.length;
  }
- function countHTML(html){
-  const state={count:0,inWord:false,carry:''},tokens=/<[^>]*>|&(?:amp|lt|gt|quot|#39|#x27);/g,entities={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'",'&#x27;':"'"};let from=0,skip=0,match;
+ function countHTML(html,state={count:0,inWord:false,carry:''}){
+  const tokens=/<[^>]*>|&(?:amp|lt|gt|quot|#39|#x27);/g,entities={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'",'&#x27;':"'"};let from=0,skip=0,match;
   while((match=tokens.exec(html))){if(!skip)scan(html.slice(from,match.index),state);const token=match[0];
    if(token[0]==='&'){if(!skip)scan(entities[token],state);}
    else if(skip){if(/^<\//.test(token))skip--;else if(!/^<(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(token)&&!/^<!/.test(token))skip++;}
@@ -21,8 +21,8 @@
  }
  if(typeof module==='object'&&module.exports){module.exports={scan,countHTML};return;}
  if(typeof document==='undefined'&&typeof importScripts==='function'){
-  importScripts('document-renderer.js');
-  self.onmessage=event=>{const {id,text}=event.data;try{self.postMessage({id,count:countHTML(NoteMindDocument.render(text))});}catch(error){self.postMessage({id,error:String(error.message||error)});}};return;
+  importScripts('notes-footer-markdown.js');
+  self.onmessage=event=>{const {id,text}=event.data;try{self.postMessage({id,count:NoteMindFooterMarkdown.countMarkdown(text)});}catch(error){self.postMessage({id,error:String(error.message||error)});}};return;
  }
 
  // The footer: a word count of the words you can see, when the Notepad was last saved, and the page zoom.

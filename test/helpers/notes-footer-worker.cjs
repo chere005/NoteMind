@@ -1,4 +1,4 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),{parentPort,workerData}=require('node:worker_threads');
-const context=vm.createContext({TextDecoder,TextEncoder,self:{postMessage:value=>parentPort.postMessage(value)},importScripts(file){vm.runInContext(fs.readFileSync(path.join(workerData.root,file),'utf8'),context,{filename:file});}});
+const context=vm.createContext({TextDecoder,TextEncoder,self:{postMessage:value=>parentPort.postMessage(value)},importScripts(file){const target=path.join(workerData.root,file),source=fs.existsSync(target)?fs.readFileSync(target,'utf8'):file==='notes-footer-markdown.js'?require('esbuild').buildSync({entryPoints:[path.join(workerData.root,'footer-markdown.cjs')],bundle:true,platform:'browser',format:'iife',globalName:'NoteMindFooterMarkdown',write:false,minify:true}).outputFiles[0].text:null;if(source===null)throw Error('Missing worker import: '+file);vm.runInContext(source,context,{filename:file});}});
 vm.runInContext(fs.readFileSync(path.join(workerData.root,'notes-footer.js'),'utf8'),context,{filename:'notes-footer.js'});
 parentPort.on('message',value=>context.self.onmessage({data:value}));

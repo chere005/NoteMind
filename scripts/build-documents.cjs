@@ -2,6 +2,7 @@ const esbuild=require('esbuild');
 const fs=require('node:fs');
 (async()=>{
  require('./pdfjs-patch.cjs').prepare();
+ await esbuild.build({entryPoints:['src/footer-markdown.cjs'],bundle:true,platform:'browser',format:'iife',globalName:'NoteMindFooterMarkdown',outfile:'src/notes-footer-markdown.js',minify:true});
  await esbuild.build({entryPoints:['src/pdf-reference-worker-entry.js'],bundle:true,platform:'browser',format:'iife',outfile:'src/pdf-reference-worker.js',minify:true});
  await esbuild.build({entryPoints:['src/pdf-ink-codec.cjs'],bundle:true,platform:'browser',format:'iife',globalName:'NoteMindPDFInkCodec',outfile:'src/pdf-ink-browser.js',minify:true});
  await esbuild.build({entryPoints:['src/ocr/png.ts'],bundle:true,platform:'node',format:'cjs',outfile:'src/png-rgba.cjs',minify:true});

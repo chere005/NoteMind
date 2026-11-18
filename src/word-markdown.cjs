@@ -56,8 +56,8 @@ class BlockSink {
   }
 }
 function streamMarkdown(text, onToken, { check = () => {
-}, onStats, inlineThreshold = 32768, consumeInline = false } = {}) {
-  if (typeof text !== "string" || Buffer.byteLength(text) > MAX_TEXT) throw Error("Invalid Word export text.");
+}, onStats, inlineThreshold = 32768, consumeInline = false, byteLength = value => Buffer.byteLength(value) } = {}) {
+  if (typeof text !== "string" || byteLength(text) > MAX_TEXT) throw Error("Invalid Word export text.");
   if (typeof onToken !== "function") throw TypeError("Word token consumer is required.");
   check();
   const coreRules = md.core.ruler.__rules__;
