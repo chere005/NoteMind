@@ -105,7 +105,7 @@ def main(root_pid, report_file, main_file):
                 report["guardExceeded"] = sample
                 write_report(report_file, report)
                 if can_signal(root_pid, root_birth, os.getppid(), birth(root_pid)):
-                    os.kill(root_pid, signal.SIGTERM)
+                    os.kill(root_pid, signal.SIGUSR2)
                     guard_sent = time.monotonic()
             if guard_sent is not None and time.monotonic() - guard_sent > 1 and can_signal(root_pid, root_birth, os.getppid(), birth(root_pid)):
                 os.kill(root_pid, signal.SIGKILL)
@@ -116,7 +116,7 @@ def main(root_pid, report_file, main_file):
         report["observerError"] = str(error)
         write_report(report_file, report)
         if can_signal(root_pid, root_birth, os.getppid(), birth(root_pid)):
-            os.kill(root_pid, signal.SIGTERM)
+            os.kill(root_pid, signal.SIGUSR2)
     # The sampler survives fixture exit to verify GPU/compiler/utility retirement.
     try:
         with open(main_file) as source:
