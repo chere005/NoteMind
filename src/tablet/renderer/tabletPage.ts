@@ -271,6 +271,7 @@ export class TabletPage {
   viewport: Rect = { ...UNIT_SHEET }
   /** The media file of a picture shown under the ink (right-click a picture ▸ Edit with Tablet, tabletBackdrop.ts), or null. Not ink. */
   backdrop: string | null = null
+  readonly preservesEditTargetOnUnload = true
   /** The file the NOTE shows for this picture now (after a Save to Original replaced it); null: the backdrop itself. In memory only. */
   target: string | null = null
   private history = new DrawingHistory()
@@ -496,19 +497,19 @@ export class TabletPage {
   }
 
   /** Drop a clean inactive model after its catalog has been marked unloaded. */
-  unloadGeometry(): boolean {
+  unloadGeometry(options: {preserveTarget?: boolean} = {}): boolean {
     if (this.geometryRetained || this.hasPendingMetadata) return false
     this.history.dispose()
     this.backdrop = null
-    this.target = null
+    if (!options.preserveTarget) this.target = null
     this.emit(null)
     return true
   }
-  async unloadGeometryAsync(options: GeometryChangeOptions = {}): Promise<boolean> {
+  async unloadGeometryAsync(options: GeometryChangeOptions & {preserveTarget?: boolean} = {}): Promise<boolean> {
     if (this.geometryRetained || this.hasPendingMetadata || options.signal?.aborted || options.valid?.() === false) return false
     const released = this.history.disposeAsync()
     this.backdrop = null
-    this.target = null
+    if (!options.preserveTarget) this.target = null
     this.emit(null)
     await released
     return true
