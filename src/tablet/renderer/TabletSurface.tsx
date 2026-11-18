@@ -466,10 +466,12 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   // does not also let go of the pen feed.
   const hasBox = box !== null
   useEffect(() => {
-    if (!hasBox) return
+    const doc=wrap.current?.ownerDocument
+    if (!hasBox||!doc) return
     const key = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
-      const active = wrap.current?.ownerDocument.activeElement as HTMLElement | null
+      if (event.defaultPrevented||event.isComposing||event.keyCode===229||event.key !== "Escape") return
+      const active = doc.activeElement as HTMLElement | null
+      if(!host.current?.contains(active))return
       if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return
       event.preventDefault()
       event.stopPropagation()
@@ -478,8 +480,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       for(const input of deferredInputs.current)if(input.action==='select'&&!input.cancelled){input.cancelled=true;input.ended=true;input.controller.abort()}
       void drainInputs();lastClick.current=null;latest.current.onBox(null)
     }
-    window.addEventListener("keydown", key, true)
-    return () => window.removeEventListener("keydown", key, true)
+    doc.addEventListener("keydown", key, true)
+    return () => doc.removeEventListener("keydown", key, true)
   }, [hasBox])
 
   useImperativeHandle(handle, () => ({
