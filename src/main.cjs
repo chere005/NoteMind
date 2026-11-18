@@ -23,7 +23,7 @@ const notepadFormat=require('./notepad-format.cjs');
 const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO,pdfReferences});
 documentIO.setForeground?.(run=>notesIPC.foreground(run));
 
-require('./features.cjs')(() => win, projectService);
+const features=require('./features.cjs')(() => win, projectService);
 
 let pen;
 const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({shell,helper:process.platform==='darwin'?path.join(__dirname,'helpers','wm-pen-display'):null,onError:error=>console.error('Input Monitoring:',error.message)});
@@ -38,7 +38,7 @@ app.on('will-quit',event=>{
  if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRetry?.();return;}
  const invoke=run=>Promise.resolve().then(run),settle=async runs=>{const results=await Promise.allSettled(runs.map(invoke)),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(errors.length)throw new AggregateError(errors,'Core cleanup could not finish.');},retry=runs=>{void Promise.allSettled(runs.map(invoke));};
  coreQuitWaiting=Promise.resolve().then(async()=>{
-  const producers=[()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
+  const producers=[()=>features.dispose(),()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
   const noteAssets=[()=>notesIPC.dispose()];coreQuitRetry=()=>retry(noteAssets);await settle(noteAssets);
   coreQuitRetry=null;
   await settle([()=>sheetWrite,()=>cameraWrite]);

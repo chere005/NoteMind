@@ -5,7 +5,10 @@ const {spawn} = require('node:child_process');
 const {pack, unpack} = require('./zip.cjs');
 module.exports = function installFeatures(window, projectService) {
  const win = () => window();
- const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain);app.on('will-quit',()=>drawingSaves.dispose());
+ const drawingSaves=require('./drawing-save-transport.cjs').installDrawingSaveTransport(ipcMain),outputWrites=new Set();let outputClosed=false,outputDisposal=null,outputQuitReady=false,outputQuitWaiting=null;
+ function outputWrite(run){if(outputClosed)return Promise.reject(Error('Drawing output is closing.'));const pending=Promise.resolve().then(run).finally(()=>outputWrites.delete(pending));outputWrites.add(pending);return pending;}
+ function dispose(){outputClosed=true;if(outputDisposal)return outputDisposal;return outputDisposal=Promise.resolve().then(async()=>{while(outputWrites.size)await Promise.allSettled([...outputWrites]);await drawingSaves.dispose();}).catch(error=>{outputDisposal=null;throw error;});}
+ app.on('will-quit',event=>{if(outputQuitReady)return;event?.preventDefault?.();const pending=dispose();if(!outputQuitWaiting)outputQuitWaiting=pending.then(()=>{outputQuitReady=true;app.quit();}).catch(error=>{outputQuitWaiting=null;console.error('Drawing output cleanup could not finish:',error);});});
  ipcMain.on('window-close',()=>win()?.close());
  const {home,root,registry,recents}=projectService;
  const preferenceKeys=['orientation','pen','view','padChromeOrientation','toolPresets'];
@@ -44,15 +47,15 @@ module.exports = function installFeatures(window, projectService) {
   child.unref();
   return child.pid;
  });
- ipcMain.handle('export-image', async (_, data, extension='png') => {
+ ipcMain.handle('export-image', (_, data, extension='png') => outputWrite(async()=>{
   if(!['png','svg'].includes(extension)) throw Error('Unsupported image type');
   const result=await dialog.showSaveDialog(win(),{defaultPath:`Drawing.${extension}`,filters:[{name:'Image',extensions:[extension]}]});
   if(result.canceled)return null;
   const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),expected=await guard.fingerprintFile(dest);
   try{await guard.replaceIfUnchanged(dest,Buffer.from(data,'base64'),expected);}catch(error){if(!error.notemindFileCommitted)throw error;try{await dialog.showMessageBox?.(win(),{type:'warning',message:'The image was saved',detail:error.message});}catch{}}
   return result.filePath;
- });
- ipcMain.handle('save-pane',async(event,sheet,svg,file,options)=>{
+ }));
+ ipcMain.handle('save-pane',(event,sheet,svg,file,options)=>outputWrite(async()=>{
   const graphics=require('./graphics-pane.js'),token=sheet&&Object.hasOwn(sheet,'drawingUpload')?sheet.drawingUpload:null;let lease,sidecar;
   try{
    if(token!==null){if(Object.keys(sheet).length!==1||typeof token!=='string'||svg!==null)throw Error('Invalid uploaded drawing sheet.');lease=drawingSaves.consume(event?.sender,token);lease.check();}
@@ -62,7 +65,7 @@ module.exports = function installFeatures(window, projectService) {
    const encoded=lease?await codec.encodeDrawingOwned(lease.payload):await codec.encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});lease?.check();
    const data=encoded.bytes;try{await guard.replaceIfUnchanged(dest,data,expected,{beforeCommit:()=>lease?.check()});}catch(error){if(!error.notemindFileCommitted)throw error;try{await dialog.showMessageBox?.(win(),{type:'warning',message:'The drawing was saved',detail:error.message});}catch{}}return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
   }finally{if(lease)lease.release();else if(token!==null){try{drawingSaves.cancel(event?.sender,token)}catch{}}}
- });
+ }));
  ipcMain.handle('open-pane',async(event,options)=>{
   const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;
   const file=require('./path-key.cjs').physicalPath(result.filePaths[0]),bytes=await require('./read-limited.cjs').readLimited(file,require('./archive-limits.cjs').TOTAL_BYTES,'This Notepad is too large.'),owned=bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength?new Uint8Array(bytes.buffer):Uint8Array.from(bytes),drawing=await require('./archive-codec.cjs').inspectDrawingOwned(owned);
@@ -70,5 +73,6 @@ module.exports = function installFeatures(window, projectService) {
   const transfer=require('./sheet-load-transport.cjs').shared.beginFor(event.sender,{encodedSheets:[{metadata:{},bytes:drawing.encodedSheet}]},{scope:'drawing',maxBytes:150*1024*1024});return {file,fileRevision:drawing.fileRevision,transfer};
  });
  ipcMain.handle('python-select',async()=>{const r=await dialog.showOpenDialog(win(),{title:'Select Python interpreter',properties:['openFile']});if(r.canceled)return null;await fs.writeFile(path.join(app.getPath('userData'),'python.json'),JSON.stringify({executable:r.filePaths[0]}));return r.filePaths[0];});
+ return {dispose};
 };
 
