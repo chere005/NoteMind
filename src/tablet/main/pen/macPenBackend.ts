@@ -112,10 +112,11 @@ export class MacPenBackend implements PenBackend {
       let buffered = ""
       child.stdout?.setEncoding("utf8")
       child.stdout?.on("data", (chunk: string) => {
-        if (gen !== this.generation) return
+        if (gen !== this.generation || this.child !== child) return
         buffered += chunk
         let nl: number
         while ((nl = buffered.indexOf("\n")) >= 0) {
+          if (gen !== this.generation || this.child !== child) return
           const line = parseHelperLine(buffered.slice(0, nl))
           buffered = buffered.slice(nl + 1)
           if (!line) continue
@@ -143,8 +144,8 @@ export class MacPenBackend implements PenBackend {
               break
             case "refused":
               ctx.trace.event(this.name, "refused", { why: line.why })
-              if (!settled) settle(this.fail(line.why, /unplugged|no Wacom/.test(line.why) ? "after-replug" : "later"))
-              else { this.core.error(line.why, true); this.core.setState("failed", line.why) }
+              if (settled) this.core.error(line.why, true)
+              settle(this.fail(line.why, /unplugged|no Wacom/.test(line.why) ? "after-replug" : "later"))
               break
             case "p":
               this.report(line)
@@ -161,7 +162,8 @@ export class MacPenBackend implements PenBackend {
       })
       child.on("error", (e) => { if (gen === this.generation) settle(this.fail(`wm-pen: ${e.message}`, "later")) })
       child.on("exit", (code) => {
-        if (gen !== this.generation) return
+        if (gen !== this.generation || this.child !== child) return
+        ++this.generation
         this.child = null
         this.core.fact("seized", false)
         if (!settled) settle(this.fail(code === 3 ? INPUT_MONITORING : `wm-pen ended (${code ?? "signal"})`, code === 4 ? "after-replug" : "later"))
@@ -182,6 +184,7 @@ export class MacPenBackend implements PenBackend {
   }
 
   private fail(reason: string, retry: "never" | "later" | "after-replug"): BackendStart {
+    ++this.generation
     this.kill()
     this.core.setState("failed", reason)
     return { ok: false, reason, retry }

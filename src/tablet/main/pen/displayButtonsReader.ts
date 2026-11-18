@@ -58,40 +58,39 @@ export class MacPenButtons {
     }
     this.child = child
     // Pipe failures belong to the stream, not ChildProcess. Keep these listeners through shutdown for late errors.
-    const streamFailed = (error: Error): void => {
+    const failed = (error: Error, event: string): void => {
       if (gen !== this.generation || this.child !== child) return
       this.child = null
       const next = ++this.generation
       this.feed.set({ ...NO_BUTTONS })
-      this.trace.event("manager", "buttons-pipe-error", { message: error.message })
+      this.trace.event("manager", event, { message: error.message })
       try { child.stdin?.destroy() } catch { /* already closed */ }
       try { child.kill("SIGTERM") } catch { /* already exited */ }
       this.again(next)
     }
-    child.stdin?.on("error", streamFailed)
-    child.stdout?.on("error", streamFailed)
+    child.stdin?.on("error", (error) => failed(error, "buttons-pipe-error"))
+    child.stdout?.on("error", (error) => failed(error, "buttons-pipe-error"))
     let buffered = ""
     child.stdout?.setEncoding("utf8")
     child.stdout?.on("data", (chunk: string) => {
-      if (gen !== this.generation) return
+      if (gen !== this.generation || this.child !== child) return
       buffered += chunk
       let nl: number
       while ((nl = buffered.indexOf("\n")) >= 0) {
+        if (gen !== this.generation || this.child !== child) return
         const line = parseHelperLine(buffered.slice(0, nl))
         buffered = buffered.slice(nl + 1)
         if (line) this.line(line)
       }
     })
-    child.on("error", (error) => {
-      if (gen !== this.generation) return
-      this.trace.event("manager", "buttons-error", { message: error.message })
-    })
+    child.on("error", (error) => failed(error, "buttons-error"))
     child.on("exit", (code, signal) => {
-      if (gen !== this.generation) return
+      if (gen !== this.generation || this.child !== child) return
       this.child = null
+      const next = ++this.generation
       this.feed.set({ ...NO_BUTTONS })
       this.trace.event("manager", "buttons-ended", { code, signal })
-      this.again(gen)
+      this.again(next)
     })
     return true
   }
