@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { app } = require('electron');
 
-const scenarios = ['open-window', 'closed-window', 'unsaved-stroke'];
+const scenarios = ['open-window', 'closed-window', 'unsaved-stroke', 'open-pdf'];
 const scenario = process.env.NOTEMIND_QUIT_SCENARIO;
 const simulatedPad = process.env.NOTEMIND_QUIT_TEST_PAD === '1';
 const requestMarker = 'Quit test requested shutdown';
@@ -87,9 +87,34 @@ function startWorkspace() {
           }
         })()`);
       }
+      if (scenario === 'open-pdf') {
+        const workers = [];
+        app.on('browser-window-created', (_, child) => workers.push(child));
+        const { PDFDocument } = require('pdf-lib');
+        const pdf = await PDFDocument.create();
+        pdf.addPage();
+        const file = path.join(profile, 'quit-reference.pdf');
+        fs.writeFileSync(file, await pdf.save());
+        await js(`window.dispatchEvent(new CustomEvent('notemind-preview', {
+          detail: { path: ${JSON.stringify(file)}, name: 'Quit reference.pdf' },
+        }))`);
+        const renderer = simulatedPad ? drawingContents : contents;
+        await renderer.executeJavaScript(`(async () => {
+          while (!document.querySelector('.document-workspace:not([hidden]) canvas')) {
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+        })()`);
+        const worker = workers.find(child => !child.isDestroyed() &&
+          child.webContents.getURL().endsWith('/pdf-reference-worker.html'));
+        assert.ok(worker, 'The real PDF worker is open at Quit');
+        let pdfClosing = false;
+        worker.on('close', () => { pdfClosing = true; });
+        window.prependOnceListener('close', () => {
+          if (!pdfClosing && !worker.isDestroyed()) console.log('PDF worker remains open during workspace flush');
+        });
+      }
       window.once('closed', () => {
         console.log('Workspace window closed');
-        if (scenario === 'closed-window') setImmediate(() => app.quit());
       });
       fs.writeSync(1, requestMarker + '\n');
       if (scenario === 'closed-window') window.close();
@@ -140,6 +165,7 @@ async function runScenario(root, name) {
     assert.equal(code, 0, output);
     assert.ok(stdout.includes(requestMarker) && stdout.includes('Workspace window closed'), output);
     assert.ok(stdout.includes('Recovery session exists at quit'), output);
+    if (name === 'open-pdf') assert.ok(stdout.includes('PDF worker remains open during workspace flush'), output);
     assert.ok(Array.isArray(JSON.parse(fs.readFileSync(sessionPath(profile))).tabs));
     if (name === 'unsaved-stroke') {
       assert.ok(fs.existsSync(path.join(profile, 'sheets-v2.json')), 'The unsaved sheet reached disk');

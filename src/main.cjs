@@ -57,6 +57,13 @@ let cameraWrite = Promise.resolve();
 
 const closeFlush=new(require('./close-flush-watchdog.cjs').CloseFlushWatchdog)({onTimeout:()=>sheetSaveFailed('The save request timed out.'),onCancel:({owner,requestId})=>{if(!owner.isDestroyed())owner.send('sheets:flush-cancel',{requestId});}});
 app.on('will-quit',()=>closeFlush.dispose());
+// Command-Q asks Electron to close every window, including document workers.
+// Start with the workspace so its save can still use those workers.
+app.on('before-quit',event=>{
+ if(!win||win.isDestroyed()||win.confirmedClose)return;
+ event.preventDefault();
+ if(!closeFlush.pending)win.close();
+});
 
 function sheetSaveFailed(reason) { closeFlush.cancel(); const choice = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Keep editing', 'Close without saving sheets'], defaultId: 0, cancelId: 0, message: 'The drawing sheets could not be saved.', detail: `${reason}\nClosing without saving can lose recent ink.` }); if (choice === 1) { win.confirmedClose = true; win.close(); } }
 
