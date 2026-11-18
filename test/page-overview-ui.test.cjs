@@ -46,3 +46,8 @@ test('production overview callbacks ignore foreign cancellation and delayed capt
   assert.equal(h.calls.length,2,callback+' must still cancel the owning pointer');h.unmount();
  }
 });
+
+for(const[key,extra]of [['ArrowRight',{}],['Home',{}],['End',{}],['ArrowDown',{altKey:true}],['Escape',{}]])test('an already consumed overview '+key+' cannot move focus, reorder or close its owner',()=>{
+ const h=harness(6);let closed=0;h.props.onClose=()=>closed++;h.render();const event=h.event(key,{defaultPrevented:true,nativeEvent:{isComposing:false},stopPropagation(){this.stopped=true},currentTarget:{ownerDocument:h.scroller.ownerDocument},...extra});
+ if(key==='Escape')h.find(node=>node.type==='section').props.onKeyDown(event);else page(h,0).props.onKeyDown(event);h.render();assert.deepEqual(h.calls,[],key);assert.equal(h.focused,null,key);assert.equal(closed,0,key);assert.equal(event.prevented,undefined,key);h.unmount();
+});
