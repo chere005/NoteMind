@@ -39,7 +39,8 @@ export function PageOverview({pages,activeId,onSelect,onReorder,loadCompact,coor
  const coordinator=shared||local!,owner=useRef({}),scroller=useRef<HTMLDivElement>(null),buttons=useRef(new Map<string,HTMLButtonElement>()),focusPending=useRef<string|null>(focusOnOpen?(activeId||pages[0]?.pageId||null):null),drag=useRef<string|null>(null),lifetime=useRef(0),moveSequence=useRef(0)
  const [viewport,setViewport]=useState({width:600,height:600,scrollTop:0}),[focusId,setFocusId]=useState<string|null>(activeId||pages[0]?.pageId||null),[drop,setDrop]=useState<string|null>(null),[error,setError]=useState('')
  useSyncExternalStore(coordinator.subscribe,coordinator.getSnapshot,coordinator.getSnapshot)
- const window=visibleWindow(pages.length,viewport),visible=useMemo(()=>pages.slice(window.start,window.end),[pages,window.start,window.end]),visibleIds=useMemo(()=>visible.map(page=>page.pageId),[visible]),tabStopId=focusId&&visibleIds.includes(focusId)?focusId:activeId&&visibleIds.includes(activeId)?activeId:visibleIds[0]||null
+ const window=visibleWindow(pages.length,viewport),visible=useMemo(()=>pages.slice(window.start,window.end),[pages,window.start,window.end]),visibleIds=useMemo(()=>visible.map(page=>page.pageId),[visible])
+ const tabWindow=visibleWindow(pages.length,{...viewport,overscan:0}),tabIds=pages.slice(tabWindow.start,tabWindow.end).map(page=>page.pageId),tabStopId=focusId&&tabIds.includes(focusId)?focusId:activeId&&tabIds.includes(activeId)?activeId:tabIds[0]||null
  useEffect(()=>{coordinator.setPages(pages)},[coordinator,pages])
  useEffect(()=>{coordinator.setVisible(owner.current,visibleIds);return()=>coordinator.releaseVisible(owner.current)},[coordinator,visibleIds])
  useEffect(()=>{const generation=++lifetime.current;return()=>{queueMicrotask(()=>{if(lifetime.current===generation)local?.dispose()})}},[local])
