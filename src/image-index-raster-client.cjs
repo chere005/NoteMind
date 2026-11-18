@@ -20,7 +20,7 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
   try{await state.execute('('+installImageIndexRasterHost.toString()+')('+JSON.stringify(key)+','+JSON.stringify(pathToFileURL(path.join(__dirname,'image-index-raster-worker.js')).href)+','+makeBytes.toString()+')');if(state.invalid||host.isDestroyed?.())throw abort();state.installed=true;return state;}
   catch(error){if(!state.invalid)state.failed=error;throw error;}
  }
- async function convertOwned(host,input,type,{signal,maxDimension=2400,dimensions,timeoutMs=30000}={}){
+ async function convertOwned(host,input,type,{signal,maxDimension=2400,dimensions,timeoutMs=30000}={},pixels=false){
   if(closed)throw Error('Image conversion is closing.');if(signal?.aborted)throw abort();
   if(!eligible(host)||!dimensions||type==='image/svg+xml'||input?.byteLength>50*1024*1024)return null;
   if(active)throw Error('An image conversion is already active.');
@@ -31,13 +31,13 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
   const job={state,nonce,controller,done:null};active=job;signal?.addEventListener('abort',cancel,{once:true});
   const work=(async()=>{let value;try{
    timer=setTimeout(()=>{failure=Error('Image conversion timed out.');cancel();},timeoutMs);if(signal?.aborted)cancel();
-   value=await executeBytes(code=>execute(code.replaceAll('window.NoteMindDocumentBytes',scope+'.bytes').replaceAll('window.documentTools',scope+'.tools('+JSON.stringify(nonce)+')')),'image',[input,type,false,maxDimension,dimensions],{signal});
+   value=await executeBytes(code=>execute(code.replaceAll('window.NoteMindDocumentBytes',scope+'.bytes').replaceAll('window.documentTools',scope+'.tools('+JSON.stringify(nonce)+')')),pixels?'imagePixels':'image',[input,type,false,maxDimension,dimensions],{signal});
    if(signal?.aborted||state.invalid)throw abort();if(failure)throw failure;return value;
   }catch(error){const bytes=value?.data;if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)try{bytes.buffer.transfer?.(0)}catch{}if(signal?.aborted)throw abort();if(failure)throw failure;if(error?.code==='IMAGE_WORKER_UNSUPPORTED')return null;throw error;}finally{clearTimeout(timer);outerSignal?.removeEventListener('abort',forward);signal.removeEventListener('abort',cancel);try{if(state.invalid)await state.gone;else try{await execute(scope+'.drain('+JSON.stringify(nonce)+')')}catch(error){if(state.invalid)await state.gone;else throw error;}}finally{if(active===job)active=null;}}})();job.done=work;return work;
  }
- function convert(...args){if(closed)return Promise.reject(Error('Image conversion is closing.'));if(admission)return Promise.reject(Error('An image conversion is already active.'));const request={done:null};admission=request;request.done=convertOwned(...args).finally(()=>{if(admission===request)admission=null;});return request.done;}
+ function convertMode(pixels,host,input,type,options){if(closed)return Promise.reject(Error('Image conversion is closing.'));if(admission)return Promise.reject(Error('An image conversion is already active.'));const request={done:null};admission=request;request.done=convertOwned(host,input,type,options,pixels).finally(()=>{if(admission===request)admission=null;});return request.done;}
  async function stats(){const state=context;return{fixedContextOwner:state?{webContentsId:state.host.id,pid:state.pid,frame:state.frame,invalid:state.invalid,persistent:true}:null,active:!!admission,inflightRPCs:state?.inflight.size||0,...state?.installed&&!state.invalid?await state.execute('window['+JSON.stringify(state.key)+'].stats()'):{}};}
  async function dispose(){closed=true;const request=admission;active?.controller.abort();await request?.done?.catch(()=>{});return stats();}
- return{convert,stats,dispose};
+ return{convert:(...args)=>convertMode(false,...args),convertPixels:(...args)=>convertMode(true,...args),stats,dispose};
 }
 module.exports={createHostImageConverter};

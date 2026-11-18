@@ -23,7 +23,14 @@
    }
    check();if(!image)try{image=await scope.createImageBitmap(blob)}catch{throw unsupported()}blob=null;check();
    const scale=Math.min(1,limit/Math.max(image.width,image.height)),width=Math.max(1,Math.round(image.width*scale)),height=Math.max(1,Math.round(image.height*scale));
-   canvas=new scope.OffscreenCanvas(width,height);canvas.getContext('2d',{willReadFrequently:true}).drawImage(image,0,0,width,height);image.close();image=null;check();
+   canvas=new scope.OffscreenCanvas(width,height);const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,width,height);image.close();image=null;check();
+   if(packet.pixels===true){
+    const rgba=context.getImageData(0,0,width,height);check();
+    resultBytes=rgba.data.buffer;
+    if(!(resultBytes instanceof ArrayBuffer)||rgba.data.byteOffset||resultBytes.byteLength!==width*height*4)throw Error('Invalid index image pixel backing.');
+    canvas.width=0;canvas.height=0;canvas=null;
+    published=true;return{bytes:resultBytes,width,height,pixels:true};
+   }
    output=await canvas.convertToBlob({type:'image/png'});
    // The completed immutable PNG owns its encoding. End the independent
    // raster surface before allocating the response's encoded-byte backing.

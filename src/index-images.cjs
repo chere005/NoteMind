@@ -24,9 +24,15 @@ function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=
  async function readImage(state,job,row,phase){
   const signal=job.controller.signal;check(signal);
   let converted;
-  try{if(state.owner!==legacy&&!state.owner.isDestroyed?.())state.owner.send?.('notes:index-progress',{id:state.id,name:row.name});converted=await documentIO.convertImageFile(row.source.file,row.type,{...row.source,signal,maxDimension:2400,maxRSSBytes:384*1024*1024,timeoutMs:30000},state.owner===legacy?undefined:state.owner);check(signal);const bytes=converted?.bytes||converted?.data;if(!ArrayBuffer.isView(bytes))throw Error('Image search conversion returned invalid pixels.');await phase?.beforeOCR(bytes.byteLength);check(signal);const value=await documentIO.reader.read(bytes,{id:'index-'+randomUUID(),language:'auto',priority:job.background?'background':'foreground',textOnly:true,signal});check(signal);row.text=value.text;job.byHash.set(row.hash,value.text);state.cached[row.name]={hash:row.hash,text:value.text};job.cursor++;}
+  try{if(state.owner!==legacy&&!state.owner.isDestroyed?.())state.owner.send?.('notes:index-progress',{id:state.id,name:row.name});
+   const convert=documentIO.convertIndexImageFile||documentIO.convertImageFile;
+   converted=await convert.call(documentIO,row.source.file,row.type,{...row.source,signal,maxDimension:2400,maxRSSBytes:384*1024*1024,timeoutMs:30000},state.owner===legacy?undefined:state.owner);check(signal);
+   const pixels=converted?.pixels,bytes=pixels?.data||converted?.bytes||converted?.data;if(!ArrayBuffer.isView(bytes))throw Error('Image search conversion returned invalid pixels.');await phase?.beforeOCR(bytes.byteLength);check(signal);
+   const options={id:'index-'+randomUUID(),language:'auto',priority:job.background?'background':'foreground',textOnly:true,signal};
+   const value=pixels?await documentIO.reader.readPixels(pixels,{...options,takeOwnership:true,onPreempt:()=>job.controller.abort()}):await documentIO.reader.read(bytes,options);
+   check(signal);row.text=value.text;job.byHash.set(row.hash,value.text);state.cached[row.name]={hash:row.hash,text:value.text};job.cursor++;}
   catch(error){if(signal.aborted)throw error;job.errors.push(row.name+': '+error.message);job.cursor++;}
-  finally{await documentIO.reader.awaitStopped?.();discard(converted?.bytes||converted?.data);converted=null;await phase?.afterOCR();}
+  finally{await documentIO.reader.awaitStopped?.();discard(converted?.pixels?.data||converted?.bytes||converted?.data);converted=null;await phase?.afterOCR();}
  }
  async function releaseEngine(){clearTimeout(engineTimer);engineTimer=null;if(engineDrop)return engineDrop;const held=engine;if(!held)return;held.stopping=true;engine=null;let nativeStopped=false,leaseEnded=false;const drop=(async()=>{await documentIO.reader.retireIdle?.();await documentIO.reader.awaitStopped?.();nativeStopped=true;held.off();try{await held.working()}finally{try{await held.lease.release();leaseEnded=true;}finally{await storage.releaseRawAssets(held.owner)}}})();engineDrop=drop;try{await drop}catch(error){const backendEnded=Object.hasOwn(storage,'worker')&&(storage.epoch!==held.lease.epoch||!storage.worker&&!storage.stoppingWorker&&!storage.stopping);if(!nativeStopped||!leaseEnded&&!backendEnded)engine=held;throw error}finally{if(engineDrop===drop)engineDrop=null;}}
  async function phasedImage(state,job,row){const signal=job.controller.signal,plan=row.source.workingPlan,owner=randomUUID(),lease=await storage.preflightRawAssets([],{owner});let working,promoted=false,off=()=>{};
