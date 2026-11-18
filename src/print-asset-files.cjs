@@ -1,11 +1,11 @@
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{pathToFileURL}=require('node:url');
-const {mime,md,resolveAssetName}=require('./document-renderer.cjs'),{isRawAsset}=require('./document-asset-sessions.cjs');
+const {mime}=require('./document-renderer.cjs'),{isRawAsset}=require('./document-asset-sessions.cjs');
 const LIMIT=199*1024*1024;
 const pendingWork=new Set(),failedCleanups=new Set();
 function track(promise){pendingWork.add(promise);promise.finally(()=>pendingWork.delete(promise)).catch(()=>{});return promise;}
 async function retryPrintCleanup(){const results=await Promise.allSettled([...failedCleanups].map(release=>release())),failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw new AggregateError(failures,'Printable image cleanup could not finish.');}
 async function drainPrintFiles(){do{while(pendingWork.size)await Promise.allSettled([...pendingWork]);await retryPrintCleanup();}while(pendingWork.size||failedCleanups.size);}
-function referencedImages(doc){const names=new Set();for(const block of md.parse(doc.text,{}))for(const token of block.children||[]){const name=resolveAssetName(token.attrGet?.(token.type==='image'?'src':token.type==='link_open'?'href':''),doc.assets,doc.meta?.attachments);if(token.type==='image'&&name!==null&&mime(name)&&Object.hasOwn(doc.assets||{},name))names.add(name);if(token.type==='link_open'){const thumbnail=resolveAssetName(doc.meta?.attachments?.[name]?.thumbnail,doc.assets);if(thumbnail!==null&&mime(thumbnail)&&Object.hasOwn(doc.assets||{},thumbnail))names.add(thumbnail)}}return names}
+function referencedImages(doc){return new Set(require('./word-markdown.cjs').imageNames(doc));}
 function createPrintFiles(doc,options){return track(createFiles(doc,options));}
 async function createFiles(doc,{storage=require('./archive-codec.cjs'),filesystem=fs,tempRoot=os.tmpdir()}={}){
  await retryPrintCleanup();
