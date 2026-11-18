@@ -36,6 +36,8 @@ export type MenuItem =
     danger?: boolean
   }
 
+const unavailableKey=(event:{defaultPrevented?:boolean;isComposing?:boolean;keyCode?:number;nativeEvent?:KeyboardEvent})=>event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229
+
 type CloseReason="dismiss"|"action"|"outside"|"switch"
 interface Props {
   x: number; y: number; items: MenuItem[]
@@ -61,7 +63,7 @@ export function FloatingMenu({x,y,items,above,right,leftX,onClose,id,dataBar,lab
     const onTrigger=(target:Element)=>trigger?.matches('button,[role="button"]')&&trigger.contains(target)||!!triggerKey&&target?.closest?.('button,[role="button"]')?.getAttribute('data-menu-trigger')===triggerKey
     const away=(event:PointerEvent)=>{const target=event.target as Element;if(!onTrigger(target)&&target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
     const focusAway=(event:FocusEvent)=>{const target=event.target as Element;if(!onTrigger(target)&&target?.closest?.('[data-menu-owner]')?.getAttribute('data-menu-owner')!==token)dismiss(false,"outside")}
-    const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.defaultPrevented&&!event.isComposing){event.preventDefault();dismiss()}}
+    const escape=(event:KeyboardEvent)=>{if(event.key==="Escape"&&!unavailableKey(event)){event.preventDefault();dismiss()}}
     const resized=()=>dismiss(false,"outside")
     const commanded=()=>dismiss(false,"outside")
     doc.addEventListener("pointerdown",away,true);doc.addEventListener("focusin",focusAway);doc.addEventListener("notemind-menu-dismiss",commanded);window.addEventListener("keydown",escape);window.addEventListener("resize",resized);window.addEventListener("blur",resized)
@@ -102,7 +104,7 @@ function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="
   const ticks=items.some(item=>typeof item==='object'&&'label' in item&&item.checked!==undefined)
   return <div ref={box} className={'float-menu'+(anchor?' sub':'')} role="menu" aria-label={label} id={id} data-bar={dataBar} data-menu-owner={token} tabIndex={-1} style={{left:at.x,top:at.y,maxWidth:Math.max(0,Math.min(360,viewport.width-8)),maxHeight:Math.max(0,viewport.height-8)}} onScroll={()=>setOpen(null)} onContextMenu={event=>{event.preventDefault();event.stopPropagation()}}
     onKeyDown={event=>{
-      if(event.isComposing)return
+      if(unavailableKey(event))return
       const list=buttons(),index=list.indexOf(doc.activeElement as HTMLElement)
       if(event.key==='Escape'||(event.key==='ArrowLeft'&&onBack)){event.preventDefault();event.stopPropagation();onBack?onBack():onClose("dismiss");return}
       if(event.key==='Tab'){onTab(event);event.stopPropagation();return}
@@ -118,7 +120,7 @@ function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="
       const show=(anchor:HTMLElement,keyboard=false)=>setOpen({index,anchor,keyboard})
       return <div className="float-row" key={index} onMouseEnter={event=>{if(item.disabled){setOpen(null);focus(box.current);return}const button=event.currentTarget.querySelector('button');focus(button);nested?show(button):setOpen(null)}}>
         <button role={item.checked!==undefined||item.toggle!==undefined?'menuitemcheckbox':'menuitem'} tabIndex={-1} aria-checked={item.checked??item.toggle} aria-haspopup={nested?'menu':undefined} aria-expanded={nested?expanded:undefined} aria-controls={expanded?childId:undefined} data-menu-label={item.label} title={item.label+(item.hint?' ('+chordGlyphs(item.hint,hostPlatform())+')':nested?' options':'')} data-menu-index={index} data-active={activeIndex===index?true:undefined} onFocus={()=>setActiveIndex(index)} disabled={item.disabled} data-bar={item.dataBar} className={item.danger?'danger':undefined}
-          onKeyDown={event=>{if(nested&&['ArrowRight','Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();show(event.currentTarget,true)}else if(!nested&&['Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();event.currentTarget.click()}}}
+          onKeyDown={event=>{if(unavailableKey(event))return;if(nested&&['ArrowRight','Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();show(event.currentTarget,true)}else if(!nested&&['Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();event.currentTarget.click()}}}
           onClick={event=>{if(nested){show(event.currentTarget,event.detail===0);return}if(!item.keepOpen&&item.toggle===undefined)onClose("action");item.onClick?.()}}>
           {ticks&&<span className="float-mark" aria-hidden="true">{item.checked?'✓':null}</span>}
           {item.icon&&<span className="float-icon" aria-hidden="true"><Icon name={item.icon} size={14}/></span>}
