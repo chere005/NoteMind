@@ -52,7 +52,7 @@
   const tab=activeTab;record(tab);const item=byTab.get(tab),history=item.history,from=redo?'future':'past',to=redo?'past':'future',next=history[from].at(-1);if(!next)return;
   // Move ownership before trimming, so the current state and the most recent redo remain available.
   push(item,to,history.last);hold(next,'current',1);remove(item,from,next);hold(next,'current',-1);
-  const restored={text:next.text,assets:window.NoteMindDocumentSync?.copyAssets?.(next.assets)||{...next.assets},meta:structuredClone(next.meta)};Object.assign(doc,window.NoteMindPDFReferences?.preserveHistory(tab,restored)||restored);source.value=doc.text;rich.innerHTML=render(doc.text);richChanged=false;restoring=true;try{markDirty();}finally{restoring=false;}window.NoteMindWriting.decorate();window.NoteMindFind.refresh();trim();
+  const restored={text:next.text,assets:window.NoteMindDocumentSync?.copyAssets?.(next.assets)||{...next.assets},meta:structuredClone(next.meta)};Object.assign(doc,window.NoteMindPDFReferences?.preserveHistory(tab,restored)||restored);refreshEditor();restoring=true;try{markDirty();}finally{restoring=false;}window.NoteMindWriting.decorate();window.NoteMindFind.refresh();trim();
  }
  function command(redo){if(composing)return;const focused=document.activeElement;if(focused===source||focused===rich||rich.contains(focused)||focused===document.body)step(redo);else document.execCommand(redo?'redo':'undo');}
  window.addEventListener('notemind-command',event=>{if(event.detail==='undoText')command(false);if(event.detail==='redoText')command(true);});

@@ -55,7 +55,7 @@
   if(saveFile&&tab.dirty&&snap.path){try{
    const saved=await api.autosave({...snap,id:kept.id,recoveryId:kept.recoveryId,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});try{retryRecovery=!!requireDurable&&(saved.recoverySaved===false||saved.saveWarnings?.some(warning=>/^Recovery:/.test(warning)));
    for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
-   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
+   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;refreshEditor({contentChanged:rewritten});if(rewritten)decorate();}}
    else if(!closingDrafts.has(tab))adoptDraft(tab,assertDraftDurable(await draftCurrent(tab)));
    if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
    tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
@@ -111,7 +111,7 @@
   await persist(tab,false);const edit=tab.editVersion||0;return withDurable(tab,captureDurable(tab),async snap=>{
   let saved;try{saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs)}catch(error){adoptCommitted(tab,error);throw error}if(!saved)return false;try{
   for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
-  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
+  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;doc=tab.doc;refreshEditor();decorate();}}
   tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await draftCurrent(tab));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
   }finally{window.NoteMindDocumentSync?.releaseDocument?.(saved);}
   });
