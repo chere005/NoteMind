@@ -79,6 +79,10 @@ class SheetOrderIndex{
  async *records(root,ancestors=new Set(),options={}){
   options.work?.check();descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root,options);options.work?.check();if(node.kind==='leaf'){for(const record of node.records){options.work?.check();yield record;if(options.work?.poll())await options.work.pause();}return;}for(const child of node.children){options.work?.check();yield*this.records(child,path,options);}
  }
+ // Borrow one fully validated bounded leaf at a time; consumers must not mutate it.
+ async *recordBatches(root,ancestors=new Set(),options={}){
+  options.work?.check();descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root,options);options.work?.check();if(node.kind==='leaf'){yield node.records;return;}for(const child of node.children){options.work?.check();yield*this.recordBatches(child,path,options);}
+ }
  async visitFingerprintWords(root,visit,options={}){
   if(typeof visit!=='function')throw Error('Invalid drawing fingerprint visitor.');let work=0;
   const check=()=>{if(options.signal?.aborted)throw Object.assign(Error('Drawing signature cancelled.'),{name:'AbortError'});options.work?.check();};

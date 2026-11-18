@@ -48,12 +48,14 @@ class GeometryReader{
   graphics.validate({...page.metadata,strokes:[],backdrop:null});if(typeof page.metadata.name!=='string'||!Number.isSafeInteger(page.binaryBytes)||page.binaryBytes<0)throw Error('Invalid drawing page.');
   const metadata={name:page.metadata.name,aspect:page.metadata.aspect,paper:page.metadata.paper,extent:page.metadata.extent,backdrop:null};if(24+Buffer.byteLength(JSON.stringify(metadata))+page.binaryBytes+page.order.count*16+(page.backdrop?.ref.rawBytes||page.backdrop?.ref.bytes||0)>256*1024*1024)throw Error('This drawing page is too large to load.');work?.check();const output=header(metadata,page.order.count,page.order.points,page.binaryBytes);work?.check();const identities=new Uint8Array(page.order.count*16),ids=new DataView(identities.buffer);let at=output.offset,position=0;
   try{
-   for await(const record of index.records(page.order,undefined,options)){
-    work?.check();const chunk=await this.get(record.chunk,options);work?.check();if(record.strokeIndex>=chunk.count)throw Error('Invalid drawing chunk offset.');const start=chunk.offsets[record.strokeIndex],end=chunk.offsets[record.strokeIndex+1];if(end-start!==strokeBytes(record)||!!(chunk.bytes[start+3]&1)!==!!record.pressure||at+end-start>output.bytes.length||position>=page.order.count)throw Error('Invalid drawing stroke data.');
+   const batched=typeof index.recordBatches==='function',batches=batched?index.recordBatches(page.order,undefined,options):(async function*(){for await(const record of index.records(page.order,undefined,options))yield[record];})();
+   for await(const records of batches){for(const record of records){
+    work?.check();const chunk=this.last?.hash===record.chunk.sha256?this.last.value:await this.get(record.chunk,options);work?.check();if(record.strokeIndex>=chunk.count)throw Error('Invalid drawing chunk offset.');const start=chunk.offsets[record.strokeIndex],end=chunk.offsets[record.strokeIndex+1];if(end-start!==strokeBytes(record)||!!(chunk.bytes[start+3]&1)!==!!record.pressure||at+end-start>output.bytes.length||position>=page.order.count)throw Error('Invalid drawing stroke data.');
     if(work){for(let from=start;from<end;from+=65536){work.check();const length=Math.min(65536,end-from);chunk.bytes.copy(output.bytes,at,from,from+length);at+=length;if(work.poll())await work.pause();}}
     else{chunk.bytes.copy(output.bytes,at,start,end);at+=end-start;}
-    ids.setFloat64(position*16,record.id,true);ids.setUint32(position*16+8,parseInt(record.hash.slice(0,8),16),true);ids.setUint32(position*16+12,parseInt(record.hash.slice(8),16),true);position++;if(work?.poll())await work.pause();
-   }
+    // Retain the per-record poll previously supplied by the async records iterator.
+    ids.setFloat64(position*16,record.id,true);ids.setUint32(position*16+8,parseInt(record.hash.slice(0,8),16),true);ids.setUint32(position*16+12,parseInt(record.hash.slice(8),16),true);position++;if(work?.poll())await work.pause();if(batched&&work?.poll())await work.pause();
+   }}
    work?.check();if(at!==output.bytes.length||position!==page.order.count)throw Error('Invalid drawing page totals.');const backdropBytes=page.backdrop?own(await this.packs.read(page.backdrop.ref,150*1024*1024,options)):null;work?.check();
    return{metadata:{...page.metadata,pageId:page.pageId,geometryRevision:page.geometryRevision??page.order.ref?.sha256??null,backdrop:null},bytes:own(output.bytes),identityBytes:identities,backdropBytes};
   }finally{if(work)this.last=null;}
