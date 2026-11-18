@@ -28,10 +28,10 @@ class TextReader {
  progress(job,phase){try{job.onProgress(phase);}catch{}}
  clearIdleTimer(){this.idleGeneration++;clearTimeout(this.idleTimer);this.idleTimer=null;}
  retire(worker){
-  const record=this.records.get(worker);if(!record)return;
+  const record=this.records.get(worker);if(!record||!record.exited&&worker.threadId!==-1)return;
   if(this.idleWorker===worker){this.idleWorker=null;this.clearIdleTimer();}
   if(this.stopFailure?.worker===worker)this.stopFailure=null;
-  worker.removeListener('message',record.message);worker.removeListener('error',record.error);worker.removeListener('exit',record.exit);this.records.delete(worker);this.workers.delete(worker);this.pump();
+  worker.removeListener('message',record.message);worker.removeListener('error',record.error);worker.removeListener('exit',record.exit);this.records.delete(worker);this.workers.delete(worker);record.resolveExit();this.pump();
  }
  release(worker){
   const record=this.records.get(worker);if(!record||record.stopping)return;record.stopping=true;record.job=null;
@@ -42,13 +42,13 @@ class TextReader {
    // Do not launch a second model engine until termination or exit is confirmed.
    this.stopFailure={worker,error};for(const job of [...this.jobs.values()])if(!job.worker)this.complete(job,Error('The text reader could not stop its previous reading.'));
   };
-  try{Promise.resolve(worker.terminate()).then(()=>this.retire(worker),failed);}catch(error){failed(error);}
+  try{Promise.resolve(worker.terminate()).then(()=>{if(worker.threadId===-1)this.retire(worker)},failed);}catch(error){failed(error);}
  }
  attach(worker){
-  const record={job:null,stopping:false};this.records.set(worker,record);this.workers.add(worker);
-  record.message=result=>{const job=record.job;if(job&&job.worker===worker&&result.id===job.wireId)this.complete(job,result.error?Error(result.error):null,result);};
+  let resolveExit;const record={job:null,stopping:false,exited:false,exitPromise:new Promise(resolve=>resolveExit=resolve),resolveExit};this.records.set(worker,record);this.workers.add(worker);
+  record.message=result=>{const job=record.job;if(job&&job.worker===worker&&result?.id===job.wireId)this.complete(job,result.error?Error(result.error):null,result);};
   record.error=error=>{const job=record.job;if(job&&job.worker===worker)this.complete(job,error);else this.release(worker);};
-  record.exit=code=>{const job=record.job;if(job&&job.worker===worker)this.complete(job,Error('Text reader stopped ('+code+').'));this.retire(worker);};
+  record.exit=code=>{record.exited=true;const job=record.job;if(job&&job.worker===worker)this.complete(job,Error('Text reader stopped ('+code+').'));this.retire(worker);};
   worker.on('message',record.message);worker.once('error',record.error);worker.once('exit',record.exit);
  }
  park(worker){
@@ -58,7 +58,7 @@ class TextReader {
  }
  preemptBackground(){for(const job of this.jobs.values())if(job.worker&&job.priority==='background'){const worker=job.worker;job.worker=null;clearTimeout(job.timer);this.queue.push(job);this.progress(job,'Queued');this.release(worker);}}
  complete(job,error,result){
-  if(!this.jobs.has(job.id))return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
+  if(!this.jobs.has(job.id))return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.bytes=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
   let value;
   if(!error)try{if(!Array.isArray(result?.lines))throw Error('The text reader returned an invalid result.');value={text:readingOrder(result.lines),lines:result.lines,language:job.language,timing:result.timing};this.cache.set(job.key,value);if(this.cache.size>32)this.cache.delete(this.cache.keys().next().value);}catch(failure){error=failure;}
   if(worker){if(error)this.release(worker);else this.park(worker);}
@@ -74,6 +74,7 @@ class TextReader {
   try{worker.postMessage({id:job.wireId,requestId:job.id,bytes:job.bytes,japanese:job.language!=='en'});}catch(error){this.complete(job,error);}
  }
  cancel(id){const job=this.jobs.get(id);if(!job)return;this.queue=this.queue.filter(value=>value!==job);this.complete(job,aborted());}
- dispose(){this.disposed=true;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);}
+ awaitStopped(){return Promise.all([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise)).then(()=>{});}
+ dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=this.awaitStopped();}
 }
 module.exports={TextReader,available};

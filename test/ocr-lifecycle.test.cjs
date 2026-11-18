@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events');
 const {TextReader}=require('../src/ocr.cjs');
 const png=Buffer.from([137,80,78,71,13,10,26,10]),tick=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture(options={}){const workers=[];class FakeWorker extends EventEmitter{constructor(_file,options){super();this.options=options;workers.push(this)}postMessage(job){this.job=job}terminate(){this.stopped=true;return Promise.resolve(0)}}return {workers,reader:new TextReader({idleMs:0,workerFactory:(...args)=>new FakeWorker(...args),...options})};}
+function fixture(options={}){const workers=[];class FakeWorker extends EventEmitter{constructor(_file,options){super();this.options=options;workers.push(this)}postMessage(job){this.job=job}terminate(){this.stopped=true;queueMicrotask(()=>this.emit('exit',0));return Promise.resolve(0)}}return {workers,reader:new TextReader({idleMs:0,workerFactory:(...args)=>new FakeWorker(...args),...options})};}
 const answer=worker=>worker.emit('message',{id:worker.job.id,lines:[{text:worker.job.requestId,x:0,y:0,width:1,height:1}]});
 test('disposing OCR cancels active and queued work without launching more workers',async()=>{
  const {reader,workers}=fixture(),jobs=Array.from({length:4},(_,i)=>reader.read(png,{id:String(i)}).catch(error=>error.name));assert.equal(workers.length,1);reader.dispose();assert.deepEqual(await Promise.all(jobs),Array(4).fill('AbortError'));await tick();assert.equal(workers.length,1);assert.equal(reader.workers.size,0);assert.equal(reader.bytes,0);await assert.rejects(reader.read(png),/closing/);
