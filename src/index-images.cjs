@@ -1,4 +1,4 @@
-const {randomUUID}=require('node:crypto');
+const {randomUUID}=require('node:crypto'),{AsyncResource}=require('node:async_hooks');
 const codec=require('./archive-codec.cjs'),{releaseDocumentInputs}=require('./document-continuation.cjs');
 const {prepareIndexSources,imageInputs,sameInputs,abort,check}=require('./image-index-source.cjs');
 const {acquireImageWorking}=require('./word-export-media.cjs');
@@ -8,9 +8,10 @@ const discard=bytes=>{if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byt
 // A verified source snapshot needs no document permit/raw lease while OCR runs.
 // Each image is one fair scheduling unit; foreground work pauses background jobs.
 function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=16,maxSpoolBytes=384*1024*1024,prepare=prepareIndexSources,activityMs=1000,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}){
+ const scheduler=new AsyncResource('NoteMindImageIndex'),pumpOwned=()=>scheduler.runInAsyncScope(pump);
  const owners=new WeakMap(),legacy={},states=new Set(),queue=[],revisions=new Map();let running=false,active=null,foreground=0,spoolBytes=0,nextRevision=0,closed=false,activityUntil=0,activityTimer=null;
  const reserve=bytes=>{if(spoolBytes+bytes>maxSpoolBytes)throw Error('Image search temporary sources are busy. Try again shortly.');spoolBytes+=bytes;let done=false;return()=>{if(!done){done=true;spoolBytes-=bytes}}};
- const enqueue=state=>{if(!state.queued&&!state.finished){state.queued=true;queue.push(state)}void pump()};
+ const enqueue=state=>{if(!state.queued&&!state.finished){state.queued=true;queue.push(state)}void pumpOwned()};
  const cleanup=job=>job?(job.cleanup ||= (async()=>{await job.work?.catch(()=>{});await job.sources.cleanup()})()):Promise.resolve();
  const stop=state=>{state.cancelled=true;state.prepareController?.abort();state.job?.controller?.abort();enqueue(state)};
  function finish(state,error,value){if(state.finished)return;state.finished=true;states.delete(state);if(state.ownerStates.get(state.id)===state)state.ownerStates.delete(state.id);for(const off of state.listeners)off();state.listeners=[];state.input=null;state.job=null;if(![...states].some(other=>other.id===state.id))revisions.delete(state.id);error?state.reject(error):state.resolve(value);}
@@ -37,7 +38,7 @@ function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=
  async function pump(){if(running)return;running=true;let processing;try{while(queue.length){let at=queue.findIndex(state=>closed||state.cancelled||!state.job?.background);if(at<0){if(foreground||now()<activityUntil)break;at=0;}const state=processing=queue.splice(at,1)[0];state.queued=false;if(state.finished)continue;if(state.preparing)continue;const job=state.job;if(state.cancelled||closed){await cleanup(job);finish(state,abort());continue;}if(!job)continue;if(job.obsolete){await cleanup(job);continue;}if((foreground||now()<activityUntil)&&job.background){enqueue(state);break;}
    job.controller=new AbortController();active={state,job};job.work=step(state,job);let failure;try{await job.work}catch(error){failure=error}finally{active=null;job.work=null;}
    if(job.obsolete||state.job!==job){await cleanup(job);continue;}if(state.cancelled||closed){await cleanup(job);finish(state,abort());continue;}if(failure&&!job.controller.signal.aborted){await cleanup(job);finish(state,failure);continue;}if(job.cursor>=job.sources.rows.length){await finishJob(state,job);continue;}enqueue(state);
-  }}catch(error){if(processing){try{await cleanup(processing.job)}catch(cleanupError){error.indexCleanupError=cleanupError.message}finish(processing,error)}queueMicrotask(()=>void pump())}finally{running=false;}}
+  }}catch(error){if(processing){try{await cleanup(processing.job)}catch(cleanupError){error.indexCleanupError=cleanupError.message}finish(processing,error)}queueMicrotask(()=>void pumpOwned())}finally{running=false;}}
  function attachSignal(state,signal,generation){if(!signal)return;const cancel=()=>{if(state.generation===generation)stop(state)};signal.addEventListener('abort',cancel,{once:true});state.listeners.push(()=>signal.removeEventListener('abort',cancel));if(signal.aborted)cancel();}
  function indexDocument(event,doc,options={}){
   if(closed)return Promise.reject(Error('Image search is closing.'));if(typeof doc?.id!=='string'||!doc.id)return Promise.reject(Error('Image search needs a saved draft identity.'));try{check(options.signal)}catch(error){return Promise.reject(error)}
@@ -54,9 +55,9 @@ function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=
   void preparing.then(()=>{if(state.preparing===preparing){state.preparing=null;enqueue(state)}},async error=>{if(state.sequence===sequence){state.preparing=null;try{await cleanup(state.job)}catch(cleanupError){error.indexCleanupError=cleanupError.message}finish(state,error);}});
   return state.promise;
  }
- indexDocument.activity=()=>{if(closed)return;activityUntil=now()+activityMs;clearTimer(activityTimer);activityTimer=setTimer(()=>{activityTimer=null;void pump()},activityMs);activityTimer.unref?.();if(active?.job.background)active.job.controller.abort();};
- indexDocument.foreground=async run=>{indexDocument.activity();foreground++;const job=active?.job.background?active.job:null;job?.controller.abort();try{await job?.work?.catch(()=>{});return await run()}finally{foreground--;void pump()}};
- indexDocument.dispose=async()=>{closed=true;activityUntil=0;clearTimer(activityTimer);for(const state of states)stop(state);await Promise.allSettled([...states].map(state=>state.promise));};
+ indexDocument.activity=()=>{if(closed)return;activityUntil=now()+activityMs;clearTimer(activityTimer);activityTimer=setTimer(()=>{activityTimer=null;void pumpOwned()},activityMs);activityTimer.unref?.();if(active?.job.background)active.job.controller.abort();};
+ indexDocument.foreground=async run=>{indexDocument.activity();foreground++;const job=active?.job.background?active.job:null;job?.controller.abort();try{await job?.work?.catch(()=>{});return await run()}finally{foreground--;void pumpOwned()}};
+ indexDocument.dispose=async()=>{closed=true;activityUntil=0;clearTimer(activityTimer);for(const state of states)stop(state);await Promise.allSettled([...states].map(state=>state.promise));scheduler.emitDestroy();};
  indexDocument.stats=()=>({pending:states.size,queued:queue.length,active:!!active,foreground,spoolBytes});
  return indexDocument;
 }
