@@ -1,0 +1,27 @@
+// Private, verified source files outlive document admission; no raw descriptor or
+// editable document is needed by the later image/OCR work.
+const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{createHash}=require('node:crypto');
+const {mime,imageDimensions}=require('./document-renderer.cjs'),{isRawAsset}=require('./archive-raw-assets.cjs'),{ENTRY_BYTES,TOTAL_BYTES}=require('./archive-limits.cjs');
+const CHUNK=196608,task=()=>new Promise(setImmediate),abort=()=>Object.assign(Error('Image indexing cancelled.'),{name:'AbortError'}),check=signal=>{if(signal?.aborted)throw abort()};
+function imageInputs(doc){return [...Object.entries(doc.assets||{}).filter(([name])=>mime(name)&&!name.endsWith('.preview.png')),...Object.entries(doc.meta?.attachments||{}).filter(([,info])=>info?.text).map(([name,info])=>[name,info.text])];}
+function sameInputs(a,b){return a.length===b.length&&a.every(([name,data],i)=>name===b[i][0]&&data===b[i][1]);}
+async function write(handle,bytes,signal){for(let at=0;at<bytes.length;){check(signal);const result=await handle.write(bytes,at,bytes.length-at);if(!result.bytesWritten)throw Error('Image search source write stopped.');at+=result.bytesWritten;}}
+async function prepareIndexSources(doc,{storage,cached={},signal,tempRoot=os.tmpdir(),reserve=()=>()=>{},yieldTask=task}={}){
+ let directory,released=false,total=0;const rows=[],files=new Map(),reservations=[];
+ const cleanup=async()=>{if(released)return;if(directory)await fs.rm(directory,{recursive:true,force:true});released=true;for(const release of reservations)release();};
+ try{check(signal);for(const [name,data]of Object.entries(doc.assets||{})){
+  if(!mime(name)||name.endsWith('.preview.png'))continue;check(signal);const raw=isRawAsset(data),bytes=raw?data.bytes:typeof data==='string'?data.length/4*3-(data.endsWith('==')?2:data.endsWith('=')?1:0):NaN;
+  if(!Number.isSafeInteger(bytes)||bytes<1||bytes>ENTRY_BYTES||(total+=bytes)>TOTAL_BYTES)throw Error('Image search sources exceed the Notepad image limits.');
+  let expected;if(raw){const info=await storage.rawAssetInfo(data);check(signal);expected=info.sha256;if(!/^[a-f0-9]{64}$/.test(expected))throw Error('Image search source digest is unavailable.');if(cached[name]?.hash===expected){rows.push({name,hash:expected,text:cached[name].text||''});continue;}}
+  const duplicate=expected&&files.get(expected+'\0'+mime(name));if(duplicate){rows.push({name,hash:expected,source:duplicate,type:mime(name)});continue;}
+  reservations.push(reserve(bytes));if(!directory){await fs.mkdir(tempRoot,{recursive:true});directory=await fs.mkdtemp(path.join(tempRoot,'notemind-index-'));}const file=path.join(directory,String(files.size)+'-'+rows.length),handle=await fs.open(file,'wx',0o600),hash=createHash('sha256'),header=Buffer.alloc(Math.min(bytes,65536));
+  try{for(let at=0;at<bytes;at+=CHUNK){check(signal);const length=Math.min(CHUNK,bytes-at);let part;if(raw){part=await storage.readRawAsset(data,{offset:at,length});if(!ArrayBuffer.isView(part)||part.byteLength!==length)throw Error('Image search source changed.');part=Buffer.from(part.buffer,part.byteOffset,part.byteLength);}else{const encoded=data.slice(at/3*4,Math.min(data.length,(at+CHUNK)/3*4));if(data.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)||at+CHUNK<bytes&&encoded.includes('='))throw Error('Invalid image search source encoding.');part=Buffer.from(encoded,'base64');if(part.length!==length)throw Error('Image search source changed.');}check(signal);if(at<header.length)part.copy(header,at,0,Math.min(part.length,header.length-at));hash.update(part);await write(handle,part,signal);await yieldTask();}check(signal);const actual=hash.digest('hex');if(expected&&actual!==expected)throw Error('Image search source digest changed.');expected=actual;}finally{await handle.close();}
+  if(cached[name]?.hash===expected){await fs.unlink(file);reservations.at(-1)();rows.push({name,hash:expected,text:cached[name].text||''});continue;}
+  const dimensions=imageDimensions(header),source=Object.freeze({file,root:directory,bytes,sha256:expected,...(dimensions?{dimensions}:{}),workingBytes:imageWorkingBytes(bytes,dimensions)});files.set(expected+'\0'+mime(name),source);rows.push({name,hash:expected,source,type:mime(name)});
+ }
+ for(const [name,info]of Object.entries(doc.meta?.attachments||{}))if(info?.text){check(signal);const hash=createHash('sha256');for(let at=0;at<info.text.length;){let end=Math.min(info.text.length,at+65536);if(end<info.text.length&&/[\ud800-\udbff]/.test(info.text[end-1]))end--;hash.update(info.text.slice(at,end));at=end;await yieldTask();}rows.push({name,hash:hash.digest('hex'),text:info.text});}
+ check(signal);return{rows,cleanup,get directory(){return directory}};
+ }catch(error){try{await cleanup()}catch(cleanupError){error.indexCleanupError=cleanupError.message}throw error;}
+}
+function imageWorkingBytes(bytes,dimensions){const width=dimensions?.width,height=dimensions?.height,known=Number.isFinite(width)&&width>0&&Number.isFinite(height)&&height>0,scale=known?Math.min(1,2400/Math.max(width,height)):1,output=known?Math.max(1,Math.round(width*scale))*Math.max(1,Math.round(height*scale)):2400*2400,decoded=known?Math.min(128*1024*1024,width*height*4):128*1024*1024;return Math.min(384*1024*1024,Math.ceil(96*1024*1024+bytes+decoded+output*12));}
+module.exports={imageWorkingBytes,prepareIndexSources,imageInputs,sameInputs,CHUNK,abort,check};
