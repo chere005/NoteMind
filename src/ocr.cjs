@@ -8,10 +8,10 @@ const available=()=>files.every(f=>existsSync(path.join(folder,f)));
 const aborted=()=>Object.assign(Error('Reading cancelled.'),{name:'AbortError'});
 function readingOrder(lines){const rows=[];for(const line of [...lines].sort((a,b)=>a.y-b.y||a.x-b.x)){const cy=line.y+line.height/2;const row=rows.find(r=>Math.abs(r.cy-cy)<Math.max(r.height,line.height)*.45);if(row){row.lines.push(line);row.height=Math.max(row.height,line.height)}else rows.push({cy,height:line.height,lines:[line]});}return rows.sort((a,b)=>a.cy-b.cy).map(r=>r.lines.sort((a,b)=>a.x-b.x).map(l=>l.text).join(' ')).join('\n');}
 class TextReader {
- constructor({workerFactory=(file,options)=>new Worker(file,options),threads=Math.max(1,Math.min(2,require('node:os').availableParallelism()-1)),maxPending=64,maxBytes=128*1024*1024,idleMs=15000}={}){
-  this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
+ constructor({workerFactory=(file,options)=>new Worker(file,options),threads=Math.max(1,Math.min(2,require('node:os').availableParallelism()-1)),maxPending=64,maxBytes=128*1024*1024,idleMs=15000,maxCacheBytes=8*1024*1024}={}){
+  this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
  }
- read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',onProgress=()=>{}}={}){
+ read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{}}={}){
   if(this.disposed)return Promise.reject(Error('The text reader is closing.'));
   if(this.stopFailure)return Promise.reject(Error('The text reader is still stopping.'));
   if(signal?.aborted)return Promise.reject(aborted());
@@ -19,11 +19,11 @@ class TextReader {
   if(!Buffer.isBuffer(bytes))bytes=Buffer.from(bytes);
   if(bytes.length>40*1024*1024||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return Promise.reject(Error('The text reader needs a PNG image of up to 40 MB.'));
   const key=createHash('sha256').update(bytes).update(language).digest('hex');
-  if(this.cache.has(key))return Promise.resolve(structuredClone(this.cache.get(key)));
+  if(this.cache.has(key))return Promise.resolve(this.publicResult(this.cache.get(key).value,textOnly));
   if(this.jobs.has(id))return Promise.reject(Error('This reading is already running.'));
   const background=priority==='background',jobLimit=background?Math.max(1,this.maxPending-1):this.maxPending,byteLimit=background?this.maxBytes-Math.min(40*1024*1024,this.maxBytes/2):this.maxBytes;
   if(this.jobs.size>=jobLimit||this.bytes+bytes.length>byteLimit)return Promise.reject(Error('Too many images are waiting for text recognition. Try again after the current readings finish.'));
-  return new Promise((resolve,reject)=>{const job={id,bytes,key,language,priority:priority==='background'?'background':'foreground',onProgress,resolve,reject,worker:null};this.jobs.set(id,job);this.bytes+=bytes.length;this.queue.push(job);this.progress(job,'Queued');if(signal){job.abort=()=>this.cancel(id);signal.addEventListener('abort',job.abort,{once:true});job.cleanup=()=>signal.removeEventListener('abort',job.abort);if(signal.aborted){this.cancel(id);return;}}if(job.priority==='foreground')this.preemptBackground();this.pump();});
+  return new Promise((resolve,reject)=>{const job={id,bytes,key,language,priority:priority==='background'?'background':'foreground',textOnly,onProgress,resolve,reject,worker:null};this.jobs.set(id,job);this.bytes+=bytes.length;this.queue.push(job);this.progress(job,'Queued');if(signal){job.abort=()=>this.cancel(id);signal.addEventListener('abort',job.abort,{once:true});job.cleanup=()=>signal.removeEventListener('abort',job.abort);if(signal.aborted){this.cancel(id);return;}}if(job.priority==='foreground')this.preemptBackground();this.pump();});
  }
  progress(job,phase){try{job.onProgress(phase);}catch{}}
  clearIdleTimer(){this.idleGeneration++;clearTimeout(this.idleTimer);this.idleTimer=null;}
@@ -60,10 +60,12 @@ class TextReader {
  complete(job,error,result){
   if(!this.jobs.has(job.id))return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.bytes=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
   let value;
-  if(!error)try{if(!Array.isArray(result?.lines))throw Error('The text reader returned an invalid result.');value={text:readingOrder(result.lines),lines:result.lines,language:job.language,timing:result.timing};this.cache.set(job.key,value);if(this.cache.size>32)this.cache.delete(this.cache.keys().next().value);}catch(failure){error=failure;}
+  if(!error)try{if(!Array.isArray(result?.lines))throw Error('The text reader returned an invalid result.');value={text:readingOrder(result.lines),lines:result.lines,language:job.language,timing:result.timing};this.rememberResult(job.key,value);}catch(failure){error=failure;}
   if(worker){if(error)this.release(worker);else this.park(worker);}
-  if(error)job.reject(error);else job.resolve(structuredClone(value));this.pump();
+  if(error)job.reject(error);else job.resolve(this.publicResult(value,job.textOnly));this.pump();
  }
+ publicResult(value,textOnly){return textOnly?{text:value.text,language:value.language,timing:structuredClone(value.timing)}:structuredClone(value);}
+ rememberResult(key,value){if(this.disposed||this.cacheCounting)return;const admit=bytes=>{if(this.disposed||!Number.isFinite(bytes)||bytes>this.maxCacheBytes)return;const prior=this.cache.get(key);if(prior){this.cache.delete(key);this.cacheBytes-=prior.bytes;}while(this.cache.size&&(this.cache.size>=32||this.cacheBytes+bytes>this.maxCacheBytes)){const first=this.cache.keys().next().value;this.cacheBytes-=this.cache.get(first).bytes;this.cache.delete(first);}this.cache.set(key,{value,bytes});this.cacheBytes+=bytes;},bytes=require('./ocr-cache-bytes.cjs').resultBytes(value,this.maxCacheBytes,{cancelled:()=>this.disposed});if(bytes?.then){this.cacheCounting=true;const pending=bytes.then(admit).finally(()=>{this.cacheCounting=false;if(this.cachePending===pending)this.cachePending=null;});this.cachePending=pending;}else admit(bytes);}
  pump(){
   if(this.disposed||this.stopFailure||(this.workers.size&&!this.idleWorker)||!this.queue.length)return;
   const next=this.queue.findIndex(job=>job.priority==='foreground'),job=this.queue.splice(next<0?0:next,1)[0];if(!this.jobs.has(job.id)){this.pump();return;}
@@ -75,6 +77,6 @@ class TextReader {
  }
  cancel(id){const job=this.jobs.get(id);if(!job)return;this.queue=this.queue.filter(value=>value!==job);this.complete(job,aborted());}
  awaitStopped(){return Promise.all([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise)).then(()=>{});}
- dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=this.awaitStopped();}
+ dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.cache.clear();this.cacheBytes=0;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=Promise.allSettled([this.awaitStopped(),this.cachePending]).then(()=>{});}
 }
 module.exports={TextReader,available};
