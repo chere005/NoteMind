@@ -14,7 +14,8 @@
  // The [start,end) spans of the query in `text`, honouring match case and whole word.
  function scan(text){
   const found=[],query=input.value;if(!query)return found;
-  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase(),blocks=[];let mapped=0;
+  const needle=options.matchCase?query:query.toLocaleLowerCase(),hay=options.matchCase?text:text.toLocaleLowerCase(),firstMatch=hay.indexOf(needle),blocks=[];let mapped=0;
+  if(firstMatch<0)return found;
   // BMP characters with unchanged lowercase width keep their source offsets.
   // Only expansions and surrogate pairs need records; ASCII needs no map.
   if(!options.matchCase&&/[^\x00-\x7f]/.test(text)){
@@ -30,7 +31,7 @@
    if(!low)return position+Number(end);const index=low-1,block=blocks[index>>>10],at=(index&1023)*4;
    return position<block[at+1]?block[at+(end?3:2)]:position+Number(end)+block[at+3]-block[at+1];
   }
-  let from=0,at;while((at=hay.indexOf(needle,from))>=0){const stop=at+needle.length,start=options.matchCase?at:sourceOffset(at),end=options.matchCase?stop:sourceOffset(stop-1,true);let before=start-1;if(before>0&&/[\uDC00-\uDFFF]/.test(text[before]))before--;const left=start>0?text.slice(before,start):'',right=end<text.length?String.fromCodePoint(text.codePointAt(end)):'';
+  let from=firstMatch,at;while((at=hay.indexOf(needle,from))>=0){const stop=at+needle.length,start=options.matchCase?at:sourceOffset(at),end=options.matchCase?stop:sourceOffset(stop-1,true);let before=start-1;if(before>0&&/[\uDC00-\uDFFF]/.test(text[before]))before--;const left=start>0?text.slice(before,start):'',right=end<text.length?String.fromCodePoint(text.codePointAt(end)):'';
    if((!options.wholeWord||(!word.test(left)&&!word.test(right)))&&!(found.at(-1)?.[0]===start&&found.at(-1)?.[1]===end))found.push([start,end]);from=stop;}
 
   return found;

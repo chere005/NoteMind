@@ -19,3 +19,6 @@ test('dense exceptional mappings use bounded packed numeric blocks and preserve 
  const text='𐐀İ '.repeat(5000)+'needle',stats={};assert.deepEqual(plain(current(text,'needle',{},stats)),previous(text,'needle'));assert.equal(stats.blocks,Math.ceil(10000/1024));assert.equal(stats.bytes,Math.ceil(10000/1024)*16384);
 });
 module.exports={body,previous,current};
+test('an absent Unicode query returns before per-character lowercase work or offset allocation',()=>{
+ const stats={};assert.deepEqual(plain(current('𐐀İ Καλημέρα '.repeat(10000),'absent',{},stats)),[]);assert.equal(stats.blocks||0,0);assert.equal(stats.bytes||0,0);
+});
