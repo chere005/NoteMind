@@ -72,6 +72,7 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
     })
     const move = (event: PointerEvent): void => {
       if (event.pointerId !== down.pointerId) return
+      if(event.buttons===0&&!(event.pointerType==='pen'&&event.pressure>0)){stop();return}
       moves.push(event)
       if (!rowPressToSheet(sheet.getBoundingClientRect(), start, { x: event.clientX, y: event.clientY }, CLICK_SLOP_PX)) return
       stop()
@@ -88,11 +89,15 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
       view.removeEventListener("pointermove", move, true)
       view.removeEventListener("pointerup", end, true)
       view.removeEventListener("pointercancel", end, true)
+      view.removeEventListener("blur", stop)
+      view.removeEventListener("pagehide", stop)
       if (watching.current === stop) watching.current = null
     }
     view.addEventListener("pointermove", move, true)
     view.addEventListener("pointerup", end, true)
     view.addEventListener("pointercancel", end, true)
+    view.addEventListener("blur", stop)
+    view.addEventListener("pagehide", stop)
     watching.current = stop
   }
 
