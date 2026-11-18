@@ -208,7 +208,7 @@ ipcMain.handle('open', async event => {
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Documents', extensions: ['nm','wm', 'md', 'txt', 'py','docx','pdf','png','jpg','jpeg','webp','gif','bmp','svg','avif'] }] });
 
   if (result.canceled) return null;
-  return notesIPC.scope(event,async()=>{const opened=await openPath(result.filePaths[0]);if(opened&&!opened.workspace)projectService.recents.remember(result.filePaths[0],'file').catch(()=>{});return opened;});
+  return notesIPC.scope(event,async()=>{const opened=await openPath(result.filePaths[0]);if(opened&&!opened.workspace)await projectService.recents.remember(result.filePaths[0],'file').catch(()=>{});return opened;});
 
 });
 
@@ -316,7 +316,7 @@ ipcMain.handle('pad:request-access',async event=>{if(!ownsPadEvent(event))return
 ipcMain.handle('pad:retry',event=>{if(ownsPadEvent(event))pen?.displayRetry?.();});
 ipcMain.handle('pad:state',event=>ownsPadEvent(event)?padController?.state():null);
 ipcMain.handle('pad:close',event=>{if(!ownsPadEvent(event))return null;padController?.setEnabled(false);return padController?.state();});
-ipcMain.handle('pad:set',async(event,enabled)=>{if(!ownsPadEvent(event)||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();});
+ipcMain.handle('pad:set',(event,enabled)=>fileOperationRequests.run(async()=>{if(!ownsPadEvent(event)||typeof enabled!=='boolean')return null;padController?.setEnabled(enabled);const file=path.join(projectHome,'pad.json'),temp=file+'.'+require('node:crypto').randomUUID()+'.tmp';await fs.mkdir(projectHome,{recursive:true});try{await fs.writeFile(temp,JSON.stringify({enabled}));await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}return padController?.state();}));
 ipcMain.handle('pad:ready',event=>{if(ownsPadEvent(event))padController?.markReady();});
 ipcMain.on('pad:input',(event,input)=>{if(ownsPadEvent(event)){notesIPC.activity(event.sender);padController?.input(input);}});
 ipcMain.on('pad:activity',event=>{if(ownsPadEvent(event)){notesIPC.activity(event.sender);padController?.activity();}});
@@ -324,16 +324,16 @@ ipcMain.on('pad:pen-heartbeat',event=>{if(ownsPadEvent(event))pen?.displayHeartb
 ipcMain.on('pad:pen-stop',event=>{if(ownsPadEvent(event))pen?.displayStop?.();});
 ipcMain.handle('edit-native',(_,action)=>{if(!['cut','copy','paste','selectAll'].includes(action))throw Error('Invalid edit action');win?.webContents[action]();});
 ipcMain.handle('spell-add',(_,word)=>{if(typeof word!=='string'||!word.trim()||word.length>100)throw Error('Invalid word');win?.webContents.session.addWordToSpellCheckerDictionary(word.trim());});
-ipcMain.handle('recent-remember',(_,file)=>{if(typeof file!=='string'||!file)throw Error('Invalid file');return projectService.recents.remember(path.resolve(file),'file');});
+ipcMain.handle('recent-remember',(_,file)=>fileOperationRequests.run(async()=>{if(typeof file!=='string'||!file)throw Error('Invalid file');return projectService.recents.remember(path.resolve(file),'file');}));
 ipcMain.handle('shortcuts-list',()=>require('./shortcuts.cjs').list(Menu.getApplicationMenu()));
-ipcMain.handle('welcome-note',async(_,options)=>{
+ipcMain.handle('welcome-note',(_,options)=>fileOperationRequests.run(async()=>{
   const file=await require('./welcome-note.cjs').ensure({directory:path.join(app.getPath('documents'),'NoteMind'),stateFile:path.join(projectHome,'preferences','welcome-note.json'),version:app.getVersion(),preserve:options?.preserve===true,blocked:(await notesStore.deleted()).map(item=>item.path).filter(Boolean)});
   const current=(await projectService.registry.list()).find(w=>w.id==='default')||{id:'default',name:'Default Workspace',folders:[],files:[]};
   const {sameFile}=require('./workspaces.cjs'),covered=current.folders.some(folder=>{const rel=path.relative(folder,file);return !rel||!rel.startsWith('..'+path.sep)&&rel!=='..'&&!path.isAbsolute(rel);});
   if(!covered&&!(current.files||[]).some(p=>sameFile(p,file)))await projectService.registry.put({...current,files:[...(current.files||[]),file]});
   return file;
-});
-ipcMain.handle('quick-reference',async()=>{
+}));
+ipcMain.handle('quick-reference',()=>fileOperationRequests.run(async()=>{
   const file=path.join(projectHome,'NoteMind Quick Reference.nm'),version=app.getVersion();let current=null;
   try{current=(await require('./archive-codec.cjs').decode(await fs.readFile(file),{files:false})).meta?.quickReference;}catch{}
   if(current!==version){
@@ -342,8 +342,8 @@ ipcMain.handle('quick-reference',async()=>{
     await fs.mkdir(path.dirname(file),{recursive:true});try{await fs.writeFile(temp,bytes,{flag:'wx'});await fs.rename(temp,file);}finally{await fs.unlink(temp).catch(()=>{});}
   }
   return file;
-});
-ipcMain.handle('project-history',(_,label,before,after)=>fileActions.project(String(label),before,after));
+}));
+ipcMain.handle('project-history',(_,label,before,after)=>fileOperationRequests.run(()=>fileActions.project(String(label),before,after)));
 ipcMain.handle('file-history',(_,which)=>fileOperationRequests.run(async()=>{if(!['undo','redo'].includes(which))throw Error('Invalid action');const result=await fileActions.step(which);if(result?.change)await notesStore.rename(result.change.from,result.change.to);await notesStore.reconcileDeleted(result?.restored);notesIPC.send();return result;}));
 
 ipcMain.handle('reveal-path', (_, source) => shell.showItemInFolder(source));
@@ -385,7 +385,7 @@ async function saveDocument(doc,saveAs=false,automatic=false){
  };
  const next=(documentWrites.get(key)||Promise.resolve()).catch(()=>{}).then(write);documentWrites.set(key,next);try{return await next}finally{if(documentWrites.get(key)===next)documentWrites.delete(key);}
 }
-ipcMain.handle('save',(_,doc,saveAs)=>saveDocument(doc,saveAs));
+ipcMain.handle('save',(_,doc,saveAs)=>fileOperationRequests.run(()=>saveDocument(doc,saveAs)));
 
 const imagePickerIPC=require('./image-picker-ipc.cjs').installImagePicker(ipcMain,{scope:(event,run)=>notesIPC.scope(event,run),services:{storage:require('./archive-codec.cjs'),documentIO,dialog,getWin:()=>win,tempRoot:app.getPath('temp')}});
 
