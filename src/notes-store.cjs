@@ -23,8 +23,12 @@ async function atomicArchive(file,doc,options){
 }
 class NotesStore {
  constructor(root, recoveryRoot = path.join(root, 'recovery')) { this.root = root; this.recoveryRoot = recoveryRoot; this.pending = Promise.resolve(); this.snapshotObjects = new Map(); this.versionPending = new Map(); }
- async readIndexState() { try {const encoded=await fs.readFile(path.join(this.root,'index.json')),index=await archiveCodec.parseJson(encoded);if(!index||typeof index!=='object'||Array.isArray(index)||!index.records||typeof index.records!=='object'||Array.isArray(index.records))throw Error('The Notepad library index is damaged.');Object.setPrototypeOf(index.records,null);return {index,encoded};}catch(e){if(e.code!=='ENOENT')throw e;return {index:{records:Object.create(null),smartFolders:[],deleted:[],sort:'manual'},encoded:null};} }
- async readIndex() { return (await this.readIndexState()).index; }
+ async readIndexState() {
+  let encoded;try{encoded=await fs.readFile(path.join(this.root,'index.json'));}catch(error){if(error.code!=='ENOENT')throw error;return{index:{records:Object.create(null),smartFolders:[],deleted:[],sort:'manual'},encoded:null};}
+  try{const index=await archiveCodec.parseJson(encoded);if(!index||typeof index!=='object'||Array.isArray(index)||!index.records||typeof index.records!=='object'||Array.isArray(index.records))throw Error('The Notepad library index is damaged.');Object.setPrototypeOf(index.records,null);return{index,encoded};}catch(error){require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(encoded);throw error;}
+ }
+ async readIndex() {const state=await this.readIndexState();try{return state.index;}finally{require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(state.encoded);}}
+
  async transaction(fn,{valid}={}) {
   const run = () => require('./native-file-lock.cjs').runWithNativeLock(path.join(this.root,'index.json'),async () => {
    await fs.mkdir(this.root, {recursive:true});const lock=path.join(this.root,'.lock'),candidate=lock+'-'+randomUUID();let acquired=false,ownerStat;
@@ -39,7 +43,7 @@ class NotesStore {
      if(stat&&!alive){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===stat.ino&&current.dev===stat.dev)await fs.unlink(lock).catch(()=>{});}await new Promise(resolve=>setTimeout(resolve,40));
     }
     if(!acquired)throw Error('The Notepad library is busy. Try again.');
-    const {index,encoded}=await this.readIndexState();if(valid&&!valid())return false;const result=await fn(index);if(valid&&!valid())return false;const next=await archiveCodec.stringifyJson(index);if(valid&&!valid())return false;if(encoded===null||!encoded.equals(next)){if(await atomic(path.join(this.root,'index.json'),next,{valid})===false)return false;}return result;
+    const {index,encoded}=await this.readIndexState();let next;try{if(valid&&!valid())return false;const result=await fn(index);if(valid&&!valid())return false;next=await archiveCodec.stringifyJson(index);if(valid&&!valid())return false;if(encoded===null||!encoded.equals(next)){if(await atomic(path.join(this.root,'index.json'),next,{valid})===false)return false;}return result;}finally{const {discardPrivateArchiveBytes}=require('./archive-input-ownership.cjs');discardPrivateArchiveBytes(next);discardPrivateArchiveBytes(encoded);}
    }finally{await fs.unlink(candidate).catch(()=>{});if(acquired){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===ownerStat?.ino&&current.dev===ownerStat?.dev)await fs.unlink(lock).catch(()=>{});}}
   },{maxWaitMs:10000});
   const result = this.pending.catch(()=>{}).then(run); this.pending=result; return result;
