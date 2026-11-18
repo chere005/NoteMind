@@ -43,7 +43,7 @@ export function useInkSelection(options:Options){
      if(event.defaultPrevented||event.isComposing||event.keyCode===229)return
      const active=doc.activeElement as HTMLElement|null,target=event.target as HTMLElement|null
      if(target?.isContentEditable||target?.closest?.('input,textarea,select,[contenteditable]'))return
-     if(!element.closest('.tablet-host')?.contains(active))return
+     if(!element.contains(active))return
      if(event.key==='Escape'&&(controller.bits.count||drag.current)){event.preventDefault();event.stopPropagation();drag.current=null;controller.clear();setLasso([])}
      else if((event.key==='Delete'||event.key==='Backspace')&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();void run({type:'delete'})}
      else if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)&&!event.ctrlKey&&!event.metaKey&&controller.bits.count&&!controller.editJob){event.preventDefault();event.stopPropagation();const scale=latest.current.pixelSize(),step=event.shiftKey?10:1;void run({type:'move',dx:(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0)/Math.max(1,scale.width),dy:(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)/Math.max(1,scale.height)})}
