@@ -76,9 +76,23 @@ function store(root,defaultFile,migrationDir){
   }finally{await guard.close();await fs.unlink(registry+'.lock').catch(()=>{});}
  });pending=task;return task;};
 
+ // Rename admission shares this window's accepted save lineage without writing
+ // anything; the returned source check is repeated immediately before mutation.
+ const prepareRename=workspace=>{if(!valid(workspace)||!workspace.file||workspace.id==='default')return Promise.reject(Error('This project cannot be renamed.'));const task=pending.catch(()=>{}).then(async()=>{
+  await fs.mkdir(root,{recursive:true});const guard=await lock();
+  try{
+   const known=(await list()).find(item=>item.id===workspace.id),file=await physicalPath(workspace.file),key=keyPath(file),given=workspace.fileRevision?.path===key?workspace.fileRevision.hash:null,own=revisions.get(key),current=await readProject(file,known);
+   if(workspace.readOnly||current.readOnly)throw Error('This project uses a newer format and cannot be renamed.');
+   const expected=!freshProjects.has(workspace)&&own?.accepted.has(given)?own.current:given||(known?.fileRevision?.path===key?known.fileRevision.hash:null);
+   if(expected?current.fileRevision.hash!==expected:projects.write(current)!==projects.write({...(known||workspace),file}))throw conflict();
+   const stat=await fs.lstat(file,{bigint:true}),revision=current.fileRevision;
+   const check=async()=>{const actual=await require('./source-file-revision.cjs').sourceFileRevision(file),named=await fs.lstat(file,{bigint:true});if(!actual||actual.sha256!==revision.hash||!named.isFile()||named.isSymbolicLink()||['dev','ino','size','mtimeNs'].some(key=>named[key]!==stat[key]))throw conflict();};
+   await check();return{file,revision,stat,check,project:current};
+  }finally{await guard.close();await fs.unlink(registry+'.lock').catch(()=>{});}
+ });pending=task;return task;};
  const byFile=async file=>(await list()).find(x=>sameFile(x.file||(x.id==='default'?defaultFile:null),file));
 
- return {list,put,byFile,migrate};
+ return {list,put,byFile,migrate,prepareRename};
 
 }
 
