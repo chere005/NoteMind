@@ -124,3 +124,4 @@
 .word-fragment-error { color: #8a2b22; padding: 12px; }
 .word-fragment-error button { display: block; margin-top: 8px; }
 .docx-paper .docx-picture:not([src]):not([width]) { width: 100%; aspect-ratio: 1; }
+.docx-paper a[data-word-link] { pointer-events: auto; cursor: pointer; }
