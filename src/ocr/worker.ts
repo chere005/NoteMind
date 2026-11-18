@@ -5,13 +5,13 @@ import path from "node:path"
 import { parentPort, workerData } from "node:worker_threads"
 import * as ort from "onnxruntime-web"
 import { loadEngine } from "./engine"
-import { DEFAULT_TUNING, readPicture, type Engine } from "./pipeline"
+import { DEFAULT_TUNING, readPicture, type Engine, type RecogniserSource } from "./pipeline"
 import { decodePng, isPng, type Rgba } from "./png"
 
 interface Job { id: number; file?: string; bytes?: Uint8Array; pixels?: Rgba; japanese?: boolean }
 
 const { folder, threads } = workerData as { folder: string; threads: number }
-let engine: Promise<Engine> | null = null
+let engine: Promise<Engine<RecogniserSource>> | null = null
 
 parentPort!.on("message", async (job: Job) => {
   try {
@@ -23,7 +23,7 @@ parentPort!.on("message", async (job: Job) => {
       image = decodePng(bytes)
     }
     const decoded = performance.now()
-    engine ??= loadEngine(ort, path.join(folder, "models"), { threads, wasmFolder: path.join(folder, "ort") })
+    engine ??= loadEngine(ort, path.join(folder, "models"), { threads, wasmFolder: path.join(folder, "ort"), lazyRecognisers: true })
     // Validate/decode before loading model sessions; the engine is reused for the next queued picture.
     const ready = await engine.catch((error: unknown) => { engine = null; throw error })
     const loaded = performance.now()

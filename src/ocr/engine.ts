@@ -5,7 +5,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import type * as Ort from "onnxruntime-web"
 import { ctcAlphabet } from "./onnxMeta"
-import type { Engine, Recogniser, SessionLike } from "./pipeline"
+import type { Engine, Recogniser, RecogniserSource, SessionLike } from "./pipeline"
 
 
 export const MODEL_FILES = {
@@ -25,6 +25,7 @@ export interface LoadOptions {
   threads?: number
   
   wasmFolder?: string
+  lazyRecognisers?: boolean
 }
 
 
@@ -40,7 +41,10 @@ function configure(ort: typeof Ort, options: LoadOptions): void {
 }
 
 
-export async function loadEngine(ort: typeof Ort, models: string, options: LoadOptions = {}): Promise<Engine> {
+export function loadEngine(ort: typeof Ort, models: string, options: LoadOptions & { lazyRecognisers: true }): Promise<Engine<RecogniserSource>>
+export function loadEngine(ort: typeof Ort, models: string, options?: LoadOptions & { lazyRecognisers?: false }): Promise<Engine>
+export function loadEngine(ort: typeof Ort, models: string, options: LoadOptions): Promise<Engine<RecogniserSource>>
+export async function loadEngine(ort: typeof Ort, models: string, options: LoadOptions = {}): Promise<Engine<RecogniserSource>> {
   configure(ort, options)
   const session = async (bytes: Uint8Array): Promise<SessionLike> =>
     await ort.InferenceSession.create(bytes, { graphOptimizationLevel: "all" }) as unknown as SessionLike
@@ -50,9 +54,23 @@ export async function loadEngine(ort: typeof Ort, models: string, options: LoadO
     if (!alphabet) throw new Error(`${name} carries no character list`)
     return { session: await session(bytes), alphabet }
   }
+  const lazyRecogniser = (name: string): (() => Promise<Recogniser>) => {
+    let pending: Promise<Recogniser> | undefined
+    return () => {
+      if (!pending) {
+        const owned = recogniser(name).catch((error: unknown) => {
+          if (pending === owned) pending = undefined
+          throw error
+        })
+        pending = owned
+      }
+      return pending
+    }
+  }
   const det = await session(new Uint8Array(await fs.readFile(path.join(models, MODEL_FILES.det))))
-  const rec = await recogniser(MODEL_FILES.rec)
-  const japanese = modelsIn(models).japanese ? await recogniser(MODEL_FILES.recJapanese) : undefined
+  const rec = options.lazyRecognisers ? lazyRecogniser(MODEL_FILES.rec) : await recogniser(MODEL_FILES.rec)
+  const japanese = modelsIn(models).japanese ?
+    (options.lazyRecognisers ? lazyRecogniser(MODEL_FILES.recJapanese) : await recogniser(MODEL_FILES.recJapanese)) : undefined
   return {
     det, rec, ...(japanese ? { japanese } : {}),
     tensor: (data, dims) => new ort.Tensor("float32", data, dims),

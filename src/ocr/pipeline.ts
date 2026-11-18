@@ -14,13 +14,14 @@ export interface SessionLike {
 
 
 export interface Recogniser { session: SessionLike; alphabet: string[] }
+export type RecogniserSource = Recogniser | (() => Promise<Recogniser>)
 
-export interface Engine {
+export interface Engine<R extends RecogniserSource = Recogniser> {
   det: SessionLike
   
-  rec: Recogniser
+  rec: R
   
-  japanese?: Recogniser
+  japanese?: R
   tensor: TensorMaker
 }
 
@@ -367,7 +368,11 @@ export function pickReading(english: BundledLine | null, japanese: BundledLine |
   return english
 }
 
-async function recognise(engine: Engine, recogniser: Recogniser, strip: Strip, image: Rgba): Promise<BundledLine | null> {
+async function recognise(engine: Engine<RecogniserSource>, source: RecogniserSource, strip: Strip, image: Rgba,
+  shouldStop?: () => boolean): Promise<BundledLine | null> {
+  checkStop(shouldStop)
+  const recogniser = typeof source === "function" ? await source() : source
+  checkStop(shouldStop)
   const { session, alphabet } = recogniser
   const out = await session.run({ [session.inputNames[0]!]: engine.tensor(strip.data, [1, 3, REC_HEIGHT, strip.padded]) })
   const probabilities = out[session.outputNames[0]!]!
@@ -393,7 +398,7 @@ export interface ReadChoices {
 }
 
 
-export async function readPicture(engine: Engine, image: Rgba, tuning: ReadTuning = DEFAULT_TUNING,
+export async function readPicture(engine: Engine<RecogniserSource>, image: Rgba, tuning: ReadTuning = DEFAULT_TUNING,
   choices: ReadChoices = {}): Promise<Reading> {
   const { shouldStop } = choices
   const japanese = choices.japanese !== false ? engine.japanese : undefined
@@ -429,8 +434,8 @@ export async function readPicture(engine: Engine, image: Rgba, tuning: ReadTunin
   for (const box of boxes) {
     checkStop(shouldStop)
     const strip = cutStrip(image, box)
-    const english = await recognise(engine, engine.rec, strip, image)
-    const line = japanese ? pickReading(english, await recognise(engine, japanese, strip, image)) : english
+    const english = await recognise(engine, engine.rec, strip, image, shouldStop)
+    const line = japanese ? pickReading(english, await recognise(engine, japanese, strip, image, shouldStop)) : english
     if (line && line.confidence >= tuning.minConfidence) lines.push(line)
   }
   // Reading order: top to bottom, then left to right (textRecognition's tidyReading refines this into bands).
