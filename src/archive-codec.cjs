@@ -67,7 +67,7 @@ function inputBytes(op,args,limit){
 }
 class ArchiveCodec{
  constructor({workerFactory=file=>new Worker(file),maxPending=8,maxBytes=384*1024*1024,maxAssetBytes=256*1024*1024,maxAssetEntries=20000,maxWorkerBytes=512*1024*1024,maxRawBytes=384*1024*1024,idleMs=30000,timeoutMs=120000}={}){
-  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.rawCapacityListeners=new Set();this.externalRawWorking=new Map();this.retireRequested=false;this.spoolOwners=new Map();this.retirements=new WeakMap();this.exitedWorkers=new WeakSet();this.retiredStates=new WeakSet();this.disposal=null;this.cleanupFailures=0;this.lastCleanupFailure=null;
+  Object.assign(this,{workerFactory,maxPending,maxBytes,maxAssetBytes,maxAssetEntries,maxWorkerBytes,maxRawBytes,idleMs,timeoutMs});this.assets=new ArchiveAssetClient({maxBytes:maxAssetBytes,maxEntries:maxAssetEntries});this.epoch=0;this.rollovers=0;this.queue=[];this.active=null;this.worker=null;this.bytes=0;this.next=0;this.stopping=null;this.stoppingWorker=null;this.stopFailure=null;this.disposed=false;this.rawScope=new AsyncLocalStorage();this.rawLeases=new Map();this.rawUploads=new Map();this.rawDescriptors=new Map();this.rawBrands=new WeakMap();this.rawReadBuffers=new WeakMap();this.rawCapacityListeners=new Set();this.externalRawWorking=new Map();this.retireRequested=false;this.spoolOwners=new Map();this.retirements=new WeakMap();this.exitedWorkers=new WeakSet();this.retiredStates=new WeakSet();this.stopRequests=new WeakMap();this.disposal=null;this.cleanupFailures=0;this.lastCleanupFailure=null;
  }
  run(op,...args){
   if(this.disposed)return Promise.reject(Error('Archive tools are closing.'));
@@ -235,15 +235,20 @@ class ArchiveCodec{
   const finish=async()=>{if(this.inspectionStop!==record||record.finishing)return;record.finishing=true;try{await this.retireWorker(worker);}catch(cleanup){error.archiveCleanupError=cleanup.message;this.stopFailure=cleanup;this.rejectStoppedQueue();this.inspectionStop=null;if(this.stopping===promise)this.stopping=null;this.finish(job,error);reject(cleanup);return;}this.inspectionStop=null;if(this.stopping===promise)this.stopping=null;this.finish(job,error);resolve();this.pump();};
   if(exited){finish();return;}worker.once('exit',finish);
   // A resolved or rejected terminate promise is not an exit receipt.
-  Promise.resolve().then(()=>worker.terminate()).catch(failure=>{if(this.inspectionStop===record)this.stopFailure=failure;});
+  this.requestWorkerStop(worker);
  }
  stopWorker(force=false,exited=false){
   if(!force&&this.liveRaw()){this.retireRequested=true;return this.stopping;}clearTimeout(this.idleTimer);const worker=this.worker;this.worker=null;if(!worker)return this.stopping;
   this.stoppingWorker=worker;if(force)this.notifyRawCapacity();let resolve,reject;const promise=new Promise((done,fail)=>{resolve=done;reject=fail;});promise.catch(()=>{});this.stopping=promise;let finishing=false;
   const finish=async()=>{if(finishing||this.stoppingWorker!==worker)return;finishing=true;try{await this.retireWorker(worker);if(this.stopping===promise)this.stopping=null;resolve();this.pump();}catch(error){this.stopFailure=error;this.rejectStoppedQueue();if(this.stopping===promise)this.stopping=null;reject(error);}};
   worker.once('exit',finish);if(exited){void finish();return promise;}
-  Promise.resolve().then(()=>worker.terminate()).catch(error=>{if(this.stoppingWorker!==worker)return;this.stopFailure=error;this.rejectStoppedQueue();});return promise;
+  this.requestWorkerStop(worker,{rejectQueue:true});return promise;
  }
+ requestWorkerStop(worker,{rejectQueue}={}){
+  const previous=this.stopRequests.get(worker);if(previous&&!previous.failed)return previous.promise;
+  const record={failed:false,rejectQueue:rejectQueue??previous?.rejectQueue??false};record.promise=Promise.resolve().then(()=>worker.terminate()).then(()=>{if(previous&&this.stopFailure===previous.error)this.stopFailure=null;},error=>{record.failed=true;record.error=error;if(this.stoppingWorker===worker&&!this.exitedWorkers.has(worker)){this.stopFailure=error;if(record.rejectQueue)this.rejectStoppedQueue();}});this.stopRequests.set(worker,record);return record.promise;
+ }
+ retryWorkerStop(){const worker=this.stoppingWorker;if(worker&&!this.exitedWorkers.has(worker)&&this.stopRequests.get(worker)?.failed)this.requestWorkerStop(worker);}
  rejectStoppedQueue(){for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.args=null;job.reject(Error('Archive tools could not stop their previous worker.'));}}
  retireWorker(worker){
   if(this.retirements.has(worker))return this.retirements.get(worker);
@@ -252,9 +257,9 @@ class ArchiveCodec{
   const owner=this.spoolOwners.get(worker),pending=Promise.resolve().then(()=>owner?.cleanup()).then(()=>{if(this.spoolOwners.get(worker)===owner)this.spoolOwners.delete(worker);if(this.stoppingWorker===worker){this.stoppingWorker=null;this.stopFailure=null;}},error=>{this.cleanupFailures++;this.lastCleanupFailure={directory:owner?.directory,code:error.code,message:error.message};if(this.retirements.get(worker)===pending)this.retirements.delete(worker);if(this.stoppingWorker===worker)this.stoppingWorker=null;throw error;});this.retirements.set(worker,pending);return pending;
  }
  dispose(){
-  if(this.disposal)return this.disposal;this.disposed=true;clearTimeout(this.idleTimer);for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.reject(Error('Archive tools are closing.'));}
+  if(this.disposal){this.retryWorkerStop();return this.disposal;}this.disposed=true;clearTimeout(this.idleTimer);for(const job of this.queue.splice(0)){this.bytes-=job.bytes;job.reject(Error('Archive tools are closing.'));}
   if(this.active?.inspectionCancel&&this.worker)this.quarantineInspectionWorker(this.worker,this.active,Error('Archive tools are closing.'));else if(this.active)this.finish(this.active,Error('Archive tools are closing.'));
-  const stopping=this.stopWorker(true),attempts=stopping?[stopping]:[];for(const worker of this.spoolOwners.keys())if(worker!==this.stoppingWorker)attempts.push(this.retireWorker(worker));
+  const stopping=this.stopWorker(true),attempts=stopping?[stopping]:[];this.retryWorkerStop();for(const worker of this.spoolOwners.keys())if(worker!==this.stoppingWorker)attempts.push(this.retireWorker(worker));
   const run=Promise.allSettled(attempts).then(results=>{const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'Archive cleanup could not finish.');if(this.stoppingWorker||this.worker||this.spoolOwners.size)throw Error('Archive cleanup still owns a worker or private files.');this.stopFailure=null;this.assets.clear();this.workerAssetStats=null;this.rawCapacityListeners.clear();});this.disposal=run.catch(error=>{this.disposal=null;throw error;});return this.disposal;
  }
 }
