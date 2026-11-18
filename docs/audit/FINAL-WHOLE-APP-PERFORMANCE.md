@@ -55,6 +55,10 @@ Two expanded native attempts are retained as **failed fixture diagnostics**, not
 
 Test-only `231f461` now gives the rich/source controls their exact application attributes, including `spellcheck=false` on the source textarea, and adds a literal source-tag/style/shell parity assertion. That focused check passes. The faithful native footer repeat and actual 150,000-range Find fixture remain queued behind Root's candidate build/original100 Web gate. No counter, source-layout or whole-App memory closure is inferred from the mismatched fixtures, and the product timeout/input/guard remain unchanged.
 
+The faithful-attribute repeat at `3881906` also fails the unchanged aggregate guard, at 1,229,537,280 B. Literal control-tag parity passes; runtime confirms source `spellcheck=false`, rich editable, actual CSS and the unchanged 800-pixel window. The exact source SHA remains `f50aa3d7…`. Again the last phase is `source-value-installed`, before any 16 MiB Worker-create/post receipt: tab memory rises from about 305 to 925 MB while Main/GPU/network remain about 165.5/89.9/49.4 MB. All ordinary phases pass with zero console errors. Wrapper exits one and PIDs 88851/88859/88860/88858 are kernel ESRCH.
+
+This establishes a reproducible native source-control value/layout-stage failure in the faithful minimal editor fixture; it does **not** establish counter parsing or counter timeout causality, and is not a whole-App result. Source-editor attribution/fix scope and a separately isolated actual-classic-Worker count remain required. No source wrapping, content, timeout, heap or memory guard was changed to hide the failure. Root retains the active work; this report does not call it closed.
+
 ## Focused verification
 
 Checks were scoped to changed or causally implicated behavior, without a development full-suite run:
