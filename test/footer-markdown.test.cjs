@@ -12,3 +12,8 @@ test('many blocks stream without whole-document rendering and long inlines use p
  const parse=md.parse,renderHTML=md.render;md.parse=()=>assert.fail('Whole document parse forbidden');md.render=()=>assert.fail('Whole document HTML forbidden');
  try{let stats;const text='- item **bold** ![alt](assets/a.png)\n'.repeat(12000);assert.equal(countMarkdown(text,{onStats:value=>stats=value}),24000);assert.ok(stats.blockLedgerBytes<200000);const long=('word **bold** ![alt](assets/a.png) ').repeat(2000);assert.equal(countMarkdown(long),4000);let checks=0;assert.throws(()=>countMarkdown(text,{check(){if(++checks===4)throw Error('cancelled')}}),/cancelled/);}finally{md.parse=parse;md.render=renderHTML;}
 });
+test('an installed zero-nesting extension renderer shares the existing count state without changing one-argument HTML counts',()=>{
+ const {countHTML}=require('../src/notes-footer.js'),rules=md.inline.ruler.__rules__.slice(),name='footer_counter_extension';
+ md.inline.ruler.before('text',name,(state,silent)=>{if(state.src.slice(state.pos,state.pos+2)!=='!!')return false;if(!silent)state.push(name,'',0);state.pos+=2;return true});md.renderer.rules[name]=()=>'<span>extension words</span>';
+ try{for(const text of['left!!right','one !! two','!!','a\n\n!!\n\nb'])assert.equal(countMarkdown(text),previous(text),text);const state={count:5,inWord:false,carry:''};assert.equal(countHTML('<b>two words</b>',state),7);assert.equal(state.count,7);assert.equal(countHTML('<b>two words</b>'),2);}finally{md.inline.ruler.__rules__=rules;md.inline.ruler.__cache__=null;delete md.renderer.rules[name];}
+});
