@@ -38,21 +38,23 @@ class DocumentAssetReferences{
   const record=this.restoreRollbacks.get(rawOwner);if(!record)return;const errors=[];
   for(const[upload,epoch]of record.uploads)try{await this.raw.cancelRawAsset(upload,{owner:rawOwner,epoch});record.uploads.delete(upload);}catch(error){errors.push(error);}
   if(record.tokens.size)try{await this.raw.releaseRawAssets(rawOwner,[...record.tokens]);record.tokens.clear();}catch(error){errors.push(error);}
-  if(!record.uploads.size&&!record.tokens.size)this.restoreRollbacks.delete(rawOwner);
+  if(record.working)try{await record.working();record.working=null;}catch(error){errors.push(error);}
+  if(!record.uploads.size&&!record.tokens.size&&!record.working)this.restoreRollbacks.delete(rawOwner);
   if(errors.length)throw new AggregateError(errors,'Unpublished immutable source cleanup could not finish.');
  }
  restore(owner,ids,rawOwner){
   const before=this.restoreTails.get(rawOwner)?.promise||Promise.resolve(),work=before.then(()=>this.restoreOwned(owner,ids,rawOwner)),promise=work.then(()=>{},()=>{}),record={owner,promise};this.restoreTails.set(rawOwner,record);void promise.then(()=>{if(this.restoreTails.get(rawOwner)===record)this.restoreTails.delete(rawOwner);});return work;
  }
  async restoreOwned(owner,ids,rawOwner){return this.withSources(owner,ids,async entries=>{
-  await this.rollbackRestore(rawOwner);const pending={owner,uploads:new Map(),tokens:new Set()};this.restoreRollbacks.set(rawOwner,pending);let lease,result,failure;
+  await this.rollbackRestore(rawOwner);const pending={owner,uploads:new Map(),tokens:new Set(),working:null};this.restoreRollbacks.set(rawOwner,pending);let lease,result,failure;
   try{lease=await this.raw.preflightRawAssets([],{owner:rawOwner});if(lease.missing?.length)throw Error('Could not prepare immutable document sources.');result=await lease.run(async()=>{
-   const restored=new Map();for(const entry of entries){this.check(this.state(owner));const opened=await this.raw.beginRawAsset({owner:rawOwner,bytes:entry.facts.bytes,chars:entry.facts.chars});pending.uploads.set(opened.upload,opened.epoch);let offset=0;
+   pending.working=await this.raw.acquireScopedRawWorking(3*CHUNK,{preserve:true});const restored=new Map();for(const entry of entries){this.check(this.state(owner));const opened=await this.raw.beginRawAsset({owner:rawOwner,bytes:entry.facts.bytes,chars:entry.facts.chars});pending.uploads.set(opened.upload,opened.epoch);let offset=0;
     for await(const part of this.files.read(entry.source.record,{check:()=>this.check(this.state(owner))})){await this.raw.appendRawAsset(opened.upload,part,{owner:rawOwner,epoch:opened.epoch,offset});offset+=part.byteLength;}
     const descriptor=await this.raw.finishRawAsset(opened.upload,{owner:rawOwner,epoch:opened.epoch});pending.uploads.delete(opened.upload);if(!token(descriptor?.rawAssetToken))throw Error('Invalid restored document asset.');pending.tokens.add(descriptor.rawAssetToken);
     if(descriptor.bytes!==entry.facts.bytes||descriptor.chars!==entry.facts.chars)throw Error('Immutable document source changed.');const info=await this.raw.rawAssetInfo(descriptor);if(info.sha256!==entry.facts.sha256)throw Error('Immutable document source digest changed.');restored.set(entry.id,descriptor);
    }return restored;
   });}catch(error){failure=error;}
+  try{await pending.working?.();pending.working=null;}catch(error){if(failure)failure.restoreWorkingError=error.message;else failure=error;}
   try{await lease?.release?.();}catch(error){if(failure)failure.restoreLeaseError=error.message;else failure=error;}
   if(!failure)try{this.check(this.state(owner));}catch(error){failure=error;}
   if(failure){try{await this.rollbackRestore(rawOwner);}catch(error){failure.restoreCleanupError=error.message;}throw failure;}
