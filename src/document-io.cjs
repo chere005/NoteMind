@@ -41,7 +41,7 @@ async function exportFile(doc,file,options={}){
 async function previewFile(file,password){
  const bytes=await require('./read-limited.cjs').readLimited(file,150*1024*1024,'Open files up to 150 MB.');const ext=path.extname(file).toLowerCase();
  if(ext==='.pdf')return {kind:'pdf',pages:publicPages(await call('pdf',bytes,password))};
- if(ext==='.docx'){const doc=await importWord(bytes),pdf=await renderPDF(doc,{printBackground:true,pageSize:'A4'});return {kind:'docx',pages:publicPages(await call('pdf',pdf)),converted:doc,html:render(doc.text,doc.assets)};}
+ if(ext==='.docx')return require('./word-preview.cjs').previewWord(bytes,{importWord,render});
  const type=mime(file);if(!type)throw Error('Choose a PDF, Word document, or image.');const image=await call('image',bytes,type);if(Buffer.isBuffer(image.data))image.data=base64(image.data);return {kind:'image',pages:[{...image,image:image.data,page:1,text:'',blocks:[]}]};
 }
 const publicPages=pages=>pages.map(page=>({...page,image:Buffer.isBuffer(page.image)?base64(page.image):page.image}));
