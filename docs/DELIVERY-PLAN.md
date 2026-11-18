@@ -1,17 +1,26 @@
 # NoteMind delivery plan
 
-Updated November 18, 2026, 2:55 AM Central. Target handoff: **8 AM Central today**. These are working targets; a failing gate remains active work. Installed 0.35.0 is untouched. No release is qualified, pushed to main or installed.
+Updated November 18, 2026, 4:47 AM Central. Target handoff: **8 AM Central today**. Installed 0.35.0 is untouched. No new release is qualified, pushed to main or installed. A failed acceptance gate remains a failure at the deadline.
 
 ## Incremental timeline
 
 | Central time | Target and reviewable pause point |
 |---|---|
-| Now–3:10 AM | Finish the extra interaction/publication sweep; integrate its remaining confirmed fixes. Prepare the next causally justified large-image memory experiment. |
-| 3:10–4:30 AM | Three fresh whole-app auditors covering bugs, UI/UX and performance/architecture. Root closes the measured memory bottleneck in parallel; reviewers recheck subsequent integration. |
-| 4:30–7 AM | Close audit findings, then full preflight after coherent implementation, exact source/package fidelity, frozen large-image/stroke/PDF/import/export, recovery/cancellation and soak runs. A failing gate remains assigned work. |
-| 7–8 AM | Exact source/build/artifact handoff for Claude, measured before/after results and truthful limits. |
+| Now–5:15 AM | Finish integrating the fresh performance review; close repeated Find range construction and inspect the stalled experimental OCR run. Commit a coherent source checkpoint. |
+| 5:15–6 AM | Run the full preflight once implementation is coherent; repair failures, then build one frozen signed candidate with exact source/runtime receipts. |
+| 6–7:15 AM | Run the highest-value frozen native gates sequentially: drawing/storage, PDF/reference/import/export/recovery, and large-image indexing. Recheck changed ownership and performance paths. |
+| 7:15–8 AM | Preserve actual results and artifacts, finish source/package review and prepare the exact Claude handoff. Qualify a stable increment only if its required gates pass. |
 
-Each increment needs a committed source checkpoint, focused evidence and a known safe pause point. A development package is not a stable release. Preserve Sean's running app and data; notify before a tested install. The 2 AM update was delivered; next whole-timeline report is 3 AM. Findings remain assigned until resolved; do not send them to TaskMind. The earlier 2:30 AM audit start slipped because extra reproduced shutdown/publication bugs were still being fixed.
+These are estimates, not permission to skip tests or call failing workloads stable. The safe pause point is a committed, reproducible source checkpoint with preserved evidence. One heavy/native/build at a time; Sean's running app and data remain undisturbed. The 4 AM update was delivered; next whole-timeline report is 5 AM. No TaskMind entries for this task.
+
+## Current checkpoint
+
+- The three fresh whole-app source audits have run. Bug review: 14 finding groups, 207 focused checks; UI review: 15 finding groups, 227 focused checks. Their confirmed fixes are integrated through Root `20a1de8`; performance review is closing the last reproduced repeated-Find work. These are focused checks, not a full-suite or package acceptance claim.
+- Candidate `8fa9d856` built and signed successfully, but predates the latest audit follow-ups. Its unchanged production Web full-100-image mixed gate fails at 1,092,501,504 B after all 104 display/typing/autosave/tab-return phases and before the first OCR reply. The 1 GiB aggregate limit is unchanged.
+- The experimental file/cold native-process full-100 run is frozen and still active. It has dispatched no model worker; this is a pre-OCR liveness diagnostic, not inference or memory acceptance. No experimental native backend has been adopted.
+- Native UI backing retirement is measured: hidden drawing canvases 134,217,732 to 12 logical bytes; inactive camera canvas 67,108,864 to 4 bytes, with exact restored pixels and owned exits. Physical Wacom buttons remain outside these synthetic native checks.
+- The 16 MiB footer source benchmark reduces measured peak memory by 48.6% but is 9.86 times slower in the matched VM-stage measurement. Native large-source fixture runs hit the memory guard before the counter worker starts; faithful source-control attribution and latency closure remain required. No whole-app speedup is claimed.
+- Full preflight, final-source build, final frozen stress/recovery/soak and complete stage rankings have not passed yet. Deadline work prioritizes an evidence-backed source/package handoff over unqualified installation.
 
 ## Latest measured state
 

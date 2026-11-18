@@ -1,3 +1,13 @@
+## November 18, 4:47 AM Central checkpoint
+
+Root `20a1de8`; installed0.35.0 untouched, no full suite/main push/release/install. The fresh final whole-app bug and UI audits are complete with14/15 finding groups and207/227 focused checks; their product fixes are integrated. Fresh performance audit is closing redundant Find refresh/range reconstruction before coherent full preflight. Deadline remains8AM Central today; next hourly update5AM. See DELIVERY-PLAN.md for revised increments.
+
+Candidate8fa9d856 built/signed. Production Web original100 mixed gate actually exited1 at1,092,501,504B before first OCR reply after104 display/typing/autosave/tab-return phases. All capturedPIDs gone and664source/runtime plus21Rootdriver hashes unchanged; artifacts preserved. Candidate predates latest Root fixes. Preserve its seven tracked generatedoutputs plus ignored notes-footer-markdown.js with hashes before restore/merge/rebuild.
+
+SOLE heavy lane: native actor owns session36053, PID90148 plus90153/90154/90155; frozen variant audit-native-file-cold-full-mixed-8fa9d856. No helper/model dispatch after9min; preserve unchanged600s indexing/900s outer deadlines. Source/runtime receipt774identities SHAabcec43d1f8f17cee3837978877d9b1e39eec68e50f75b9239497f226ad2920f. No concurrent native/build/fullsuite until actual exits and explicit lane release. This is pre-OCR liveness failure, not low-memory acceptance.
+
+Native UI Surface/Camera retirement passed exactpixel/owner checks; reports and PID receipts preserved. Performance source-footer16MiB matchedVM uses48.6%less memory but9.86x more wall time; native full-source fixture fails pre-counter at source.value layout. Native Find150k realranges passes but input146.8ms; duplicated refresh and unchanged-navigation rebuild are assigned. Stage rankings evidence helper023960c ready, no complete whole-pipeline top3 ranking yet. Native backend remains test-only; unsafe Worker activecancel rejected; safe process adapter needs fullpipeline/quality/minOS/package acceptance before any adoption. Do not weaken guards/fixtures or claim whole-app readiness.
+
 # Continuation
 
 ## November 18, 2:55 AM Central checkpoint
