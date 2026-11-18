@@ -19,7 +19,7 @@
    }
    check();if(!image)try{image=await scope.createImageBitmap(blob)}catch{throw unsupported()}check();
    const scale=Math.min(1,limit/Math.max(image.width,image.height)),width=Math.max(1,Math.round(image.width*scale)),height=Math.max(1,Math.round(image.height*scale));
-   canvas=new scope.OffscreenCanvas(width,height);canvas.getContext('2d').drawImage(image,0,0,width,height);image.close();image=null;check();
+   canvas=new scope.OffscreenCanvas(width,height);canvas.getContext('2d',{willReadFrequently:true}).drawImage(image,0,0,width,height);image.close();image=null;check();
    output=await canvas.convertToBlob({type:'image/png'});
    check();resultBytes=await output.arrayBuffer();check();
    if(resultBytes.byteLength>50*1024*1024)throw Error('Image conversion exceeds its output limit.');
