@@ -1,11 +1,16 @@
 (() => {
  async function edit(img){
-  const target=activeTab,original=img.dataset.asset;if(!original||!doc.assets[original])return;
-  const image=new Image();image.src=assetUrl(original);await image.decode();
-  const d=document.createElement('dialog');d.className='shell-dialog picture-editor';
+  const target=activeTab,original=img.dataset.asset,expected=doc.assets[original];if(!original||!expected)return;
+  const release=NoteMindImagePreviews.pin(img);let image=img,pixels=null,d=null,shown=false,cleaned=false;
+  const cleanup=()=>{if(cleaned)return;cleaned=true;if(pixels){pixels.width=0;pixels.height=0;pixels=null;}const preview=d?.querySelector('canvas');if(preview){preview.width=0;preview.height=0;}image=null;release();};
+  try{
+  await NoteMindImagePreviews.ensure(img);
+  if(activeTab!==target||!img.isConnected||img.dataset.asset!==original||target.doc?.assets&&target.doc.assets[original]!==expected)return;
+  d=document.createElement('dialog');d.className='shell-dialog picture-editor';
   d.innerHTML='<h2>Edit Picture</h2><p>Drag on the picture to select an area to crop.</p><div class="picture-preview"><canvas aria-label="Picture preview"></canvas></div><div class="picture-controls"><button type="button" data-act="left" title="Rotate picture 90° left">↶ Rotate left</button><button type="button" data-act="right" title="Rotate picture 90° right">↷ Rotate right</button><button type="button" data-act="crop" title="Keep only the selected area of the picture" disabled>Crop selection</button><button type="button" data-act="reset" title="Restore the original picture">Reset</button></div><div class="picture-controls"><label>Width <input data-width type="number" min="1" max="8192"></label><label>Height <input data-height type="number" min="1" max="8192"></label><label><input data-lock type="checkbox" checked> Keep proportions</label></div><p class="picture-message" role="status"></p><div class="dialog-actions"><button type="button" data-act="cancel" title="Close without applying picture edits">Cancel</button><button type="button" data-act="apply" title="Apply these picture edits to the Notepad" class="primary">Apply</button></div>';
   const canvas=d.querySelector('canvas'),ctx=canvas.getContext('2d'),width=d.querySelector('[data-width]'),height=d.querySelector('[data-height]'),lock=d.querySelector('[data-lock]'),crop=d.querySelector('[data-act=crop]'),message=d.querySelector('.picture-message');
-  let pixels=document.createElement('canvas');pixels.width=image.naturalWidth;pixels.height=image.naturalHeight;pixels.getContext('2d').drawImage(image,0,0);
+  pixels=document.createElement('canvas');pixels.width=image.naturalWidth;pixels.height=image.naturalHeight;pixels.getContext('2d').drawImage(image,0,0);
+  function replacePixels(next){const previous=pixels;pixels=next;previous.width=0;previous.height=0;}
   let selected=null,start=null,ratio=pixels.width/pixels.height;
   function dimensions(){width.value=pixels.width;height.value=pixels.height;ratio=pixels.width/pixels.height;}
   function draw(){canvas.width=pixels.width;canvas.height=pixels.height;ctx.drawImage(pixels,0,0);if(selected){ctx.save();ctx.strokeStyle='#1683ff';ctx.lineWidth=Math.max(2,canvas.width/300);ctx.setLineDash([ctx.lineWidth*3,ctx.lineWidth*2]);ctx.strokeRect(selected.x,selected.y,selected.width,selected.height);ctx.restore();}crop.disabled=!selected||selected.width<1||selected.height<1;}
@@ -14,14 +19,15 @@
   canvas.onpointermove=e=>{if(!start)return;selected=NoteMindPictureGeometry.selection(start,point(e),canvas.width,canvas.height);draw();};
   canvas.onpointerup=e=>{if(!start)return;selected=NoteMindPictureGeometry.selection(start,point(e),canvas.width,canvas.height);start=null;draw();};
   canvas.onpointercancel=()=>{start=null;selected=null;draw();};
-  const rotate=angle=>{const next=document.createElement('canvas'),size=NoteMindPictureGeometry.output(pixels.width,pixels.height,angle);next.width=size.width;next.height=size.height;const c=next.getContext('2d');c.translate(next.width/2,next.height/2);c.rotate(angle*Math.PI/180);c.drawImage(pixels,-pixels.width/2,-pixels.height/2);pixels=next;selected=null;dimensions();draw();};
+  const rotate=angle=>{const next=document.createElement('canvas'),size=NoteMindPictureGeometry.output(pixels.width,pixels.height,angle);next.width=size.width;next.height=size.height;const c=next.getContext('2d');c.translate(next.width/2,next.height/2);c.rotate(angle*Math.PI/180);c.drawImage(pixels,-pixels.width/2,-pixels.height/2);replacePixels(next);selected=null;dimensions();draw();};
   d.querySelector('[data-act=left]').onclick=()=>rotate(-90);d.querySelector('[data-act=right]').onclick=()=>rotate(90);
-  crop.onclick=()=>{if(!selected||!selected.width||!selected.height)return;const next=document.createElement('canvas');next.width=selected.width;next.height=selected.height;next.getContext('2d').drawImage(pixels,selected.x,selected.y,selected.width,selected.height,0,0,next.width,next.height);pixels=next;selected=null;dimensions();draw();};
-  d.querySelector('[data-act=reset]').onclick=()=>{pixels=document.createElement('canvas');pixels.width=image.naturalWidth;pixels.height=image.naturalHeight;pixels.getContext('2d').drawImage(image,0,0);selected=null;dimensions();draw();};
+  crop.onclick=()=>{if(!selected||!selected.width||!selected.height)return;const next=document.createElement('canvas');next.width=selected.width;next.height=selected.height;next.getContext('2d').drawImage(pixels,selected.x,selected.y,selected.width,selected.height,0,0,next.width,next.height);replacePixels(next);selected=null;dimensions();draw();};
+  d.querySelector('[data-act=reset]').onclick=()=>{const next=document.createElement('canvas');next.width=image.naturalWidth;next.height=image.naturalHeight;next.getContext('2d').drawImage(image,0,0);replacePixels(next);selected=null;dimensions();draw();};
   width.oninput=()=>{if(lock.checked&&Number(width.value)>0)height.value=Math.max(1,Math.round(Number(width.value)/ratio));};height.oninput=()=>{if(lock.checked&&Number(height.value)>0)width.value=Math.max(1,Math.round(Number(height.value)*ratio));};
   d.querySelector('[data-act=cancel]').onclick=()=>d.close();
-  d.querySelector('[data-act=apply]').onclick=()=>{const w=Number(width.value),h=Number(height.value);if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w>8192||h>8192||w*h>32000000){message.textContent='Choose whole-number dimensions up to 8192 pixels and 32 million pixels total.';return;}if(activeTab!==target||!img.isConnected){message.textContent='The original picture is no longer open.';return;}const result=document.createElement('canvas');result.width=w;result.height=h;result.getContext('2d').drawImage(pixels,0,0,w,h);const data=result.toDataURL('image/png').split(',')[1],name='assets/picture-'+crypto.randomUUID()+'.png';NoteMindHistory.transaction(()=>{doc.assets[name]=data;NoteMindImagePreviews.apply(img,name,data,'image/png');richChanged=true;markDirty();});d.close();};
-  d.onclose=()=>d.remove();document.body.append(d);dimensions();draw();d.showModal();
+  d.querySelector('[data-act=apply]').onclick=()=>{const w=Number(width.value),h=Number(height.value);if(!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w>8192||h>8192||w*h>32000000){message.textContent='Choose whole-number dimensions up to 8192 pixels and 32 million pixels total.';return;}if(activeTab!==target||!img.isConnected||img.dataset.asset!==original||doc.assets[original]!==expected){message.textContent='The original picture is no longer open.';return;}const result=document.createElement('canvas');try{result.width=w;result.height=h;result.getContext('2d').drawImage(pixels,0,0,w,h);const data=result.toDataURL('image/png').split(',')[1],name='assets/picture-'+crypto.randomUUID()+'.png';NoteMindHistory.transaction(()=>{doc.assets[name]=data;NoteMindImagePreviews.apply(img,name,data,'image/png');richChanged=true;markDirty();});d.close();}finally{result.width=0;result.height=0;}};
+  d.onclose=()=>{cleanup();d.remove();};document.body.append(d);dimensions();draw();d.showModal();shown=true;
+  }finally{if(!shown)cleanup();}
  }
  // A selected picture has a resize handle and quick rotation controls outside the editable text.
  function installSelection(){

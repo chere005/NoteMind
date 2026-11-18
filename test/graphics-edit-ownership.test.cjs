@@ -17,3 +17,14 @@ test('a changed preview or sidecar cannot be replaced by an older asynchronous l
 test('a newer edit request cancels an older decode and owns the visible drawing',async()=>{
  const h=fixture(),first=h.start('assets/a.svg'),second=h.start('assets/b.svg');assert.equal(h.reads[0].options.signal.aborted,true);h.reads[1].resolve({name:'Second',strokes:[]});assert.equal(await second,true);h.reads[0].resolve({name:'Old',strokes:[]});assert.equal(await first,false);assert.equal(h.events.length,1);assert.equal(h.events[0].detail.target.assetName,'assets/b.svg');
 });
+test('reference drawing reads retain the captured sources and use exact encoded image bytes',async()=>{
+ const h=fixture(),preview={},sidecar={},bytes=Uint8Array.from({length:49153},(_,i)=>i%251),held=[],released=[],reads=[];
+ h.a.doc.assets['assets/a.svg']=preview;h.a.doc.assets['assets/a.svg.json']=sidecar;
+ h.c.btoa=value=>Buffer.from(value,'binary').toString('base64');
+ h.c.window.NoteMindDocumentSync={isRef:value=>value===preview||value===sidecar,copyAssets:value=>({...value}),capture:value=>{held.push(value);return value;},releaseDocument:value=>released.push(value),info:()=>({mime:'image/svg+xml'}),withAssetBytes:async(assets,name,options,consume)=>{assert.equal(assets,held[0].assets);reads.push(name);return consume(name.endsWith('.json')?new Uint8Array([1,2,3]):bytes);}};
+ const sheet={strokes:[]};h.c.NoteMindGraphics.decodeAsync=async(value,options)=>{assert.deepEqual([...value],[1,2,3]);assert.equal(options.owned,true);h.c.activeTab=h.b;h.c.doc=h.b.doc;return sheet;};
+ assert.equal(await h.start('assets/a.svg'),true);assert.deepEqual(reads,['assets/a.svg.json','assets/a.svg']);assert.equal(h.events[0].detail.url,'data:image/svg+xml;base64,'+Buffer.from(bytes).toString('base64'));assert.equal(h.events[0].detail.sheet,sheet);assert.deepEqual(released,held);
+});
+test('drawing capture is released on decode failure and cancellation',async()=>{
+ for(const cancelled of [false,true]){const h=fixture(),released=[];h.c.window.NoteMindDocumentSync={copyAssets:value=>({...value}),capture:value=>value,releaseDocument:value=>released.push(value)};const pending=h.start('assets/a.svg');let second;if(cancelled)second=h.start('assets/b.svg');h.reads[0].reject(Error('bad sidecar'));if(cancelled)assert.equal(await pending,false);else await assert.rejects(pending,/bad sidecar/);assert.equal(released.length,1);if(second){h.reads[1].resolve({strokes:[]});await second;assert.equal(released.length,2);}}
+});

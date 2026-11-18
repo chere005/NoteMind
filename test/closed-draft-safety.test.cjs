@@ -21,6 +21,24 @@ async function fixture({paths=true,count=2}={}){
  return {c,a,b,cTab,api,notes,hooks,events,sessions,stored,elements,source,edit};
 }
 
+test('closing asset captures survive asynchronous preparation after tab removal and retire on success or failure',async()=>{
+ for(const fail of [false,true]){
+  const h=await fixture(),gate=deferred(),leases=new Set();let preparing;
+  h.a.doc.assets['assets/source.png']='SOURCE';
+  h.c.window.NoteMindDocumentSync={seed:value=>value,copyAssets:assets=>({...assets}),capture:value=>{const held={...value,assets:{...value.assets}};leases.add(held);return held;},releaseDocument:value=>leases.delete(value)};
+  h.c.window.NoteMindPDFReferences={captureSnapshot:(_tab,value)=>value,copyCapture:noop,prepareSnapshot:async(_tab,value)=>{preparing=value;await gate.promise;return value;}};
+  h.hooks.draft=()=>{assert.ok(leases.has(preparing),'source pin survives through draft dispatch');if(fail)throw Error('storage fault');};
+  const closing=h.c.closeTab(h.a);await until(()=>preparing);assert.equal(h.c.tabs.includes(h.a),false);assert.ok(leases.has(preparing));assert.equal(preparing.assets['assets/source.png'],'SOURCE');gate.resolve();assert.equal(await closing,!fail);assert.equal(leases.size,0);
+ }
+});
+
+test('queued replacement close releases its earlier asset capture and finally retires every pin',async()=>{
+ const h=await fixture(),gate=deferred(),leases=new Set();let preparing;
+ h.c.window.NoteMindDocumentSync={seed:value=>value,copyAssets:assets=>({...assets}),capture:value=>{const held={...value,assets:{...value.assets}};leases.add(held);return held;},releaseDocument:value=>leases.delete(value)};
+ h.c.window.NoteMindPDFReferences={captureSnapshot:(_tab,value)=>value,copyCapture:noop,prepareSnapshot:async(_tab,value)=>{preparing=value;await gate.promise;return value;}};
+ const first=h.c.closeTab(h.a);await until(()=>preparing);const originalCapture=[...leases].find(value=>value!==preparing);h.c.addTab({...h.a.doc});h.edit(h.a,'Latest reclose');const second=h.c.closeTab(h.a);assert.equal(leases.has(originalCapture),false);assert.ok(leases.has(preparing));gate.resolve();assert.equal(await first,true);assert.equal(await second,true);assert.equal(leases.size,0);assert.equal(h.stored.get('A').text,'Latest reclose');
+});
+
 test('failed closing draft restores latest memory without taking another Notepad focus',async()=>{
  const h=await fixture();h.hooks.draft=async doc=>{if(doc.id==='A')throw Error('Disk full');};
  const closing=h.c.closeTab(h.a);assert.equal(h.c.tabs.includes(h.a),false);assert.equal(h.c.activeTab,h.b);
