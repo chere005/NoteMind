@@ -1,5 +1,5 @@
 // Word-only semantic Markdown stream reuses rules with a compact block ledger.
-const { md, mime } = require("./document-renderer.cjs");
+const { md, mime, resolveAssetName } = require("./document-renderer.cjs");
 const {parseInline, linkifyTokens, joinText, releaseInline} = require("./word-inline.cjs");
 const PAGE = 8192, MAX_TEXT = 16 * 1024 * 1024;
 class BlockSink {
@@ -106,10 +106,10 @@ function imageNames(doc, options) {
   const names = /* @__PURE__ */ new Set();
   streamMarkdown(doc.text, (token) => {
     for (const item of token.children || []) {
-      const name = item.attrGet?.(item.type === "image" ? "src" : item.type === "link_open" ? "href" : "");
-      if (item.type === "image" && mime(name) && Object.hasOwn(doc.assets || {}, name)) names.add(name);
+      const name = resolveAssetName(item.attrGet?.(item.type === "image" ? "src" : item.type === "link_open" ? "href" : ""),doc.assets,doc.meta?.attachments);
+      if (item.type === "image" && name!==null && mime(name) && Object.hasOwn(doc.assets || {}, name)) names.add(name);
       if (item.type === "link_open") {
-        const thumb = doc.meta?.attachments?.[name]?.thumbnail;
+        const thumb = resolveAssetName(doc.meta?.attachments?.[name]?.thumbnail,doc.assets);
         if (thumb && mime(thumb) && Object.hasOwn(doc.assets || {}, thumb)) names.add(thumb);
       }
     }

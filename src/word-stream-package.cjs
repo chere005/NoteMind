@@ -1,5 +1,6 @@
 // Worker-only DOCX XML spools keep document-sized models out of the heap.
 const fs = require("node:fs"), fsp = require("node:fs/promises"), path = require("node:path"), { createHash } = require("node:crypto");
+const {resolveAssetName}=require("./document-renderer.cjs");
 const { exportWord } = require("./documents.cjs"), { readWordTemplate } = require("./word-template.cjs"), { streamMarkdown } = require("./word-markdown.cjs");
 const CHUNK = 65536, MAX = 4294967295, identity = (s) => ["dev", "ino"].map((k) => String(s[k])).join(":"), stamp = (s) => ["dev", "ino", "size", "mtimeNs", "ctimeNs"].map((k) => String(s[k])).join(":");
 class XMLSpool {
@@ -213,7 +214,7 @@ async function wordStreamPackage(doc, images, options, { spoolRoot, check = () =
       if (props) writer.write("<w:pPr>" + props + "</w:pPr>");
       paragraphs++;
     }, image2 = function(writer, name, alt, max = 560, link = null) {
-      const item = media.get(name);
+      const item = media.get(resolveAssetName(name,images)||name);
       if (!item) throw Error("Missing document image: " + name);
       const width = Math.min(item.info.width, max), height = width * item.info.height / item.info.width, cx = Math.round(width * 9525), cy = Math.round(height * 9525), id = ++drawing;
       if (link) writer.write('<w:hyperlink r:id="' + link + '" w:history="1">');
@@ -247,11 +248,12 @@ async function wordStreamPackage(doc, images, options, { spoolRoot, check = () =
           style = { ...style, [{ mark_open: "highlight", u_open: "underline", strong_open: "bold", em_open: "italics", s_open: "strike" }[type]]: true };
         } else if (["mark_close", "u_close", "strong_close", "em_close", "s_close"].includes(type)) style = stack.pop() || {};
         else if (type === "link_open") {
-          const href = token.attrGet("href"), attachment = doc.meta?.attachments?.[href];
+          const href = token.attrGet("href"), attachmentName=resolveAssetName(href,doc.meta?.attachments),attachment=attachmentName===null?undefined:doc.meta.attachments[attachmentName];
           if (attachment) {
             link = null;
-            if (media.has(attachment.thumbnail)) {
-              image2(writer, attachment.thumbnail, "", 300);
+            const thumbnail=resolveAssetName(attachment.thumbnail,images);
+            if (thumbnail!==null&&media.has(thumbnail)) {
+              image2(writer, thumbnail, "", 300);
               run2(writer, style, "", null, true);
             }
           } else {
