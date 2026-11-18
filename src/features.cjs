@@ -47,7 +47,9 @@ module.exports = function installFeatures(window, projectService) {
   if(!['png','svg'].includes(extension)) throw Error('Unsupported image type');
   const result=await dialog.showSaveDialog(win(),{defaultPath:`Drawing.${extension}`,filters:[{name:'Image',extensions:[extension]}]});
   if(result.canceled)return null;
-  await fs.writeFile(result.filePath,Buffer.from(data,'base64'));return result.filePath;
+  const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),expected=await guard.fingerprintFile(dest);
+  try{await guard.replaceIfUnchanged(dest,Buffer.from(data,'base64'),expected);}catch(error){if(!error.notemindFileCommitted)throw error;try{await dialog.showMessageBox?.(win(),{type:'warning',message:'The image was saved',detail:error.message});}catch{}}
+  return result.filePath;
  });
  ipcMain.handle('save-pane',async(event,sheet,svg,file,options)=>{
   const graphics=require('./graphics-pane.js'),token=sheet&&Object.hasOwn(sheet,'drawingUpload')?sheet.drawingUpload:null;let lease,sidecar;
@@ -57,7 +59,7 @@ module.exports = function installFeatures(window, projectService) {
    const result=file?{filePath:file,canceled:false}:await dialog.showSaveDialog(win(),{defaultPath:'Drawing.nm',filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;lease?.check();
    const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),versioned=options?.versioned===true,expected=file&&versioned&&options.expected?options.expected:await guard.fingerprintFile(dest),codec=require('./archive-codec.cjs');
    const encoded=lease?await codec.encodeDrawingOwned(lease.payload):await codec.encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});lease?.check();
-   const data=encoded.bytes;await guard.replaceIfUnchanged(dest,data,expected);return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
+   const data=encoded.bytes;try{await guard.replaceIfUnchanged(dest,data,expected,{beforeCommit:()=>lease?.check()});}catch(error){if(!error.notemindFileCommitted)throw error;try{await dialog.showMessageBox?.(win(),{type:'warning',message:'The drawing was saved',detail:error.message});}catch{}}return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
   }finally{if(lease)lease.release();else if(token!==null){try{drawingSaves.cancel(event?.sender,token)}catch{}}}
  });
  ipcMain.handle('open-pane',async(event,options)=>{
