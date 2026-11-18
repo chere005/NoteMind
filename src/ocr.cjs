@@ -50,11 +50,11 @@ class TextReader {
   if(this.stopFailure?.worker===worker)this.stopFailure=null;
   worker.removeListener('message',record.message);worker.removeListener('error',record.error);worker.removeListener('exit',record.exit);this.records.delete(worker);this.workers.delete(worker);record.resolveExit();this.pump();
  }
- release(worker){
-  const record=this.records.get(worker);if(!record||record.stopping)return;record.stopping=true;record.job=null;
+ release(worker,{retry=false}={}){
+  const record=this.records.get(worker);if(!record||record.exited||record.stopping&&(!retry||!record.stopFailed))return;record.stopping=true;record.stopFailed=false;record.job=null;
   if(this.idleWorker===worker){this.idleWorker=null;this.clearIdleTimer();}
   const failed=error=>{
-   if(!this.records.has(worker))return;
+   if(!this.records.has(worker)||record.exited)return;record.stopFailed=true;
    // Do not launch a second model engine until termination or exit is confirmed.
    this.stopFailure={worker,error};for(const job of [...this.jobs.values()])if(!job.worker)this.complete(job,Error('The text reader could not stop its previous reading.'));
   };
@@ -100,6 +100,6 @@ class TextReader {
  cancel(id){const job=this.jobs.get(id);if(!job)return;this.queue=this.queue.filter(value=>value!==job);this.complete(job,aborted());}
  retireIdle(){if(this.idleWorker)this.release(this.idleWorker);return this.awaitStopped();}
  awaitStopped(){return Promise.allSettled([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise).concat([...this.formats])).then(()=>{});}
- dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.cache.clear();this.cacheBytes=0;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=Promise.allSettled([this.awaitStopped(),this.cachePending]).then(()=>{});}
+ dispose(){this.disposed=true;for(const[worker,record]of this.records)if(record.stopping&&record.stopFailed)this.release(worker,{retry:true});if(this.disposing)return this.disposing;this.cache.clear();this.cacheBytes=0;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=Promise.allSettled([this.awaitStopped(),this.cachePending]).then(()=>{});}
 }
 module.exports={TextReader,available};
