@@ -73,6 +73,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
   // rows, which would take the keyboard from the row the person had moved to.
   const [at, setAt] = useState<{ x: number; y: number; left: number; items: MenuItem[]; serial:number; initialFocus: "first"|"last"|"none" } | null>(null)
   const hold = useRef<number | null>(null)
+  const holdPointer = useRef<number | null>(null)
   const held = useRef(false)
   const isOpen = useRef(false)
 
@@ -91,7 +92,16 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
   // (a field a menu item opened keeps it).
   const close = () => { isOpen.current=false;setAt(null) }
   const toggle = () => { if(isOpen.current)close();else open() }
-  useEffect(() => () => { if (hold.current !== null) window.clearTimeout(hold.current) }, [])
+  const stopHold = (event?: {pointerId:number}) => {
+    if (event && holdPointer.current !== event.pointerId) return false
+    if (hold.current !== null) window.clearTimeout(hold.current)
+    hold.current = null
+    holdPointer.current = null
+    return true
+  }
+  const cancelHold = (event?: {pointerId:number}) => { if (stopHold(event)) held.current = false }
+  useEffect(() => { if (disabled || mainOff) cancelHold() }, [disabled, mainOff])
+  useEffect(() => () => { cancelHold() }, [])
 
   const classes = ["bar-btn", label !== undefined ? "label" : "", on ? "on" : "", tint ? "tint" : "", primary ? "primary" : "", className ?? ""]
     .filter(Boolean).join(" ")
@@ -105,12 +115,15 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
             aria-pressed={split && (on!==undefined||tint!==undefined) ? !!(on || tint) : undefined}
             onMouseDown={event=>{if(event.button===0)event.preventDefault()}}
             onPointerDown={(event) => {
-              if (!split || event.button !== 0) return
+              if (!split || disabled || mainOff || event.button !== 0 || holdPointer.current !== null) return
+              holdPointer.current = event.pointerId
               held.current = false
-              hold.current = window.setTimeout(() => { held.current = true; open() }, HOLD_MS)
+              hold.current = window.setTimeout(() => { hold.current = null; held.current = true; open() }, HOLD_MS)
             }}
-            onPointerUp={() => { if (hold.current !== null) { window.clearTimeout(hold.current); hold.current = null } }}
-            onPointerLeave={() => { if (hold.current !== null) { window.clearTimeout(hold.current); hold.current = null } }}
+            onPointerUp={stopHold}
+            onPointerLeave={stopHold}
+            onPointerCancel={cancelHold}
+            onLostPointerCapture={cancelHold}
             // (A button that only opens a menu leaves the right-click to the bar, whose own menu is Customize toolbar…)
             onContextMenu={(event) => { if (!split) return; event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
             onKeyDown={(event) => {
