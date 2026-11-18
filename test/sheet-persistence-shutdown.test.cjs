@@ -1,0 +1,16 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{SheetPersistence}=require('../src/sheet-persistence.cjs');
+const tick=()=>new Promise(setImmediate);
+function fixture(terminate=async()=>0){const workers=[],service=new SheetPersistence('/unused/NoteMind/sheets.json',{workerFactory:()=>{const worker=Object.assign(new EventEmitter(),{threadId:1,ref(){},unref(){},postMessage(){},terminate(){this.terminations++;return terminate(this);},terminations:0});workers.push(worker);return worker;}}),worker=service.start(),exit=()=>{worker.threadId=-1;worker.emit('exit',0);};return{service,worker,workers,exit};}
+test('drawing disposal callers join one captured worker until its actual exit, not a terminate ACK',async()=>{
+ const f=fixture();f.service.uploads.set('owned-upload',f.worker);let done=false,secondDone=false;const first=f.service.dispose(),second=f.service.dispose();assert.equal(first,second);first.then(()=>done=true);second.then(()=>secondDone=true);await tick();assert.equal(done,false);assert.equal(secondDone,false);assert.equal(f.worker.terminations,1);assert.equal(f.service.disposalWorkers.size,1);assert.equal(f.service.uploads.get('owned-upload'),f.worker);f.exit();await first;assert.equal(done,true);assert.equal(f.service.disposalWorkers.size,0);assert.equal(f.service.uploads.size,0);assert.equal(f.service.worker,null);assert.equal(f.service.readyWorker,null);
+});
+test('failed drawing termination retains actual-exit ownership and an explicit disposal retry retries its stop request',async()=>{
+ let attempts=0;const f=fixture(async()=>{if(++attempts===1)throw Error('terminate request failed');return 0;});let done=false;const first=f.service.dispose();first.then(()=>done=true);await tick();assert.equal(done,false);assert.equal(f.service.disposalWorkers.size,1);assert.match(f.service.disposalWorkers.get(f.worker).stopError.message,/terminate request failed/);
+ assert.equal(f.service.dispose(),first);await tick();assert.equal(attempts,2);assert.equal(done,false);assert.throws(()=>f.service.start(),/closing/);f.exit();await first;assert.equal(f.workers.length,1);
+});
+test('drawing shutdown joins a previously retiring worker and the remaining Main write queue',async()=>{
+ const f=fixture();assert.equal(f.service.retireReadWorker(f.worker),true);let release;f.service.queue=new Promise(resolve=>release=resolve);let done=false;const closing=f.service.dispose().then(()=>done=true);await tick();assert.equal(done,false);f.exit();await tick();assert.equal(done,false,'worker exit does not finish an outstanding Main commit');release();await closing;assert.equal(done,true);assert.equal(f.service.retiring,null);assert.equal(f.service.stopping,null);
+});
+test('a failed worker remains captured for shutdown after its active field is cleared',async()=>{
+ const f=fixture();f.worker.emit('error',Error('worker fault'));assert.equal(f.service.worker,null);assert.equal(f.service.stopping,f.worker);let done=false;const closing=f.service.dispose().then(()=>done=true);await tick();assert.equal(done,false);assert.equal(f.service.disposalWorkers.size,1);f.exit();await closing;assert.equal(done,true);assert.equal(f.service.stopping,null);
+});
