@@ -31,4 +31,12 @@ All runs use pinned Electron 44.11.3 in Node mode, Node 24.22.2, with dependenci
 
 Core integration depends on Root's joined image-picker/document producer and archive-disposal leaves. Archive owner cleanup and failed-stop retry were separately implemented by the native-runtime owner; this reviewer did not alter `archive-codec.cjs` or qualify that integrated runtime.
 
+## Subsequent publication and decoder review
+
+Root's guarded replacement and PDF publication leaves (`a77ac1d`, `9e5478f`) received an independent source read and 38 focused pinned-runtime checks. Writable-file sync failure preserves the old target; parent-directory sync failure retains the committed flag; physical aliases, concurrent revisions and the synchronous final cancellation fence remain checked.
+
+That read reproduced one public-caller gap at `cdefcc4`: after real PDF target rename, an injected directory-fsync EIO left the target containing the exported bytes while `exportDocument` rejected as an ordinary failure. `78e78ac` follows the existing warning observer for committed PDF results, retains the legacy filepath return and uses a format-aware saved-file message. A failed warning observer cannot lose the committed success. Direct exports without an observer still throw the committed receipt, and precommit failures stay strict. All 48 focused publication, document lifecycle, native lock and core-quit checks pass.
+
+The private owned-input decoder at architecture `7527e5f` received an independent read and 60 focused pinned-runtime checks, including its opt-in, custom/default/borrowed behavior, protocol retirement and client lifecycle. An additional independent 4,402-case parity sweep covers every two-character padded one-byte prefix, sampled two-byte padding values and whitespace/Unicode/invalid insertions. Decoded bytes and error names/messages match the legacy decoder in every case; both session/byte/chunk maps drain to zero. No native memory or image-pixel claim follows from this source check; the architecture owner runs those serially under Root's grant.
+
 These focused checks do not establish native structured-clone memory, exact image pixels, full-workload memory, packaged shutdown or whole-app readiness. Those remain separate Root gates with unchanged workload and process-exit requirements.
