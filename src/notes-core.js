@@ -7,12 +7,13 @@
  function updateAutomaticTitle(tab,titleOverride){cancelTitle(tab);if(tab.doc.path||tab.doc.manualTitle)return;if(typeof titleOverride==='string'){tab.doc.title=titleOverride;return;}const text=tab===activeTab?currentText():tab.doc.text,proof=automaticTitleInfo(text);tab.doc.title=proof.title;if(!proof.deferred)return;const controller=new AbortController(),state={controller,document:tab.doc,revision:tab.editVersion||0,text};titleJobs.set(tab,state);const valid=()=>titleJobs.get(tab)===state&&tabs.includes(tab)&&tab.doc===state.document&&(tab.editVersion||0)===state.revision&&!tab.doc.path&&!tab.doc.manualTitle;state.promise=resolveAutomaticTitleInfo(text,{signal:controller.signal,check(){if(!valid())throw Object.assign(Error('Title calculation cancelled.'),{name:'AbortError'});}}).then(result=>{if(valid()){tab.doc.title=result.title;updateTitle();}}).catch(error=>{if(error.name!=='AbortError'&&valid()){tab.saveError=error.message;if(tab===activeTab)$('status').textContent=error.message;}}).finally(()=>{if(titleJobs.get(tab)===state)titleJobs.delete(tab);});}
 
  const serial=fn=>{const next=queue.then(fn);queue=next.then(()=>{},()=>{});return next;};
- function adoptDraft(tab,saved){for(const key of ['id','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];}
+ function adoptDraft(tab,saved,{release=true}={}){try{for(const key of ['id','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];}finally{if(release)window.NoteMindDocumentSync?.releaseDocument?.(saved);}}
  function adoptCommitted(tab,error){const receipt=error?.committed;if(!receipt)return false;for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(receipt,key))tab.doc[key]=receipt[key];tab.dirty=true;if(tab===activeTab)dirty=true;tab.draftStamp=null;tab.saveError=error.message;updateTitle();return true}
  function snapshot(tab){if(tab===activeTab)rememberCurrent();return {...tab.doc,assets:window.NoteMindDocumentSync?.copyAssets(tab.doc.assets)||{...tab.doc.assets},meta:structuredClone(tab.doc.meta||{}),dirty:tab.dirty,visual:tab.visual};}
  function captureDurable(tab,value=snapshot(tab)){return window.NoteMindPDFReferences?.captureSnapshot(tab,value)||value;}
  async function prepareDurable(tab,value){const prepared=await (window.NoteMindPDFReferences?.prepareSnapshot(tab,value)||value);if(!prepared.path&&!prepared.manualTitle){const proof=automaticTitleInfo(prepared.text);prepared.title=(proof.deferred?await resolveAutomaticTitleInfo(prepared.text):proof).title;}return prepared;}
- function pinDurable(value){const held=window.NoteMindDocumentSync?.capture(value)||value;window.NoteMindPDFReferences?.copyCapture(value,held);return held;}
+ function pinDurable(value){const held=window.NoteMindDocumentSync?.capture(value)||value;try{window.NoteMindPDFReferences?.copyCapture(value,held);return held;}catch(error){window.NoteMindDocumentSync?.releaseDocument?.(held);throw error;}}
+ function setClosingSaved(job,value){const held=pinDurable(value),previous=job.saved;job.saved=held;window.NoteMindDocumentSync?.releaseDocument?.(previous);}
  async function withDurable(tab,value,consume){const held=pinDurable(value);try{return await consume(await prepareDurable(tab,held));}finally{window.NoteMindDocumentSync?.releaseDocument?.(held);}}
  const draftCurrent=tab=>withDurable(tab,captureDurable(tab),value=>api.draft(value));
  function captureInsertion(){ensureActiveTab();const tab=activeTab;rememberCurrent();window.NoteMindHistory?.initialize(tab);let range=null;if(visual)try{const selected=getSelection();range=selected?.rangeCount&&rich.contains(selected.anchorNode)?selected.getRangeAt(0).cloneRange():carets.get(tab.id)?.cloneRange();}catch{}return {tab,text:tab.doc.text,start:visual?null:source.selectionStart,end:visual?null:source.selectionEnd,range};}
@@ -44,20 +45,21 @@
  }
  function insertAssetFor(target,name,data,sheet=null,sidecar=null,sidecarChunks=null,imageChunks=null){const tab=insertionTab(target);if(tab===activeTab){restoreInsertion(target);const inserted=imageChunks?insertAsset(name,data,sheet,sidecar,sidecarChunks,imageChunks):sidecarChunks?insertAsset(name,data,sheet,sidecar,sidecarChunks):insertAsset(name,data,sheet,sidecar);if(inserted){target.text=currentText();target.start=target.end=!visual?source.selectionEnd:null;try{target.range=getSelection()?.rangeCount?getSelection().getRangeAt(0).cloneRange():null;}catch{}}return inserted;}const assets={[name]:data};if(imageChunks)window.NoteMindDocumentSync?.hint(assets,name,data,imageChunks);if(sidecar){assets[name+'.json']=sidecar;window.NoteMindDocumentSync?.hint(assets,name+'.json',sidecar,sidecarChunks)}else if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);return insertMarkdownFor(target,'\n\n!['+(sheet||sidecar?'Drawing':'Image')+']('+name+')\n\n',{assets,graphic:name});}
  async function session(){const pending=[...closingDrafts.values()].filter(job=>!job.persisted).map(job=>job.tab),kept=[...new Set([...tabs,...pending])];await api.session({tabs:kept.filter(t=>!t.placeholder).map(t=>({id:t.doc.id,path:t.doc.path,visual:t.visual,scroll:t===activeTab?window.NoteMindScroll?.anchor():t.scroll})),active:activeTab?.doc.id});}
- const assertDraftDurable=value=>{if(value?.durabilityWarning||value?.durabilityConfirmed===false)throw Error(value.durabilityWarning||'The latest recovery draft disk durability could not be confirmed.');return value;};
+ const assertDraftDurable=value=>{if(value?.durabilityWarning||value?.durabilityConfirmed===false){window.NoteMindDocumentSync?.releaseDocument?.(value);throw Error(value.durabilityWarning||'The latest recovery draft disk durability could not be confirmed.');}return value;};
  async function persist(tab,saveFile=true,{requireDurable=false}={}){
   if(tab.placeholder)return;
   let retryRecovery=false;const edit=tab.editVersion||0;return withDurable(tab,captureDurable(tab),async snap=>{
   const stamp=JSON.stringify([edit,snap.path,snap.revision,snap.visual]);const kept=tab.draftStamp===stamp?snap:assertDraftDurable(await api.draft(snap));tab.draftStamp=stamp;
-  adoptDraft(tab,kept);if(!tabs.includes(tab))return;
+  adoptDraft(tab,kept,{release:kept!==snap});if(!tabs.includes(tab))return;
   if(edit===(tab.editVersion||0))tab.doc.title=kept.title;
   if(saveFile&&tab.dirty&&snap.path){try{
-   const saved=await api.autosave({...snap,id:kept.id,recoveryId:kept.recoveryId,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});retryRecovery=!!requireDurable&&(saved.recoverySaved===false||saved.saveWarnings?.some(warning=>/^Recovery:/.test(warning)));
+   const saved=await api.autosave({...snap,id:kept.id,recoveryId:kept.recoveryId,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)});try{retryRecovery=!!requireDurable&&(saved.recoverySaved===false||saved.saveWarnings?.some(warning=>/^Recovery:/.test(warning)));
    for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
-   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
+   if(edit===(tab.editVersion||0)){const rewritten=saved.text!==snap.text;Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;richChanged=false;source.value=saved.text;if(rewritten){rich.innerHTML=render(saved.text);decorate();}}}
    else if(!closingDrafts.has(tab))adoptDraft(tab,assertDraftDurable(await draftCurrent(tab)));
    if(edit===(tab.editVersion||0)&&saved.recoverySaved)tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);
    tab.saveError=saved.saveWarnings?.join('; ')||null;if(tab===activeTab)$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Autosaved';
+   }finally{window.NoteMindDocumentSync?.releaseDocument?.(saved);}
   }catch(error){const committed=adoptCommitted(tab,error);retryRecovery ||=!!requireDurable&&committed;tab.saveError=error.message;if(tab===activeTab)$('status').textContent=committed?error.message:'Draft recovered locally · '+error.message;}}
   else if(tab===activeTab&&tab.dirty)$('status').textContent='Draft saved';
   if(retryRecovery&&tabs.includes(tab)){const latestEdit=tab.editVersion||0;await withDurable(tab,captureDurable(tab),async latest=>{const saved=assertDraftDurable(await api.draft(latest));adoptDraft(tab,saved);tab.draftStamp=latestEdit===(tab.editVersion||0)?JSON.stringify([latestEdit,latest.path,latest.revision,latest.visual]):null;});}
@@ -69,7 +71,7 @@
   cancelImageIndex(tab);cancelTitle(tab);
   closedDrafts.delete(tab);
   if(tab.placeholder)return Promise.resolve(null);captureDurable(tab,captured);const kept=pinDurable({...captured,assets:window.NoteMindDocumentSync?.copyAssets(captured.assets)||{...captured.assets},meta:structuredClone(captured.meta||{})}),existing=closingDrafts.get(tab);window.NoteMindPDFReferences?.copyCapture(captured,kept);
-  if(existing){const previous=existing.captured;Object.assign(existing,{captured:kept,editVersion:tab.editVersion||0,onFailure,reopened:false,saved:null,persisted:false,generation:existing.generation+1});window.NoteMindDocumentSync?.releaseDocument?.(previous);return existing.promise;}
+  if(existing){const previous=existing.captured,previousSaved=existing.saved;Object.assign(existing,{captured:kept,editVersion:tab.editVersion||0,onFailure,reopened:false,saved:null,persisted:false,generation:existing.generation+1});window.NoteMindDocumentSync?.releaseDocument?.(previous);window.NoteMindDocumentSync?.releaseDocument?.(previousSaved);return existing.promise;}
   const job={tab,captured:kept,editVersion:tab.editVersion||0,onFailure,generation:0,persisted:false,promise:null};closingDrafts.set(tab,job);
   job.promise=serial(async()=>{try{
    if(startupRun&&!ready)await startupRun;
@@ -77,7 +79,7 @@
     const held=pinDurable(latest);try{const preparedEdit=tab.editVersion||0,prepared=await prepareDurable(tab,held);if(generation!==job.generation)continue;if(!reopened||preparedEdit===(tab.editVersion||0)){tab.doc={...prepared};if(reopened&&tab===activeTab)doc=tab.doc;}const saved=assertDraftDurable(await api.draft(prepared));adoptDraft(tab,saved);if(generation!==job.generation)continue;job.persisted=true;
     await session();if(generation===job.generation){if(!tabs.includes(tab))closedDrafts.set(tab,{document:tab.doc,stamp:closeStamp(tab)});return saved;}job.persisted=false;}finally{window.NoteMindDocumentSync?.releaseDocument?.(held);}
    }
-  }catch(error){tab.saveError=error.message;job.onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);window.NoteMindDocumentSync?.releaseDocument?.(job.captured);}});
+  }catch(error){tab.saveError=error.message;job.onFailure?.(error);throw error;}finally{closingDrafts.delete(tab);window.NoteMindDocumentSync?.releaseDocument?.(job.captured);window.NoteMindDocumentSync?.releaseDocument?.(job.saved);}});
   return job.promise;
  }
  function schedule(delay=700){if(!ready)return;clearTimeout(timer);timer=setTimeout(()=>{timer=null;void flush().catch(error=>$('status').textContent='Could not save draft: '+error.message);},delay);}
@@ -107,10 +109,11 @@
  function changed(tab,{history=true,titleOverride,scheduleSave=true}={}){closedDrafts.delete(tab);tab.hadImageAssets ||= Object.keys(tab.doc.assets||{}).some(n=>NoteMindDocument.mime(n)||/\.pdf$/i.test(n));tab.placeholder=false;if(history)window.NoteMindHistory?.record(tab);tab.saveError=null;tab.editVersion=(tab.editVersion||0)+1;if(history)window.NoteMindHistory?.confirmRevision?.(tab);updateAutomaticTitle(tab,titleOverride);if(scheduleSave)schedule();scheduleImageIndex(tab);}
  async function saveActive(saveAs=false){if(startupRun&&!ready)await startupRun;ensureActiveTab();const tab=activeTab;clearTimeout(timer);return serial(async()=>{
   await persist(tab,false);const edit=tab.editVersion||0;return withDurable(tab,captureDurable(tab),async snap=>{
-  let saved;try{saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs)}catch(error){adoptCommitted(tab,error);throw error}if(!saved)return false;
+  let saved;try{saved=await (window.NoteMindDocumentSync?.save||window.notemind.save)({...snap,otherOpenPaths:tabs.filter(t=>t!==tab&&t.doc.path).map(t=>t.doc.path)},saveAs)}catch(error){adoptCommitted(tab,error);throw error}if(!saved)return false;try{
   for(const key of ['id','path','revision','created','recoveryId'])if(Object.hasOwn(saved,key))tab.doc[key]=saved[key];
-  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)closing.saved=saved;if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
+  if(edit===(tab.editVersion||0)){Object.assign(tab.doc,saved);tab.dirty=false;const closing=closingDrafts.get(tab);if(closing&&closing.editVersion===edit)setClosingSaved(closing,saved);if(tab===activeTab){dirty=false;doc=tab.doc;richChanged=false;source.value=doc.text;rich.innerHTML=render(doc.text);decorate();}}
   tab.placeholder=false;if(edit!==(tab.editVersion||0)||!saved.recoverySaved)adoptDraft(tab,await draftCurrent(tab));else tab.draftStamp=JSON.stringify([edit,saved.path,saved.revision,snap.visual]);await session();updateTitle();window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:saved.path}));tab.saveError=saved.saveWarnings?.join('; ')||null;$('status').textContent=tab.saveError?'Saved · '+tab.saveError:'Saved';return true;
+  }finally{window.NoteMindDocumentSync?.releaseDocument?.(saved);}
   });
  });}
  function decorate(){window.NoteMindWriting?.decorate();window.NoteMindFind?.refresh();}
@@ -120,12 +123,12 @@
  async function restore(old){
   const initial=[...tabs],errors=[];
   try{const recovered=await api.recover();if(recovered?.tabs?.length){for(const entry of recovered.tabs){
-    try{if(!entry||typeof entry!=='object')throw Error('Invalid recovered Notepad.');if(entry.recoveryError)throw Error(entry.recoveryError);let next=entry;try{if(entry.path&&!entry.dirty)next=await window.notemind.openPath(entry.path);}catch{}
+    let next=entry;try{if(!entry||typeof entry!=='object')throw Error('Invalid recovered Notepad.');if(entry.recoveryError)throw Error(entry.recoveryError);try{if(entry.path&&!entry.dirty)next=await window.notemind.openPath(entry.path);}catch{}
      if(!next||typeof next!=='object'||!next.preview&&!next.workspace&&(typeof next.text!=='string'||!next.assets||typeof next.assets!=='object'))throw Error('Invalid recovered Notepad.');
      const previous=[...tabs],selected=activeTab;try{await addTab(next);}catch(error){tabs=previous;activeTab=null;if(selected)activateTab(selected);throw error;}
      if(next.preview||next.workspace)continue;
      if(activeTab){activeTab.visual=entry.visual!==false;activeTab.scroll=entry.scroll;activeTab.dirty=!!entry.dirty;activeTab.editVersion=0;}
-    }catch(error){errors.push(error.message);}
+    }catch(error){errors.push(error.message);}finally{if(next!==entry)window.NoteMindDocumentSync?.releaseDocument?.(next);window.NoteMindDocumentSync?.releaseDocument?.(entry);}
    }
     rememberCurrent();if(tabs.length>1)tabs=tabs.filter(tab=>!initial.includes(tab)||tab.dirty||tab.doc.path||tab.doc.text.trim()||Object.keys(tab.doc.assets||{}).length);
     ensureActiveTab();const chosen=tabs.find(t=>t.doc.id===recovered.active)||activeTab;activeTab=null;activateTab(chosen);$('status').textContent=errors.length?'Some Notepads could not be restored: '+errors.join('; '):'Restored '+tabs.length+' Notepad'+(tabs.length===1?'':'s');
@@ -151,8 +154,8 @@
    $('status').textContent=target.path?'Moved to Trash':'Draft moved to Recently Deleted';return true;
   });}finally{pendingTrash.delete(key);schedule();}
  }
- async function renameDraft(record){await flush();const tab=tabs.find(t=>t.doc.id===record.id),draft=tab?snapshot(tab):await api.openDraft(record.id),name=await window.notemindPrompt('Notepad name',draft.title||'Untitled');if(!name?.trim())return;draft.title=name.trim();draft.manualTitle=true;if(tab){Object.assign(tab.doc,draft);changed(tab);updateTitle();await flush();}else await api.draft(draft);await window.NoteMindLibrary.refresh();}
- async function duplicateDraft(record){await flush();const tab=tabs.find(t=>t.doc.id===record.id),draft=tab?snapshot(tab):await api.openDraft(record.id);addTab({...draft,id:crypto.randomUUID(),path:null,revision:undefined,created:undefined,title:(draft.title||'Untitled')+' copy',manualTitle:true,dirty:true});await flush();}
+ async function renameDraft(record){await flush();const tab=tabs.find(t=>t.doc.id===record.id),draft=tab?snapshot(tab):await api.openDraft(record.id);try{const name=await window.notemindPrompt('Notepad name',draft.title||'Untitled');if(!name?.trim())return;draft.title=name.trim();draft.manualTitle=true;if(tab){Object.assign(tab.doc,draft);changed(tab);updateTitle();await flush();}else{const saved=await api.draft(draft);window.NoteMindDocumentSync?.releaseDocument?.(saved);}await window.NoteMindLibrary.refresh();}finally{window.NoteMindDocumentSync?.releaseDocument?.(draft);}}
+ async function duplicateDraft(record){await flush();const tab=tabs.find(t=>t.doc.id===record.id),draft=tab?snapshot(tab):await api.openDraft(record.id);try{addTab({...draft,id:crypto.randomUUID(),path:null,revision:undefined,created:undefined,title:(draft.title||'Untitled')+' copy',manualTitle:true,dirty:true});await flush();}finally{window.NoteMindDocumentSync?.releaseDocument?.(draft);}}
  async function saveDraft(record){await openRecord(record);return saveActive(true);}
  async function indexCurrent(){ensureActiveTab();const tab=activeTab;cancelImageIndex(tab);const controller=new AbortController(),state={controller,inputs:null,id:tab.doc.id,running:true};manualIndexes.set(tab,state);const cancelled=()=>({count:0,errors:[],cancelled:true});try{await flush();if(!tabs.includes(tab)||controller.signal.aborted)return cancelled();state.id=tab.doc.id;state.inputs=indexInputs(tab);if(tab===activeTab)$('status').textContent='Reading images for search…';const result=await api.indexImages(tab.doc,{signal:controller.signal});if(controller.signal.aborted||manualIndexes.get(tab)!==state)return cancelled();indexStates.set(tab,{...state,running:false,success:!result.errors.length});if(tab===activeTab)$('status').textContent=result.errors.length?'Indexed '+result.count+' images · '+result.errors.join('; '):'Image and handwriting search is up to date';return result;}catch(error){if(controller.signal.aborted&&error.name==='AbortError')return cancelled();throw error;}finally{if(manualIndexes.get(tab)===state)manualIndexes.delete(tab);}}
  window.addEventListener('camera-flush',e=>e.detail.promises.push(flush({requireDurable:e.detail.requireDurable===true})));

@@ -39,6 +39,15 @@ test('queued replacement close releases its earlier asset capture and finally re
  const first=h.c.closeTab(h.a);await until(()=>preparing);const originalCapture=[...leases].find(value=>value!==preparing);h.c.addTab({...h.a.doc});h.edit(h.a,'Latest reclose');const second=h.c.closeTab(h.a);assert.equal(leases.has(originalCapture),false);assert.ok(leases.has(preparing));gate.resolve();assert.equal(await first,true);assert.equal(await second,true);assert.equal(leases.size,0);assert.equal(h.stored.get('A').text,'Latest reclose');
 });
 
+test('draft, autosave, Save As and closing responses release their independent document scopes',async()=>{
+ const h=await fixture(),leases=new Set();
+ h.c.window.NoteMindDocumentSync={seed:value=>value,copyAssets:assets=>({...assets}),capture:value=>{const held={...value,assets:{...value.assets}};leases.add(held);return held;},releaseDocument:value=>leases.delete(value)};
+ for(const operation of ['draft','autosave']){const original=h.api[operation];h.api[operation]=async(...args)=>{const value=await original(...args);leases.add(value);return value;};}
+ const save=h.c.window.notemind.save;h.c.window.notemind.save=async(...args)=>{const value=await save(...args);leases.add(value);return value;};
+ await h.notes.flush();assert.equal(leases.size,0);h.edit(h.a,'Manual changes');await h.notes.saveActive(true);assert.equal(leases.size,0);h.edit(h.a,'Last close');assert.equal(await h.c.closeTab(h.a),true);assert.equal(leases.size,0);
+ h.edit(h.b,'Warning response');h.b.draftStamp=null;h.hooks.draft=value=>({...value,durabilityWarning:'recovery failure'});await assert.rejects(h.notes.flush(),/recovery failure/);assert.equal(leases.size,0);
+});
+
 test('failed closing draft restores latest memory without taking another Notepad focus',async()=>{
  const h=await fixture();h.hooks.draft=async doc=>{if(doc.id==='A')throw Error('Disk full');};
  const closing=h.c.closeTab(h.a);assert.equal(h.c.tabs.includes(h.a),false);assert.equal(h.c.activeTab,h.b);

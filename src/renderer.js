@@ -6,6 +6,7 @@ const rich = $('rich'), source = $('source');
 NoteMindImagePreviews.mount(rich, () => doc.assets);
 
 let tabs = [], activeTab = null, nextTabId = 0, draggedTab=null;
+window.NoteMindDocumentSync?.setCurrentAssetProvider?.(()=>tabs.map(tab=>tab.doc.assets));
 
 const closedTabs=[];
 function notePathKey(file){const windows=window.notemind?.platform==='win32'||/Win/i.test(window.navigator?.platform||'');const value=windows?String(file).replace(/\\/g,'/'):String(file);return windows?value.replace(/\/$/,'').toLowerCase():value.replace(/\/$/,'');}
