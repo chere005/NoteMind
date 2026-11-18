@@ -79,7 +79,9 @@ test('decode priming and unheld preparation retain no per-stroke accounting reco
  const budget=new DrawingHistoryBudget(),source=Array.from({length:5000},()=>stroke(1));for(const item of source)budget.prime(item);await budget.stateAsync(source,async()=>{});assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);
  const history=new DrawingHistory(source,{budget});assert.equal(budget.geometry.size,source.length*3);history.dispose();assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);
 });
-test('cancelled ownership acquisition releases ledger pages and cached scenes can retry',async()=>{
+test('cancelled ownership acquisition releases ledger pages and cached scenes can retry',async t=>{
+ // Exercise a yield during acquisition independently of JIT speed or machine load.
+ let clock=0;t.mock.method(globalThis.performance,'now',()=>clock+=4);
  const budget=new DrawingHistoryBudget(),history=new DrawingHistory([],{budget}),source=Array.from({length:12000},()=>stroke(1)),controller=new AbortController();let commits=0,cancelled=false;
  assert.equal(await history.change(source,()=>{commits++;history.setCurrent(source);},{signal:controller.signal,yieldControl:async()=>{if(budget.geometry.size&&!cancelled){cancelled=true;controller.abort();}await new Promise(resolve=>setImmediate(resolve));}}),false);assert.equal(cancelled,true);assert.equal(commits,0);assert.equal(budget.geometry.size,0);assert.equal(budget.geometry.storageBytes,0);assert.equal(budget.pendingPreparations,0);
  history.setCurrent(source);assert.equal(history.current,source);assert.equal(budget.geometry.size,source.length*3);history.dispose();assert.equal(budget.stats().resourceBytes,0);assert.equal(budget.geometry.storageBytes,0);
