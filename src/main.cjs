@@ -143,7 +143,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   win.webContents.on('did-finish-load', () => { if (pendingDocument) { win.show();win.focus();welcome.dispose();win.webContents.send('file:open-request', path.resolve(pendingDocument)); pendingDocument = null; } else if(guidePending){guidePending=false;win.show();win.focus();win.webContents.send('menu:command','welcomeNote');} else if(showWelcomeAtStart)welcome.show(); });
 
-  win.on('closed',()=>{padController?.dispose();padController=null;documentIO.dispose();void pdfReferences.dispose();welcome.dispose();app.quit();});
+  win.on('closed',()=>{padController?.dispose();padController=null;void Promise.resolve(documentIO.dispose()).catch(error=>{if(error?.name!=='AbortError')console.error('Document cleanup failed during close:',error);});void Promise.resolve(pdfReferences.dispose()).catch(error=>{if(error?.name!=='AbortError')console.error('PDF cleanup failed during close:',error);});welcome.dispose();app.quit();});
   win.loadFile(path.join(__dirname, 'index.html'));
 
   pen = require('./pen-bundle.cjs').startPenSubsystem({ app, screen, ipc: ipcMain, powerMonitor, window: () => win, e2e: false, env: process.env, platform: process.platform, penHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen') : null, displayHelper: process.platform === 'darwin' ? path.join(__dirname, 'helpers', 'wm-pen-display') : null, onDisplayStatus:status=>{const request=inputMonitoring.onStatus(status);if(request)void request.then(result=>{if(result.access==='granted')pen?.displayRetry?.();});}, displayTarget:()=>padController?.captureEligible()&&win&&!win.isDestroyed()?{id:win.id,rotation:padController.state().rotation}:null, log: line => console.log(line) });
