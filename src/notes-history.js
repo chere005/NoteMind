@@ -26,8 +26,9 @@
  function trim(){for(const [state,entry]of entries){if(retainedBytes<=MAX_BYTES)break;remove(entry.record,entry.list,state);}}
  function prune(){const open=new Set(typeof tabs==='undefined'?[]:tabs);for(const record of records){const tab=record.owner.deref();if(tab&&open.has(tab))continue;clear(record,'past');clear(record,'future');if(record.history.last)hold(record.history.last,'current',-1);if(tab){delete tab.textHistory;byTab.delete(tab);}records.delete(record);}trim();}
  function initialize(tab){if(!tab||byTab.has(tab))return;prune();const history={past:[],future:[],last:null},record={owner:new WeakRef(tab),history,revision:tab.editVersion||0};tab.textHistory=history;byTab.set(tab,record);records.add(record);last(record,capture(tab));}
+ const isTextInput=tab=>!batching&&inputHint?.tab===tab&&inputHint.event.eventPhase===2&&(inputHint.event.currentTarget===source||inputHint.event.currentTarget===rich);
  function record(tab,force=false){
-  initialize(tab);if(!tab||batching)return;const textOnly=!force&&inputHint?.tab===tab&&inputHint.event.eventPhase===2&&(inputHint.event.currentTarget===source||inputHint.event.currentTarget===rich);if(inputHint?.tab===tab)inputHint=null;
+  initialize(tab);if(!tab||batching)return;const textOnly=!force&&isTextInput(tab);if(inputHint?.tab===tab)inputHint=null;
   const item=byTab.get(tab),history=item.history,next=capture(tab,textOnly),previous=history.last,a=info.get(previous),b=info.get(next),differs=previous.text!==next.text||a.assets!==b.assets||a.meta!==b.meta;
   if(!differs){a.assetSource=b.assetSource;a.metaSource=b.metaSource;item.revision=tab.editVersion||0;return;}
   if(!restoring){push(item,'past',previous);clear(item,'future');}last(item,next);item.revision=tab.editVersion||0;trim();
@@ -63,6 +64,6 @@
  function transaction(run){const target=activeTab;initialize(target);batching++;try{return run();}finally{batching--;if(!batching)record(target,true);}}
  window.addEventListener('notemind-document',prune);const strip=document.getElementById?.('documentTabs');if(strip&&typeof MutationObserver==='function')new MutationObserver(prune).observe(strip,{childList:true});
  function ownedChanged(tab){initialize(tab);const entry=byTab.get(tab);if(entry){last(entry,capture(tab));entry.revision=tab.editVersion||0;}trim();}
- window.NoteMindHistory={retainedAssetSets:()=>retainedAssetSnapshot,initialize,ownedChanged,record,confirmRevision,captureImport,recordImport,step,transaction,prune,stats:()=>({retainedBytes,protectedBytes:totalBytes-retainedBytes,totalBytes,states:entries.size,tabs:records.size,assetScans,metadataScans,metadataClones,maxBytes:MAX_BYTES})};
+ window.NoteMindHistory={retainedAssetSets:()=>retainedAssetSnapshot,isTextInput,initialize,ownedChanged,record,confirmRevision,captureImport,recordImport,step,transaction,prune,stats:()=>({retainedBytes,protectedBytes:totalBytes-retainedBytes,totalBytes,states:entries.size,tabs:records.size,assetScans,metadataScans,metadataClones,maxBytes:MAX_BYTES})};
  window.NoteMindDocumentSync?.setHistoryAssetProvider?.(()=>retainedAssetSnapshot);
 })();

@@ -20,7 +20,7 @@
     try { return makeBlob(bytes, entry.type); } finally { if (!options.decode && !options.makeBlob) discard(bytes); }
   }
   const maxBytes = options.maxBytes ?? 32 * 1024 * 1024, maxDecodedBytes = options.maxDecodedBytes ?? 32 * 1024 * 1024, maxEntries = options.maxEntries ?? 2048;
-  let clock = 0, serial = 0, blobBytes = 0, decodedBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null, viewController = null;
+  let clock = 0, serial = 0, blobBytes = 0, decodedBytes = 0, host = null, assetsFor = null, observer = null, scheduled = false, retained = null, retentionInputs = null, viewController = null;
   const entries = () => Array.from(cache.values()).flatMap(types => Array.from(types.values()));
   function cancelLoading(entry){const loading=entry.loading;if(loading){entry.loading=null;loading.controller.abort();}}
   function revoke(entry) { cancelLoading(entry);if(!entry.url)return;const owner=entry.urlOwner;entry.urlOwner=null;if(owner)void owner.release().catch(()=>{});else urls.revokeObjectURL(entry.url);blobBytes-=entry.bytes;decodedBytes-=entry.decodedBytes;entry.url=null; }
@@ -153,8 +153,10 @@
     function retire(){retired=true;for(const record of [...records])if(record.settled)release(record);return Promise.allSettled([...records].map(record=>record.done));}
     return{hold,retire,stats:()=>({leases:records.size,pending:[...records].filter(record=>!record.settled).length,releaseErrors})};
   }
-  function retainMany(assetSets) {
-    const used=new Set();for(const assets of assetSets||[])for(const[name,data]of Object.entries(assets||{}))if(options.isRef?.(data))used.add(options.identity?.(assets,name)||data);else if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
+  function retainMany(assetSets,{unchanged=false}={}) {
+    const next=Array.from(assetSets||[]);if(unchanged&&retentionInputs&&next.length===retentionInputs.length&&next.every((assets,index)=>assets===retentionInputs[index]))return;
+    const used=new Set();for(const assets of next)for(const[name,data]of Object.entries(assets||{}))if(options.isRef?.(data))used.add(options.identity?.(assets,name)||data);else if(typeof data==='string')used.add(data.length>=1024*1024&&options.identity?options.identity(assets,name)||data:data);
+    retentionInputs=next;
     retained = used;
     trim();
   }
