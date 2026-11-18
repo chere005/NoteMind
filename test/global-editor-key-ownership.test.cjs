@@ -1,0 +1,15 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+function key(key,options={}){return{key,ctrlKey:true,metaKey:false,shiftKey:false,isComposing:false,keyCode:0,defaultPrevented:false,preventDefault(){this.prevented=true;this.defaultPrevented=true;},...options};}
+function findFixture(){const source=fs.readFileSync(require.resolve('../src/notes-find.js'),'utf8'),handler=source.match(/document\.addEventListener\('keydown',e=>\{[\s\S]*?\n \}\);/);assert.ok(handler);let installed;const opened=[];vm.runInNewContext(handler[0],{document:{addEventListener:(_name,fn)=>installed=fn},bar:{hidden:true},open:value=>opened.push(value)});return{opened,key:event=>installed(event)};}
+function tabsFixture(){const source=fs.readFileSync(require.resolve('../src/renderer.js'),'utf8'),handler=source.split('\n').find(line=>line.startsWith("document.addEventListener('keydown',e=>{")&&line.includes('closedTabs'));assert.ok(handler);let installed;const first={},second={},activated=[],events=[],c={tabs:[first,second],activeTab:first,closedTabs:['/fixture/Closed.nm'],activateTab:tab=>activated.push(tab),document:{addEventListener:(_name,fn)=>installed=fn},window:{dispatchEvent:event=>events.push(event)},CustomEvent:class{constructor(type,options){this.type=type;Object.assign(this,options);}}};vm.runInNewContext(handler,c);return{activated,events,first,second,key:event=>installed(event),closed:c.closedTabs};}
+test('global Find shortcut leaves composing, legacy229 and already-consumed keys with their owner',()=>{
+ for(const options of[{isComposing:true},{keyCode:229},{defaultPrevented:true}])for(const modifier of[{ctrlKey:true},{ctrlKey:false,metaKey:true}]){const f=findFixture(),event=key('f',{...options,...modifier});f.key(event);assert.equal(f.opened.length,0);assert.equal(event.prevented,undefined);}
+});
+test('global tab navigation and closed-tab restore leave composing and consumed keys with their owner',()=>{
+ for(const options of[{isComposing:true},{keyCode:229},{defaultPrevented:true}])for(const [name,extra]of[['Tab',{}],['t',{shiftKey:true}]]){const f=tabsFixture(),event=key(name,{...extra,...options});f.key(event);assert.deepEqual(f.activated,[]);assert.deepEqual(f.events,[]);assert.equal(f.closed.length,1);assert.equal(event.prevented,undefined);}
+});
+test('ordinary Find, forward/back tab navigation and closed-tab restore keep current routing',()=>{
+ const find=findFixture(),event=key('f');find.key(event);assert.equal(event.prevented,true);assert.equal(find.opened.length,1);
+ for(const shiftKey of[false,true]){const tabs=tabsFixture(),event=key('Tab',{shiftKey});tabs.key(event);assert.equal(event.prevented,true);assert.equal(tabs.activated[0],tabs.second);}
+ const tabs=tabsFixture(),restore=key('T',{shiftKey:true,ctrlKey:false,metaKey:true});tabs.key(restore);assert.equal(restore.prevented,true);assert.equal(tabs.events[0].type,'notemind-open-path');assert.equal(tabs.events[0].detail,'/fixture/Closed.nm');assert.equal(tabs.closed.length,0);
+});

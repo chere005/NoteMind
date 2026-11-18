@@ -194,7 +194,7 @@ window.addEventListener('DOMContentLoaded',()=>window.NoteMindNotes.startup(star
 
 window.addEventListener('notemind-command',e=>{const id=e.detail;if(id==='closeTab')closeTab(activeTab);if(id==='importMarkdown')action(async()=>{const next=await window.notemind.open();if(next){next.path=null;await addTab(next);markDirty();}});if(id==='pythonSetup')action(async()=>{const file=await window.notemind.pythonSelect();if(file)$('status').textContent='Python: '+file;});});
 
-document.addEventListener('keydown',e=>{if(!(e.ctrlKey||e.metaKey))return;if(e.key==='Tab'){e.preventDefault();activateTab(tabs[(tabs.indexOf(activeTab)+(e.shiftKey?tabs.length-1:1))%tabs.length]);}if(e.shiftKey&&e.key.toLowerCase()==='t'&&closedTabs.length){e.preventDefault();window.dispatchEvent(new CustomEvent('notemind-open-path',{detail:closedTabs.pop()}));}});
+document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.isComposing||e.keyCode===229||!(e.ctrlKey||e.metaKey))return;if(e.key==='Tab'){e.preventDefault();activateTab(tabs[(tabs.indexOf(activeTab)+(e.shiftKey?tabs.length-1:1))%tabs.length]);}if(e.shiftKey&&e.key.toLowerCase()==='t'&&closedTabs.length){e.preventDefault();window.dispatchEvent(new CustomEvent('notemind-open-path',{detail:closedTabs.pop()}));}});
 
 
 

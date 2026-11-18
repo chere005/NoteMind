@@ -119,6 +119,7 @@
   if(e.detail==='findSelection')useSelection();
  });
  document.addEventListener('keydown',e=>{
+  if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;
   const mod=e.ctrlKey||e.metaKey,key=e.key.toLowerCase();
   if(mod&&key==='f'&&!e.shiftKey){e.preventDefault();open({replace:bar.hidden?false:undefined});}
  });
