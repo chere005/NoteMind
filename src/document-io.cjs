@@ -77,6 +77,8 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc,loadDocument=
  ipcMain.handle('document-open-default',async(_,file)=>{const error=await shell.openPath(file);if(error)throw Error(error)});
  ipcMain.handle('ocr-available',()=>available());
  ipcMain.handle('ocr-begin',(e,request)=>publicReader().begin(e.sender,request));
+ ipcMain.handle('ocr-ready',(e,request)=>publicReader().ready(e.sender,request));
+ ipcMain.handle('ocr-transport-settled',(e,request)=>publicOCR?.transportSettled(e.sender,request));
  ipcMain.handle('ocr-read',(e,request)=>publicReader().read(e.sender,request));
  ipcMain.handle('ocr-cancel',(event,id)=>publicOCR?.cancel(event.sender,id));
  ipcMain.handle('document-import',async(e,options={})=>{const choice=await dialog.showOpenDialog(getWin(),{title:'Import document',properties:['openFile'],filters:[{name:'Word and PDF',extensions:['docx','pdf']}]});if(choice.canceled)return null;const file=choice.filePaths[0],pdf=await require('./document-import-route.cjs').pdfImportRequest(file,options);if(pdf)return pdf;const id=typeof options.id==='string'?options.id.slice(0,128):crypto.randomUUID(),key=String(e.sender?.id||0)+':'+id,controller=new AbortController(),destroyed=()=>controller.abort();if(conversions.has(key))throw Error('This import is already running.');conversions.set(key,controller);e.sender?.once?.('destroyed',destroyed);try{return await loadDocument(e,admitDocument=>importFile(file,{...options,signal:controller.signal,admitDocument,onProgress:phase=>{if(!e.sender.isDestroyed?.())e.sender.send('document-progress',{phase});}}),{signal:controller.signal});}finally{conversions.delete(key);e.sender?.removeListener?.('destroyed',destroyed);}});
