@@ -30,3 +30,13 @@ test('unconfirmed binary byte cleanup quarantines the owner until actual capture
  let closed=false;const closing=client.dispose().then(()=>closed=true);await task();assert.equal(closed,false);host.close();await task();assert.equal(done,false,'destroy event alone is insufficient');
  running=false;await assert.rejects(work,/cleanup is unconfirmed/);await closing;assert.equal((await client.stats()).fixedContextOwner,null);
 });
+test('a late binary Main clone is retired after owner loss before the actual-exit barrier releases',async()=>{
+ let running=true,open,entered;const gate=new Promise(resolve=>open=resolve),seen=new Promise(resolve=>entered=resolve),client=createHostImageConverter({isAlive:()=>running,wait:task}),host=owner(),execute=host.executeJavaScript;let late;
+ host.executeJavaScript=async code=>{const value=await execute(code);if(code.includes('.bytes["readBinary"]')){late=structuredClone(value);entered();await gate;return late;}return value;};
+ let done=false;const work=client.convert(host,Uint8Array.of(1),'image/jpeg',options()).finally(()=>done=true);work.catch(()=>{});await seen;host.close();running=false;await task();await task();assert.equal(done,false);assert.equal(late.data.byteLength,3);assert.equal((await client.stats()).pendingBinaryRPCs,1);
+ open();await assert.rejects(work,{name:'AbortError'});assert.equal(late.data.byteLength,0);assert.equal((await client.stats()).fixedContextOwner,null);
+});
+test('permanently lost read replies keep their charged converter until the exact captured PID exits',async()=>{
+ let running=true;const client=createHostImageConverter({isAlive:()=>running,wait:task}),host=owner(),execute=host.executeJavaScript;host.executeJavaScript=async code=>{const value=await execute(code);if(code.includes('.bytes["readBinary"]'))throw Error('read response lost');return value;};
+ let done=false;const work=client.convert(host,Uint8Array.of(1),'image/jpeg',options()).finally(()=>done=true);work.catch(()=>{});for(let at=0;at<100&&!(await client.stats()).fixedContextOwner?.invalid;at++)await task();assert.equal(done,false);assert.equal((await client.stats()).active,true);await assert.rejects(client.convert(owner(),Uint8Array.of(2),'image/jpeg',options()),/already active/);host.close();await task();assert.equal(done,false);running=false;await assert.rejects(work,error=>error.resourcesReleased===false);assert.equal((await client.stats()).fixedContextOwner,null);
+});

@@ -1,5 +1,5 @@
 const path=require('node:path'),{pathToFileURL}=require('node:url'),{randomUUID}=require('node:crypto');
-const {executeBytes}=require('./document-worker-bytes.cjs'),makeBytes=require('./document-byte-tools.js'),{installImageIndexRasterHost}=require('./image-index-raster-host.js');
+const {executeBytes,retireBinaryReceiver,isBinaryReceiver}=require('./document-worker-bytes.cjs'),makeBytes=require('./document-byte-tools.js'),{installImageIndexRasterHost}=require('./image-index-raster-host.js');
 const abort=()=>Object.assign(Error('Image conversion cancelled.'),{name:'AbortError'});
 const frame=host=>{try{return host.mainFrame?host.mainFrame.processId+':'+host.mainFrame.routingId:null}catch{return null}};
 const alive=pid=>{try{process.kill(pid,0);return true}catch(error){if(error.code==='ESRCH')return false;throw error}},pause=()=>new Promise(resolve=>setTimeout(resolve,100));
@@ -8,15 +8,26 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
  async function create(host){
   if(context)return context.host===host&&!context.invalid?context:null;
   const pid=host.getOSProcessId();if(!Number.isSafeInteger(pid)||pid<=0)throw Error('Image conversion has no renderer owner.');
-  const key='__notemindIndexRaster_'+randomUUID().replaceAll('-',''),state={host,key,pid,frame:frame(host),invalid:false,installed:false,listeners:[],inflight:new Set(),gone:null};
+  const key='__notemindIndexRaster_'+randomUUID().replaceAll('-',''),state={host,key,pid,frame:frame(host),invalid:false,installed:false,listeners:[],inflight:new Set(),binaryReads:new Set(),lateBinaryReleases:0,gone:null};
   const gone=()=>{if(state.invalid)return;state.invalid=true;for(const[event,run]of state.listeners)host.removeListener?.(event,run);state.listeners=[];for(const ticket of state.inflight)ticket.reject(abort());state.inflight.clear();
    // Context loss never proves native framework exit. Keep the single fixed
    // tracker; an active variable owner also waits here before releasing quota.
-   state.gone=(async()=>{for(;;){let running=true;try{running=isAlive(state.pid)}catch(error){state.stopError ||=error;}if(!running)break;try{await wait()}catch(error){state.stopError ||=error;await pause();}}if(context===state)context=null;})();
+   state.gone=(async()=>{for(;;){let running=true;try{running=isAlive(state.pid)}catch(error){state.stopError ||=error;}if(!running)break;try{await wait()}catch(error){state.stopError ||=error;await pause();}}while(state.binaryReads.size)await Promise.allSettled([...state.binaryReads]);if(context===state)context=null;})();
   };
   for(const event of['destroyed','render-process-gone','did-navigate']){host.once(event,gone);state.listeners.push([event,gone]);}
   state.invalidate=gone;
-  state.execute=code=>{if(state.invalid||host.isDestroyed?.()||frame(host)!==state.frame){gone();return Promise.reject(abort());}return new Promise((resolve,reject)=>{const ticket={reject};state.inflight.add(ticket);Promise.resolve().then(()=>{if(state.invalid||host.isDestroyed?.()||frame(host)!==state.frame){gone();throw abort();}return host.executeJavaScript(code)}).then(value=>{if(state.inflight.delete(ticket))resolve(value)},error=>{if(state.inflight.delete(ticket))reject(error)});});};
+  state.execute=code=>{
+   if(state.invalid||host.isDestroyed?.()||frame(host)!==state.frame){gone();return Promise.reject(abort());}
+   const binary=code.includes('.bytes["readBinary"]');
+   return new Promise((resolve,reject)=>{
+    const ticket={reject};state.inflight.add(ticket);
+    const settled=Promise.resolve().then(()=>{if(state.invalid||host.isDestroyed?.()||frame(host)!==state.frame){gone();throw abort();}return host.executeJavaScript(code)}).then(async value=>{
+     if(state.inflight.delete(ticket))resolve(value);
+     else if(binary&&isBinaryReceiver(value?.data)){await retireBinaryReceiver(value.data);state.lateBinaryReleases++;}
+    },error=>{if(state.inflight.delete(ticket))reject(error)});
+    if(binary){state.binaryReads.add(settled);settled.finally(()=>state.binaryReads.delete(settled)).catch(error=>{state.stopError ||=error;});}
+   });
+  };
   context=state;
   try{await state.execute('('+installImageIndexRasterHost.toString()+')('+JSON.stringify(key)+','+JSON.stringify(pathToFileURL(path.join(__dirname,'image-index-raster-worker.js')).href)+','+makeBytes.toString()+')');if(state.invalid||host.isDestroyed?.())throw abort();state.installed=true;return state;}
   catch(error){if(!state.invalid)state.failed=error;throw error;}
@@ -37,7 +48,7 @@ function createHostImageConverter({isAlive=alive,wait=pause}={}){let context=nul
   }catch(error){unconfirmed=error?.resourcesReleased===false;const bytes=value?.data;if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byteLength===bytes.buffer.byteLength)try{bytes.buffer.transfer?.(0)}catch{}if(signal?.aborted||state.invalid)throw abort();if(failure)throw failure;if(error?.code==='IMAGE_WORKER_UNSUPPORTED')return null;throw error;}finally{clearTimeout(timer);outerSignal?.removeEventListener('abort',forward);signal.removeEventListener('abort',cancel);try{if(unconfirmed&&!state.invalid)state.invalidate();if(state.invalid)await state.gone;else try{await execute(scope+'.drain('+JSON.stringify(nonce)+')')}catch(error){if(state.invalid)await state.gone;else throw error;}}finally{if(active===job)active=null;}}})();job.done=work;return work;
  }
  function convertMode(pixels,host,input,type,options){if(closed)return Promise.reject(Error('Image conversion is closing.'));if(admission)return Promise.reject(Error('An image conversion is already active.'));const request={done:null};admission=request;request.done=convertOwned(host,input,type,options,pixels).finally(()=>{if(admission===request)admission=null;});return request.done;}
- async function stats(){const state=context;return{fixedContextOwner:state?{webContentsId:state.host.id,pid:state.pid,frame:state.frame,invalid:state.invalid,persistent:true}:null,active:!!admission,inflightRPCs:state?.inflight.size||0,...state?.installed&&!state.invalid?await state.execute('window['+JSON.stringify(state.key)+'].stats()'):{}};}
+ async function stats(){const state=context;return{fixedContextOwner:state?{webContentsId:state.host.id,pid:state.pid,frame:state.frame,invalid:state.invalid,persistent:true}:null,active:!!admission,inflightRPCs:state?.inflight.size||0,pendingBinaryRPCs:state?.binaryReads.size||0,lateBinaryReleases:state?.lateBinaryReleases||0,...state?.installed&&!state.invalid?await state.execute('window['+JSON.stringify(state.key)+'].stats()'):{}};}
  async function dispose(){closed=true;const request=admission;active?.controller.abort();await request?.done?.catch(()=>{});return stats();}
  return{convert:(...args)=>convertMode(false,...args),convertPixels:(...args)=>convertMode(true,...args),stats,dispose};
 }
