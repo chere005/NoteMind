@@ -1,5 +1,15 @@
 # Continuation
 
+## Deadline and active source after 8:30 PM
+
+User’s latest instruction sets a tomorrow Claude handoff. Root uses 8 AM Central Nov18 as the conservative target; DELIVERY-PLAN has the full overnight milestones. Next chat status is 9 PM Central, then hourly. Installed0.35.0 is untouched; no package/install/push/release has occurred.
+
+Root completed `040921b`/`95fc470` immutable Word admission rollback/original-worker receipts and `8ad1ef9` manual-index close/input cancellation/current-progress guards. Data independently qualified index ownership through c517; Root integrated that stack and private file-range retirement. Real full100+OCR run at f919 fails at scroll7/1,207,042,048B before OCR in a new209MB converter; exact image-only entry alone at f919+a7 fails at scroll5/1,096,876,032B with84MB helper base. Author/source passes do not close this native gate. Architecture owns a same-kernel existing-host worker prototype but is first measuring `570da8c` owned previous-version entry retirement on the exact image-only baseline. Root’s21 history/source cases prove retirement before working quota release and exact snapshots/fault cleanup; native benefit is not claimed yet.
+
+Performance owns lazy recognizer providers in ocr worker.ts/engine.ts/pipeline.ts (separate from architecture’s ocr.cjs/converter files), preserving exact models/math/order. Software display-cache closure remains open: explicitly closeable guest experiments preserve100 fullCPU pixel hashes and actual PID exits but add native/session retention and Mojo close warnings; no production webview/guest change is accepted. P3/F16 is source-only capability/parity research. Data owns bounded Word preview new source/worker/session helpers and trusted additive import/stream sinks; Root owns Main/preload/Workspace wiring. Large TIFF scratch closure remains explicitly queued to Data immediately afterward. Root’s actual Word100-original-media gate is prepared/syntax-checked and pending its serial native slot.
+
+One heavy/native/build at a time, nice15, hidden nonfocusable disposable profiles, no physical media or pen. Root/stable and each native attribution checkout have exact source/runtime receipts. Perf reclaimed2.31GB allocated stopped-profile trees after UID/inode/PID checks; fixture/reports preserved. All later formal panels, preflight, source/packaged stress, recovery/soak and Claude handoff remain required.
+
 ## November 17, 8 PM Central checkpoint
 
 The first stable increment is **not ready to install**. Source is recoverable at `8d23665`; the installed application is untouched. The earlier 4:30–7:30 PM target was missed. The next release go/no-go is **8:30 PM Central**, not an installation promise. Work continues in three isolated owner lanes with one heavy/native job at a time.

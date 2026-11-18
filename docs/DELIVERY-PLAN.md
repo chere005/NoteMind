@@ -1,8 +1,23 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 8 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 8:53 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
+
+### Deadline revised after Sean’s November 17 evening instruction
+
+Sean will hand this to Claude tomorrow. Use **8 AM Central, November 18** as the conservative handoff target and pursue the best tested state by then. This is a deadline for a reviewable build and evidence, not permission to label incomplete or failing work complete. Preserve all approved features and required review waves; known fixable findings remain assigned through closure.
+
+| Central time | Target milestone |
+|---|---|
+| Now–11 PM | Close active memory/ownership/cancellation defects; finish bounded Word preview and image scratch cleanup; qualify a first installable increment if its gates pass. |
+| 11 PM–1 AM | Close the useful-bundle panel and run the feature-inclusive bugs/UI/performance panel with independent reviewers; fix findings. |
+| 1–3 AM | Repeat large-image, stroke, PDF/import/export workflows; address the top remaining pipeline bottlenecks on the complete feature set. |
+| 3–5 AM | Three fresh whole-app audits, fixes and affected retests. |
+| 5–7 AM | Full preflight after the requested phase is coherent; packaged/source fidelity, strict signature, frozen scale/recovery/soak gates. |
+| 7–8 AM | Preserve the exact build/source/artifact identities and prepare Claude’s handoff with reproducible evidence and measured gains. |
+
+These are working targets. A failed gate takes priority over optional additions. The first-install estimate of 10–11 PM is conditional on all gates for that increment passing; it is not a promised installation. Notify before a tested install and preserve Sean’s active application. Next whole-timeline status is 9 PM Central and hourly thereafter.
 
 Revised after Sean's request to make progress visible sooner and review the features together with performance work. **The requested feature bundle is integrated; ownership and scale closures are active.** Foundation memory/export fixes stay actively owned in parallel; the broad review is moved onto the first useful feature bundle instead of waiting for a separate foundation-only audit.
 
