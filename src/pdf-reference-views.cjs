@@ -1,6 +1,6 @@
 const initial=()=>({opened:null,shown:null,page:1,error:'',status:'',loading:false,password:'',attempt:0,version:0,box:null,size:{width:600,height:600},zoom:1,reading:false,selection:null,busy:false,progress:null,thumbs:new Map(),find:false,query:'',matches:[],match:0,searching:false,pageInput:'1',fieldDocument:null});
 class PDFReferenceView{
- constructor(doc){this.key=doc.key||doc.path;this.snapshot=initial();this.listeners=new Set();this.setters=new Map();this.actions=null;this.generation=0;this.closed=false;this.closeRun=null;
+ constructor(doc){this.key=doc.key||doc.path;this.snapshot={...initial(),password:typeof doc.importRequest?.password==='string'?doc.importRequest.password:''};this.listeners=new Set();this.setters=new Map();this.actions=null;this.generation=0;this.closed=false;this.closeRun=null;
   this.refs={active:{current:false},binding:{current:doc.bindingId},state:{current:null},models:{current:new Map()},current:{current:null},request:{current:0},saveTimer:{current:null},importer:{current:null},closing:{current:false},warning:{current:''},pendingActions:{current:new Set()},opening:{current:null}};
   this.subscribe=listener=>{this.listeners.add(listener);return()=>this.listeners.delete(listener);};this.getSnapshot=()=>this.snapshot;
  }

@@ -60,7 +60,7 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc){
  ipcMain.handle('ocr-available',()=>available());
  ipcMain.handle('ocr-read',(e,{id,data,language})=>reader.read(Buffer.from(data,'base64'),{id,language,onProgress:phase=>{if(!e.sender.isDestroyed())e.sender.send('document-progress',{id,phase})}}));
  ipcMain.handle('ocr-cancel',(_,id)=>reader.cancel(id));
- ipcMain.handle('document-import',async(e,options={})=>{const choice=await dialog.showOpenDialog(getWin(),{title:'Import document',properties:['openFile'],filters:[{name:'Word and PDF',extensions:['docx','pdf']}]});if(choice.canceled)return null;return seedDocument(e,await importFile(choice.filePaths[0],{...options,onProgress:phase=>e.sender.send('document-progress',{phase})}));});
+ ipcMain.handle('document-import',async(e,options={})=>{const choice=await dialog.showOpenDialog(getWin(),{title:'Import document',properties:['openFile'],filters:[{name:'Word and PDF',extensions:['docx','pdf']}]});if(choice.canceled)return null;const file=choice.filePaths[0],pdf=await require('./document-import-route.cjs').pdfImportRequest(file,options);if(pdf)return pdf;return seedDocument(e,await importFile(file,{...options,onProgress:phase=>e.sender.send('document-progress',{phase})}));});
  ipcMain.handle('document-print-html',(event,doc,options)=>printDocument(doc,options,event.sender));
  ipcMain.handle('document-print-release',(event,token)=>printLeases.release(event.sender,token));
  ipcMain.handle('pdf-geometry',(_,options)=>require('./pdf-options.cjs').geometry(options));

@@ -68,30 +68,35 @@ export function PDFReferenceWorkspace({doc,active,onClose,colour,width,showEdito
  const stepFind=direction=>{if(!matches.length)return;const next=(match+direction+matches.length)%matches.length;setMatch(next);void go(matches[next]);};
  const undo=async redo=>{try{await surface.current?.[redo?'redo':'undo']?.();}catch(error){setStatus(error.message);}};
  const exportPDF=async()=>{setBusy(true);try{await flush();await api.export(state.current.source.id);setStatus('');}catch(e){setStatus(e.message)}finally{setBusy(false)}};
- const importPages=async(readText,dialogDocument=document)=>{
-  if(busy||closing.current||!state.current)return;setBusy(true);
+ const importPages=async(mode,dialogDocument=document,requestOptions=null)=>{
+  const readText=mode===true||mode==='text'||mode==='both',includeImages=mode===false||mode==='images'||mode==='both';
+  if(busy||importer.current||closing.current||!state.current)return;setBusy(true);
   let controller,importSource,adapter,budget,inserted=0,flushed=0,flushRun=null,lastFlush=performance.now();
-  const persist=async()=>{if(flushRun){await flushRun;return persist();}if(flushed===inserted)return;const captured=inserted;flushRun=window.NoteMindNotes.flush();try{await flushRun;flushed=captured;lastFlush=performance.now();}finally{flushRun=null;}};
+  const persist=async()=>{if(flushRun){await flushRun;return persist();}if(flushed===inserted)return;const captured=inserted;flushRun=window.NoteMindNotes.flush({requireDurable:true});try{await flushRun;flushed=captured;lastFlush=performance.now();}finally{flushRun=null;}};
   try{
-   const s=importSource=state.current,target=window.NoteMindNotes.captureInsertion(),selection=new AbortController();
+   const s=importSource=state.current,selection=new AbortController();let target=requestOptions?.target,pages;
+   if(requestOptions?.createTarget){controller={cancel:()=>selection.abort(),dispose:async()=>selection.abort()};importer.current=controller;pages=await choosePDFPages({document:dialogDocument,count:s.source.pageCount,page,signal:selection.signal});selection.signal.throwIfAborted();target=requestOptions.createTarget();}
+   else target ||=window.NoteMindNotes.captureInsertion();
    adapter=window.NoteMindNotes.createPageImport(target,{createPageImport});
    budget=createImportBudget({...adapter,chunks:window.NoteMindDocumentSync?.assetChunks,prepareState:({signal})=>refs.prepareImport?.(target.tab,{signal}),isReady:()=>!refs.hasPending?.(target.tab),verifyDocument:(plan,{signal})=>window.NoteMindDocumentSync.preflightImport(plan.document,{signal})});
    controller=new PageImportController({
     text:(n,{signal})=>textPage(s.source,n,signal),isOwnerOpen:owner=>!closing.current&&refs.isOwnerOpen(owner.tab),
     render:async(n,{signal})=>{signal.throwIfAborted();const id='import-'+crypto.randomUUID(),cancel=()=>{void api.cancel(s.source.id,id).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{const pixels=await api.page(s.source.id,n,{maxDimension:2048,requestId:id});return{value:{...pixels,text:''},release(){}};}finally{signal.removeEventListener('abort',cancel)}},
-    recognize:async(image,{signal})=>{signal.throwIfAborted();const id='pdf-ocr-'+crypto.randomUUID(),cancel=()=>{void window.notemind.ocrCancel(id).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{return await window.notemind.ocrRead({id,data:image.data,language:'auto'});}finally{signal.removeEventListener('abort',cancel)}},
-    commit:async(owner,value,{signal})=>{const imageName=!readText?'assets/pdf-page-'+crypto.randomUUID()+'.png':undefined;await budget.commit(readText?{text:value.text+'\n\n'}:{imageName,assets:{[imageName]:value.data}},{signal});inserted++;if(inserted-flushed>=8||performance.now()-lastFlush>=1000)await persist();}
+    recognize:async(image,{signal})=>{signal.throwIfAborted();const id='pdf-ocr-'+crypto.randomUUID(),cancel=()=>{void window.notemind.ocrCancel(id).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{return await window.notemind.ocrRead({id,data:image.data,language:requestOptions?.language||'auto'});}finally{signal.removeEventListener('abort',cancel)}},
+    commit:async(owner,value,{signal})=>{const imageName=includeImages?'assets/pdf-page-'+crypto.randomUUID()+'.png':undefined;await budget.commit({...includeImages?{imageName,assets:{[imageName]:value.data}}:{},...readText?{text:value.text+'\n\n'}:{}},{signal});inserted++;if(inserted-flushed>=8||performance.now()-lastFlush>=1000)await persist();}
    });
    const cancel=controller.cancel.bind(controller),dispose=controller.dispose.bind(controller);let disposing;
    controller.owner=target;controller.cancel=()=>{selection.abort();cancel();};controller.dispose=()=>disposing||=(async()=>{try{await dispose();await persist();}finally{budget.dispose();adapter.dispose();}})();importer.current=controller;
-   const pages=await choosePDFPages({document:dialogDocument,count:s.source.pageCount,page,signal:selection.signal});
-   const result=await controller.start({owner:target,pages,readText,onProgress:setProgress});setStatus(result.cancelled?'Import cancelled':'');
+   pages ||=await choosePDFPages({document:dialogDocument,count:s.source.pageCount,page,signal:selection.signal});
+   const result=await controller.start({owner:target,pages,readText,includeImages,onProgress:setProgress});setStatus(result.cancelled?'Import cancelled':'');
   }catch(e){if(e.name!=='AbortError')setStatus(e.message);}finally{
-   try{if(controller)await controller.dispose();else{budget?.dispose();adapter?.dispose();}}catch(error){setStatus(error.message);}
+   try{if(controller)await controller.dispose();else{budget?.dispose();adapter?.dispose();}}catch(error){setStatus(error.message);}finally{budget?.dispose();adapter?.dispose();}
    if(importer.current===controller)importer.current=null;
    if(importSource&&!activeRef.current&&!closing.current&&state.current===importSource)await api.retain(importSource.source.id,false).catch(error=>{if(!/expired/.test(error.message))setStatus(error.message);});setProgress(null);setBusy(false);
   }
  };
+
+ useEffect(()=>{const pending=doc.importRequest;if(!pending||!active||!opened||busy||closing.current)return;const seen=owner.refs.importRequests||=(new Set());if(seen.has(pending.id))return;seen.add(pending.id);void importPages(pending.mode,root.current?.ownerDocument||document,pending);},[doc.importRequest?.id,active,opened?.id,busy]);
 
  const crop=(mode,area=selection)=>{
   if(!area||!shown||busy)return;const value=shown,region={...area},source=state.current.source,insertion=window.NoteMindNotes.captureInsertion(),release=value.model.retainGeometry();setBusy(true);
