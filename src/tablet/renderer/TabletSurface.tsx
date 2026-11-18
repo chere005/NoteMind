@@ -25,7 +25,7 @@ import {
   paintStrokesYielding,
   type BoxHandle, type BoxHit, type InkStroke, type TabletPage,
 } from "./tabletPage"
-import { backdropImage, backdropRect, paintBackdrop } from "./tabletBackdrop"
+import { backdropImage, backdropRect, paintBackdrop, watchBackdrop } from "./tabletBackdrop"
 import { doubleClickBox } from "./doubleClickBox"
 import { colourOfPaper, inkOn, paintPaper, usePaper, type Paper } from "./tabletPaper"
 import { BoxActions, type BoxButtons } from "./BoxActions"
@@ -392,6 +392,15 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // Another sheet (a tab): listen to it and paint it whole. Its size is the same (every sheet has the tablet's shape).
   }, [schedule, page])
 
+  useLayoutEffect(() => {
+    const file = page.backdrop
+    if (!file) return
+    return watchBackdrop(file, image => {
+      if (latest.current.page !== page || latest.current.page.backdrop !== file) return
+      loadedBackdrop.current = { file, image };setBackdropTick(n => n + 1)
+    })
+  }, [page, page.backdrop])
+
   // The paper, on its own canvas under the ink: painted when the paper, the sheet's size or the display's scale changes (never per stroke).
   useLayoutEffect(() => {
     const element = backdrop.current
@@ -407,7 +416,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // A picture sent here by Edit with Tablet is under the ink, on the paper (tabletBackdrop.ts).
     if(loadedBackdrop.current?.file!==page.backdrop)loadedBackdrop.current=null
     const file=page.backdrop
-    const under=file?(loadedBackdrop.current?.image||backdropImage(file,image=>{if(latest.current.page.backdrop===file){loadedBackdrop.current={file,image};setBackdropTick(n=>n+1)}})):null
+    const under=file?(loadedBackdrop.current?.image||backdropImage(file)):null
     if (under) paintBackdrop(ctx, under, units, area, { width: w, height: h })
     if(!page.backdrop||under)paintedPaper.current={backdrop:page.backdrop||null,paper:JSON.stringify([paper.kind,paper.spacing,paper.colour]),viewport:{...view}}
   }, [paper, page, page.backdrop, backdropTick, fit, dpr])
@@ -804,7 +813,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const aspect = latest.current.page.aspect
     const current = latest.current.page
     if (!current.backdrop) return null
-    const image = loadedBackdrop.current?.file===current.backdrop?loadedBackdrop.current.image:backdropImage(current.backdrop, () => undefined)
+    const image = loadedBackdrop.current?.file===current.backdrop?loadedBackdrop.current.image:backdropImage(current.backdrop)
     return image && image.naturalWidth > 0 && image.naturalHeight > 0 ? backdropRect(aspect, image.naturalWidth / image.naturalHeight) : null
   }
 

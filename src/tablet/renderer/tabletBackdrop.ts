@@ -42,7 +42,7 @@ export function paintBackdrop(context: CanvasRenderingContext2D, image: CanvasIm
 
 const MAX_DECODED_BYTES = 64 * 1024 * 1024, MAX_READY = 8, MAX_LOADING = 4, MAX_PENDING = 32
 type Entry = { file: string; status: 'queued' | 'loading' | 'ready' | 'failed'; image: HTMLImageElement | null; bytes: number; callbacks: Set<(image: HTMLImageElement) => void>; promise: Promise<HTMLImageElement | null>; resolve: (image: HTMLImageElement | null) => void }
-const images = new Map<string, Entry>(), pending: Entry[] = []
+const images = new Map<string, Entry>(), pending: Entry[] = [], listeners = new Map<string, Set<(image: HTMLImageElement) => void>>()
 let loading = 0
 function trimImages(): void {
   let bytes = 0, count = 0
@@ -70,6 +70,7 @@ function pumpImages(): void {
       if (ready) { entry.bytes = image.naturalWidth * image.naturalHeight * 4;images.set(entry.file, entry) }
       const callbacks = ready ? [...entry.callbacks] : [];entry.callbacks.clear()
       entry.resolve(ready ? image : null);trimImages();pumpImages()
+      if (ready) for (const callback of [...(listeners.get(entry.file) || [])]) if (listeners.get(entry.file)?.has(callback)) callback(image)
       for (const callback of callbacks) callback(image)
     }
     const loaded = (): void => finish(true), failed = (): void => finish(false)
@@ -89,11 +90,28 @@ function imageRequest(file: string): Entry | null {
 }
 
 /** A bounded decoded-image cache; pending callers share one load and one timeout. */
-export function backdropImage(file: string, onLoad: (image: HTMLImageElement) => void): HTMLImageElement | null {
+export function backdropImage(file: string, onLoad?: (image: HTMLImageElement) => void): HTMLImageElement | null {
   const entry = imageRequest(file)
   if (!entry) return null
   if (entry.status === 'ready') return entry.image
-  entry.callbacks.add(onLoad);return null
+  if (onLoad) entry.callbacks.add(onLoad);return null
+}
+
+/** A visible surface owns this listener across failed/retried loads, independently of cache entries. */
+export function watchBackdrop(file: string, onLoad: (image: HTMLImageElement) => void): () => void {
+  let subscribed = listeners.get(file)
+  if (!subscribed) listeners.set(file, subscribed = new Set())
+  let active = true
+  const callback = (image: HTMLImageElement) => { if (active) onLoad(image) }
+  subscribed.add(callback)
+  const stop = () => {
+    if (!active) return
+    active = false;subscribed!.delete(callback)
+    if (!subscribed!.size && listeners.get(file) === subscribed) listeners.delete(file)
+  }
+  const ready = images.get(file)
+  try { if (ready?.status === 'ready' && ready.image) callback(ready.image) } catch (error) { stop();throw error }
+  return stop
 }
 
 /** Failure is explicit, so exports cannot quietly drop the background. */
