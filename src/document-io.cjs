@@ -7,7 +7,7 @@ const {executeBytes,withInput,base64}=require('./document-worker-bytes.cjs');
 const {isRawAsset}=require('./document-asset-sessions.cjs');
 const codec=require('./archive-codec.cjs');
 const printLeases=new(require('./print-file-leases.cjs').PrintFileLeases)();
-const reader=new TextReader();let helper=null,pendingHelper=null,disposed=false;const conversions=new Map(),exportsActive=new Set();let helperQueue=Promise.resolve();
+const reader=new TextReader();let helper=null,pendingHelper=null,disposed=false;const conversions=new Map(),exportsActive=new Set();let helperQueue=Promise.resolve(),withForeground=run=>run();
 const abortError=()=>Object.assign(Error('Conversion cancelled.'),{name:'AbortError'});
 const checkAbort=signal=>{if(signal?.aborted)throw abortError();};
 const expression=(name,args)=>'window.documentTools['+JSON.stringify(name)+']('+args.map(value=>JSON.stringify(value)??'undefined').join(',')+')';
@@ -65,7 +65,7 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc,loadDocument=
  ipcMain.handle('document-convert-cancel',(event,id)=>{const key=String(event.sender?.id||0)+':'+String(id);conversions.get(key)?.abort();});
  ipcMain.handle('document-open-default',async(_,file)=>{const error=await shell.openPath(file);if(error)throw Error(error)});
  ipcMain.handle('ocr-available',()=>available());
- ipcMain.handle('ocr-read',(e,{id,data,language})=>reader.read(Buffer.from(data,'base64'),{id,language,onProgress:phase=>{if(!e.sender.isDestroyed())e.sender.send('document-progress',{id,phase})}}));
+ ipcMain.handle('ocr-read',(e,{id,data,language})=>withForeground(()=>reader.read(Buffer.from(data,'base64'),{id,language,onProgress:phase=>{if(!e.sender.isDestroyed())e.sender.send('document-progress',{id,phase})}})));
  ipcMain.handle('ocr-cancel',(_,id)=>reader.cancel(id));
  ipcMain.handle('document-import',async(e,options={})=>{const choice=await dialog.showOpenDialog(getWin(),{title:'Import document',properties:['openFile'],filters:[{name:'Word and PDF',extensions:['docx','pdf']}]});if(choice.canceled)return null;const file=choice.filePaths[0],pdf=await require('./document-import-route.cjs').pdfImportRequest(file,options);if(pdf)return pdf;const id=typeof options.id==='string'?options.id.slice(0,128):crypto.randomUUID(),key=String(e.sender?.id||0)+':'+id,controller=new AbortController(),destroyed=()=>controller.abort();if(conversions.has(key))throw Error('This import is already running.');conversions.set(key,controller);e.sender?.once?.('destroyed',destroyed);try{return await loadDocument(e,admitDocument=>importFile(file,{...options,signal:controller.signal,admitDocument,onProgress:phase=>{if(!e.sender.isDestroyed?.())e.sender.send('document-progress',{phase});}}),{signal:controller.signal});}finally{conversions.delete(key);e.sender?.removeListener?.('destroyed',destroyed);}});
  ipcMain.handle('document-print-html',(event,doc,options)=>printDocument(doc,options,event.sender));
@@ -76,4 +76,4 @@ function register(getWin,getPad=()=>null,seedDocument=(_,doc)=>doc,loadDocument=
  app.on('will-quit',dispose);
 }
 function dispose(){disposed=true;void printLeases.dispose();for(const controller of conversions.values())controller.abort();conversions.clear();for(const controller of exportsActive)controller.abort();exportsActive.clear();reader.dispose();if(helper&&!helper.isDestroyed())helper.destroy();helper=null;pendingHelper?.then(w=>{if(!w.isDestroyed())w.destroy();}).catch(()=>{});}
-module.exports={register,printDocument,previewImages:(doc,options)=>require('./print-preview.cjs').images(doc,options,(...args)=>call('image',...args)),exportDocument,previewFile,importFile,importPDF,exportFile,reader,call,convertImage,convertImageFile,dispose};
+module.exports={setForeground:run=>{withForeground=run},register,printDocument,previewImages:(doc,options)=>require('./print-preview.cjs').images(doc,options,(...args)=>call('image',...args)),exportDocument,previewFile,importFile,importPDF,exportFile,reader,call,convertImage,convertImageFile,dispose};

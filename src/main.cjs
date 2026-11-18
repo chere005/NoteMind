@@ -21,6 +21,7 @@ const pdfReferences=require('./pdf-reference-service.cjs').register();
 const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc),(event,run,{signal}={})=>notesIPC.scope(event,()=>run(async doc=>{signal?.throwIfAborted();await notesStore.preflightDraft({...doc,visual:true,dirty:true,manualTitle:true},{signal});signal?.throwIfAborted();})));
 const notepadFormat=require('./notepad-format.cjs');
 const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument,documentIO,pdfReferences});
+documentIO.setForeground?.(run=>notesIPC.foreground(run));
 
 require('./features.cjs')(() => win, projectService);
 

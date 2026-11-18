@@ -9,7 +9,7 @@ const aborted=()=>Object.assign(Error('Reading cancelled.'),{name:'AbortError'})
 function readingOrder(lines){const rows=[];for(const line of [...lines].sort((a,b)=>a.y-b.y||a.x-b.x)){const cy=line.y+line.height/2;const row=rows.find(r=>Math.abs(r.cy-cy)<Math.max(r.height,line.height)*.45);if(row){row.lines.push(line);row.height=Math.max(row.height,line.height)}else rows.push({cy,height:line.height,lines:[line]});}return rows.sort((a,b)=>a.cy-b.cy).map(r=>r.lines.sort((a,b)=>a.x-b.x).map(l=>l.text).join(' ')).join('\n');}
 class TextReader {
  constructor({workerFactory=(file,options)=>new Worker(file,options),threads=Math.max(1,Math.min(2,require('node:os').availableParallelism()-1)),maxPending=64,maxBytes=128*1024*1024,idleMs=15000,maxCacheBytes=8*1024*1024}={}){
-  this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
+  if(!Number.isSafeInteger(maxCacheBytes)||maxCacheBytes<0)throw Error('Invalid OCR cache budget.');this.maxCacheBytes=maxCacheBytes;this.cacheBytes=0;this.cachePending=null;this.cacheCounting=false;this.queue=[];this.workers=new Set();this.jobs=new Map();this.cache=new Map();this.next=0;this.wireSequence=0;this.bytes=0;this.workerFactory=workerFactory;this.threads=Math.max(1,Math.min(2,threads));this.maxPending=maxPending;this.maxBytes=maxBytes;this.idleMs=Math.max(0,idleMs);this.records=new Map();this.idleWorker=null;this.idleTimer=null;this.idleGeneration=0;this.stopFailure=null;
  }
  read(bytes,{id=String(++this.next),language='auto',signal,priority='foreground',textOnly=false,onProgress=()=>{}}={}){
   if(this.disposed)return Promise.reject(Error('The text reader is closing.'));
@@ -76,6 +76,7 @@ class TextReader {
   try{worker.postMessage({id:job.wireId,requestId:job.id,bytes:job.bytes,japanese:job.language!=='en'});}catch(error){this.complete(job,error);}
  }
  cancel(id){const job=this.jobs.get(id);if(!job)return;this.queue=this.queue.filter(value=>value!==job);this.complete(job,aborted());}
+ retireIdle(){if(this.idleWorker)this.release(this.idleWorker);return this.awaitStopped();}
  awaitStopped(){return Promise.all([...this.records.values()].filter(record=>record.stopping).map(record=>record.exitPromise)).then(()=>{});}
  dispose(){if(this.disposing)return this.disposing;this.disposed=true;this.cache.clear();this.cacheBytes=0;this.clearIdleTimer();for(const id of [...this.jobs.keys()])this.cancel(id);if(this.idleWorker)this.release(this.idleWorker);return this.disposing=Promise.allSettled([this.awaitStopped(),this.cachePending]).then(()=>{});}
 }

@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron');
 const listen = (channel, fn) => { const handler = (_, value) => fn(value); ipcRenderer.on(channel, handler); return () => ipcRenderer.removeListener(channel, handler); };
 
 // Physical activity yields the background reader without per-move bridge traffic.
-const indexActivity=(()=>{let last=-Infinity;const pulse=()=>{const now=Date.now();if(now-last<250)return;last=now;try{ipcRenderer.send('notes-index-activity')}catch{}};for(const name of ['pointerdown','keydown','wheel'])globalThis.addEventListener?.(name,event=>{if(event.isTrusted)pulse()},{capture:true,passive:true});for(const name of ['pen:samples','pad:pen-samples'])ipcRenderer.on?.(name,(_,samples)=>{const values=Array.isArray(samples)?samples:samples?.samples;if(values?.some(sample=>sample.tip||sample.eraser||sample.p>0))pulse()});return pulse;})();
+const indexActivity=(()=>{let last=-Infinity;const pulse=()=>{const now=Date.now();if(now-last<250)return;last=now;try{ipcRenderer.send('notes-index-activity')}catch{}};for(const name of ['pointerdown','keydown','wheel'])globalThis.addEventListener?.(name,event=>{if(event.isTrusted)pulse()},{capture:true,passive:true});globalThis.addEventListener?.('pointermove',event=>{if(event.isTrusted&&(event.buttons||event.pressure>0))pulse()},{capture:true,passive:true});for(const name of ['pen:samples','pad:pen-samples'])ipcRenderer.on?.(name,(_,samples)=>{const values=Array.isArray(samples)?samples:samples?.samples;if(values?.some(sample=>sample.tip||sample.eraser||sample.p>0))pulse()});return pulse;})();
 
 // ACKs cross the bridge only after the receiving realm has copied a private chunk.
 const sheetChunkTransfers=(()=>{
