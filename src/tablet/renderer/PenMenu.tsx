@@ -100,7 +100,7 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
     const view = doc.defaultView ?? window
     const away = (event: PointerEvent) => { const target = event.target as Node | null; if (!target || typeof target.nodeType !== "number" || !pop.current?.contains(target)) onClose() }
     const key = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
+      if (event.defaultPrevented||event.isComposing||event.keyCode===229||event.key !== "Escape") return
       event.preventDefault(); event.stopPropagation()
       onClose()
       if (doc === document) returnFocusSoon()
