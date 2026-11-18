@@ -28,3 +28,12 @@ test('a successful PDF password retry clears its previous opening error',async()
 test('Surface view returns its current canonical viewport without exposing mutable view ownership',()=>{const h=surfaceHarness();const first=h.handle.current.view(),expected={...first};first.x+=100;near(h.handle.current.view(),expected);h.unmount();});
 
 for(const phase of ['onPointerCancel','onLostPointerCapture'])test(`PDF Read ${phase} belongs only to its active pointer`,()=>{const h=harness();h.pointer('onPointerDown',.1,.2);h.pointer('onPointerMove',.4,.5);h.pointer(phase,.8,.9,2);near(h.owner.snapshot.selection,{x:.1,y:.2,width:.3,height:.3});h.pointer('onPointerUp',.6,.7);near(h.owner.snapshot.selection,{x:.1,y:.2,width:.5,height:.5});h.pointer(phase,.6,.7);near(h.owner.snapshot.selection,{x:.1,y:.2,width:.5,height:.5});h.pointer('onPointerDown',.2,.3);h.pointer('onPointerMove',.5,.6);h.pointer(phase,.5,.6);assert.equal(h.owner.snapshot.selection,null);});
+
+test('PDF Read delayed capture loss cannot cancel a successor that already owns the same pointer',()=>{
+ const h=harness();h.pointer('onPointerDown',.1,.2);h.pointer('onPointerUp',.4,.5);h.pointer('onPointerDown',.2,.3);h.pointer('onPointerMove',.5,.6);
+ h.find(node=>node.props?.className==='pdf-reference-read').props.onLostPointerCapture({type:'lostpointercapture',currentTarget:h.element,pointerId:1});
+ h.pointer('onPointerUp',.7,.8);near(h.owner.snapshot.selection,{x:.2,y:.3,width:.5,height:.5});
+});
+
+for(const phase of ['onPointerCancel','onLostPointerCapture'])test('PDF Read '+phase+' ignores a different element reusing the same pointer',()=>{const h=harness();h.pointer('onPointerDown',.1,.2);h.pointer('onPointerMove',.4,.5);h.find(node=>node.props?.className==='pdf-reference-read').props[phase]({type:phase==='onPointerCancel'?'pointercancel':'lostpointercapture',currentTarget:{hasPointerCapture:()=>false},pointerId:1});h.pointer('onPointerUp',.6,.7);near(h.owner.snapshot.selection,{x:.1,y:.2,width:.5,height:.5});});
+test('PDF Read genuine owner capture loss still cancels its incomplete selection',()=>{const h=harness();h.pointer('onPointerDown',.1,.2);h.pointer('onPointerMove',.4,.5);h.element.releasePointerCapture(1);h.find(node=>node.props?.className==='pdf-reference-read').props.onLostPointerCapture({type:'lostpointercapture',currentTarget:h.element,pointerId:1});assert.equal(h.owner.snapshot.selection,null);h.pointer('onPointerUp',.7,.8);assert.equal(h.owner.snapshot.selection,null);});
