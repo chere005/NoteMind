@@ -8,14 +8,27 @@ import { loadEngine } from "./engine"
 import { DEFAULT_TUNING, readPicture, type Engine, type RecogniserSource } from "./pipeline"
 import { decodePng, isPng, type Rgba } from "./png"
 
-interface Job { id: number; file?: string; bytes?: Uint8Array; pixels?: Rgba; ownedPixels?: boolean; japanese?: boolean }
+interface Job { id: number; file?: string; bytes?: Uint8Array; pixels?: Rgba; ownedPixels?: boolean; ownedPNG?: boolean; phaseAdmission?: boolean; admit?: boolean; japanese?: boolean }
 
 const { folder, threads } = workerData as { folder: string; threads: number }
 let engine: Promise<Engine<RecogniserSource>> | null = null
+const admissions = new Map<number, () => void>()
 
 parentPort!.on("message", async (job: Job) => {
+  if (job.admit) { const next = admissions.get(job.id); admissions.delete(job.id); next?.(); return }
   let ownedImage: Rgba | undefined = job.ownedPixels ? job.pixels : undefined
   let pixelsReleased = !job.ownedPixels
+  let encodedReleased = !job.ownedPNG
+  const retireEncoded = () => {
+    if (!job.ownedPNG || encodedReleased) return
+    const bytes = job.bytes
+    if (!(bytes instanceof Uint8Array) || !(bytes.buffer instanceof ArrayBuffer) || bytes.byteOffset || bytes.byteLength !== bytes.buffer.byteLength) throw new Error("unconfirmed private PNG ownership")
+    const backing = bytes.buffer as ArrayBuffer & { transfer(size: number): ArrayBuffer }
+    if (backing.byteLength) backing.transfer(0)
+    if (backing.byteLength) throw new Error("PNG backing did not retire")
+    job.bytes = undefined
+    encodedReleased = true
+  }
   const retireImage = () => {
     const image = ownedImage
     if (image) {
@@ -40,21 +53,29 @@ parentPort!.on("message", async (job: Job) => {
     }
     if (!image) {
       const bytes = job.bytes ?? new Uint8Array(await fs.readFile(job.file!))
-      if (!isPng(bytes)) throw new Error("the bundled reader decodes PNG itself; other pictures come as pixels")
-      image = decodePng(bytes)
-      ownedImage = image
+      try {
+        if (!isPng(bytes)) throw new Error("the bundled reader decodes PNG itself; other pictures come as pixels")
+        image = decodePng(bytes)
+        ownedImage = image
+      } finally { retireEncoded() }
     }
     const decoded = performance.now()
+    if (job.ownedPNG && job.phaseAdmission) {
+      const admitted = new Promise<void>(resolve => admissions.set(job.id, resolve))
+      parentPort!.postMessage({ id: job.id, phase: "decoded", encodedReleased, width: image.width, height: image.height })
+      await admitted
+    }
     engine ??= loadEngine(ort, path.join(folder, "models"), { threads, wasmFolder: path.join(folder, "ort"), lazyRecognisers: true })
     // Validate/decode before loading model sessions; the engine is reused for the next queued picture.
     const ready = await engine.catch((error: unknown) => { engine = null; throw error })
     const loaded = performance.now()
     const reading = await readPicture(ready, image, DEFAULT_TUNING, { japanese: job.japanese !== false })
     retireImage()
-    parentPort!.postMessage({ id: job.id, lines: reading.lines, timing: { ...reading.timing, decode: decoded - started, load: loaded - decoded }, japanese: ready.japanese !== undefined, ...(job.ownedPixels ? { pixelsReleased } : {}) })
+    parentPort!.postMessage({ id: job.id, lines: reading.lines, timing: { ...reading.timing, decode: decoded - started, load: loaded - decoded }, japanese: ready.japanese !== undefined, ...(job.ownedPixels ? { pixelsReleased } : {}), ...(job.ownedPNG ? { encodedReleased } : {}) })
   } catch (error) {
     let failure = error
     try { retireImage() } catch (cleanup) { failure = new Error("Pixel cleanup failed: " + (cleanup as Error).message) }
-    parentPort!.postMessage({ id: job.id, error: (failure as Error).message ?? String(failure), ...(job.ownedPixels ? { pixelsReleased } : {}) })
+    try { retireEncoded() } catch (cleanup) { failure = new Error("PNG cleanup failed: " + (cleanup as Error).message) }
+    parentPort!.postMessage({ id: job.id, error: (failure as Error).message ?? String(failure), ...(job.ownedPixels ? { pixelsReleased } : {}), ...(job.ownedPNG ? { encodedReleased } : {}) })
   }
 })

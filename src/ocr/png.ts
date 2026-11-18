@@ -1,6 +1,7 @@
 
 
 import { inflateSync } from "node:zlib"
+import { isMarkedAsUntransferable } from "node:worker_threads"
 
 export interface Rgba {
   width: number
@@ -12,6 +13,11 @@ export interface Rgba {
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const MAX_PIXELS = 16_000_000, MAX_DIMENSION = 32768, MAX_FILTERED_BYTES = 128 * 1024 * 1024
 const PASSES: [number, number, number, number][] = [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]]
+const retire = (bytes: Uint8Array | undefined, ownedBacking = false): void => {
+  if (bytes?.buffer instanceof ArrayBuffer && (ownedBacking || bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) && !isMarkedAsUntransferable(bytes.buffer)) {
+    ;(bytes.buffer as ArrayBuffer & { transfer(size: number): ArrayBuffer }).transfer(0)
+  }
+}
 
 export const isPng = (bytes: Uint8Array): boolean => SIGNATURE.every((value, at) => bytes[at] === value)
 
@@ -25,7 +31,9 @@ const paeth = (a: number, b: number, c: number): number => {
 function unfilter(data: Uint8Array, offset: number, width: number, height: number, bpp: number,
   bitsPerPixel: number): { rows: Uint8Array; next: number } {
   const stride = Math.ceil((width * bitsPerPixel) / 8)
-  const rows = new Uint8Array(stride * height)
+  // This inflated buffer belongs exclusively to the decoder. Compact each
+  // filtered row over bytes already consumed; future filtered input stays ahead.
+  const rows = data.subarray(offset, offset + stride * height)
   let at = offset
   for (let y = 0; y < height; y += 1) {
     const filter = data[at++]!
@@ -94,9 +102,13 @@ export function decodePng(bytes: Uint8Array): Rgba {
     return sum + (w > 0 && h > 0 ? passBytes(w, h) : 0)
   }, 0)
   if (!Number.isSafeInteger(expected) || expected > MAX_FILTERED_BYTES) throw new Error("PNG: decoded image is too large for text recognition")
-  const data = inflateSync(Buffer.concat(idat), { maxOutputLength: expected })
-  if (data.length !== expected) throw new Error("PNG: incomplete image data")
-  const out = new Uint8Array(width * height * 4)
+  const compressed = Buffer.concat(idat)
+  let data: Uint8Array
+  try { data = inflateSync(compressed, { maxOutputLength: expected }) } finally { retire(compressed) }
+  if (data.length !== expected) { retire(data, true); throw new Error("PNG: incomplete image data") }
+  let out: Uint8Array | undefined
+  try {
+  out = new Uint8Array(width * height * 4)
   const max = (1 << Math.min(depth, 8)) - 1
 
   
@@ -151,4 +163,5 @@ export function decodePng(bytes: Uint8Array): Rgba {
     }
   }
   return { width, height, data: out }
+  } catch (error) { retire(out); throw error } finally { retire(data, true) }
 }
