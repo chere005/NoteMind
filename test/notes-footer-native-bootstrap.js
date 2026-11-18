@@ -10,5 +10,5 @@ window.footerFixture={
  visual(html,id='native-A'){visual=true;activeTab={id};rich.innerHTML=html;window.NoteMindFooter.update();},
  markdown(text,id='native-A'){visual=false;activeTab={id};source.value=text;window.NoteMindFooter.update();},
  count:()=>$('wordCount').textContent,
- async wait(expected){const start=performance.now();while(this.count()!==expected){if(performance.now()-start>10000)throw Error('Footer did not publish '+expected+'; got '+this.count());await new Promise(resolve=>setTimeout(resolve,10));}return{count:this.count(),wallMs:performance.now()-start,workers:{...footerWorkerStats}};}
+ async wait(expected,timeout=10000){const start=performance.now();while(this.count()!==expected){if(performance.now()-start>timeout)throw Error('Footer did not publish '+expected+'; got '+this.count());await new Promise(resolve=>setTimeout(resolve,10));}return{count:this.count(),wallMs:performance.now()-start,workers:{...footerWorkerStats}};}
 };
