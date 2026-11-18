@@ -37,16 +37,37 @@
   return found;
  }
  const clearHighlights=()=>{CSS.highlights?.delete('note-find');CSS.highlights?.delete('note-current');};
+ let cached=null,richRevision=0,observedRich=rich;
+ const invalidate=()=>{richRevision++;cached=null;};
+ const observer=typeof MutationObserver==='function'?new MutationObserver(invalidate):null;
+ const observe=()=>observer?.observe(rich,{subtree:true,childList:true,characterData:true,attributes:true});
+ observe();
+ function stamp(){
+  if(observedRich!==rich){observer?.disconnect();observedRich=rich;invalidate();observe();}
+  // A command can follow a programmatic edit in the same turn, before delivery.
+  if(observer?.takeRecords().length)invalidate();
+  const tab=typeof activeTab==='undefined'?null:activeTab,node=visual?rich:source;
+  return [input.value,options.matchCase,options.wholeWord,visual,doc,tab,tab?.editVersion,node,document,node.ownerDocument||document,CSS.highlights,visual?richRevision:source.value];
+ }
+ const sameStamp=(a,b)=>!!a&&a.length===b.length&&a.every((value,at)=>Object.is(value,b[at]));
  function refresh(){
-  if(bar.hidden)return;matches=[];clearHighlights();
-  if(!input.value){count.textContent='';button('prev').disabled=button('next').disabled=true;return;}
-  if(!visual)matches=scan(source.value).map(([start,end])=>({start,end}));
-  else{
+  if(bar.hidden)return;
+  if(!input.value){cached=null;matches=[];clearHighlights();count.textContent='';button('prev').disabled=button('next').disabled=true;return;}
+  const current=stamp();
+  // Without an observer, visual edits have no reliable invalidation receipt.
+  if((!visual||observer)&&sameStamp(cached?.stamp,current)){
+   if(cached.highlight&&CSS.highlights?.get('note-find')!==cached.highlight)CSS.highlights?.set('note-find',cached.highlight);
+  }else{
+   matches=[];clearHighlights();let highlight=null;
+   if(!visual)matches=scan(current.at(-1)).map(([start,end])=>({start,end}));
+   else{
    const nodes=[],walker=document.createTreeWalker(rich,NodeFilter.SHOW_TEXT|NodeFilter.SHOW_ELEMENT,{acceptNode:n=>(n.nodeType===1?n:n.parentElement).closest('[data-editor-control]')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});let text='',node,block=null;
    while((node=walker.nextNode())){if(node.nodeType===1){if(node.tagName==='BR')text+='\n';continue;}const owner=node.parentElement.closest('p,h1,h2,h3,h4,h5,h6,li,td,th,pre,blockquote,div,section')||rich;if(nodes.length&&owner!==block&&!text.endsWith('\n'))text+='\n';block=owner;nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
    let startIndex=0,endIndex=0;
    for(const [at,stop] of scan(text)){while(startIndex<nodes.length&&nodes[startIndex].end<=at)startIndex++;endIndex=Math.max(endIndex,startIndex);while(endIndex<nodes.length&&nodes[endIndex].end<stop)endIndex++;const start=nodes[startIndex],end=nodes[endIndex];if(start&&end){const range=document.createRange();range.setStart(start.node,at-start.start);range.setEnd(end.node,stop-end.start);matches.push(range);}}
-   if(CSS.highlights){const highlight=new Highlight();for(const match of matches)highlight.add(match);CSS.highlights.set('note-find',highlight);}
+    if(CSS.highlights){highlight=new Highlight();for(const match of matches)highlight.add(match);CSS.highlights.set('note-find',highlight);}
+   }
+   cached={stamp:current,highlight};
   }
   index=Math.min(Math.max(index,0),matches.length-1);
   count.textContent=matches.length?(index+1)+' of '+matches.length:'No matches';button('prev').disabled=button('next').disabled=!matches.length;
@@ -62,7 +83,7 @@
   index=-1;input.focus();input.select();refresh();
  }
  // Escape gives the caret back where the match was.
- function close(){bar.hidden=true;clearHighlights();(visual?rich:source).focus();if(visual&&matches[index]){const selection=getSelection();selection.removeAllRanges();selection.addRange(matches[index]);}}
+ function close(){const current=stamp(),match=visual&&sameStamp(cached?.stamp,current)?matches[index]:null;bar.hidden=true;clearHighlights();cached=null;matches=[];index=-1;(visual?rich:source).focus();if(match){const selection=getSelection();selection.removeAllRanges();selection.addRange(match);}}
  const selectedText=()=>visual?getSelection().toString():source.value.slice(source.selectionStart,source.selectionEnd);
  function useSelection(){const text=selectedText();if(!text||text.includes('\n'))return;if(bar.hidden)open();input.value=text;index=-1;move(0);}
  // One match replaced; the next one comes forward.
@@ -89,6 +110,7 @@
  button('case').onclick=()=>{options.matchCase=!options.matchCase;syncToggles();saveOptions();index=-1;move(0);};
  button('word').onclick=()=>{options.wholeWord=!options.wholeWord;syncToggles();saveOptions();index=-1;move(0);};
  rich.addEventListener('input',refresh);source.addEventListener('input',refresh);
+ window.addEventListener('unload',()=>{observer?.disconnect();cached=null;matches=[];clearHighlights();});
  window.addEventListener('notemind-command',e=>{
   if(e.detail==='findNote')open({replace:bar.hidden?false:undefined});
   if(e.detail==='findReplace'){open({replace:true});(selectedText()&&!selectedText().includes('\n')?useSelection:()=>{})();}
