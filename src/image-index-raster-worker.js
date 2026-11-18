@@ -3,7 +3,7 @@
 (function (scope) {
  let active=false;
  const unsupported=()=>Object.assign(Error('This image needs the document image converter.'),{code:'IMAGE_WORKER_UNSUPPORTED'});
- const discard=value=>{if(value instanceof ArrayBuffer&&value.byteLength&&typeof value.transfer==='function')try{value.transfer(0)}catch{}};
+ const discard=value=>{if(!(value instanceof ArrayBuffer)||!value.byteLength)return true;if(typeof value.transfer==='function')try{value.transfer(0);return !value.byteLength}catch{}return false;};
  async function convert(packet){
   if(!Number.isSafeInteger(packet?.id)||packet.id<1||!(packet.bytes instanceof ArrayBuffer)||!packet.bytes.byteLength||packet.bytes.byteLength>50*1024*1024)throw Error('Invalid index image input.');
   if(packet.clean||packet.type==='image/svg+xml'||typeof scope.OffscreenCanvas!=='function'||typeof scope.createImageBitmap!=='function')throw unsupported();
@@ -24,7 +24,12 @@
    if(bytes.byteLength>50*1024*1024){discard(bytes);throw Error('Image conversion exceeds its output limit.');}
    return{bytes,width,height};
   }finally{
-   image?.close?.();if(canvas){canvas.width=0;canvas.height=0;}discard(packet.bytes);packet.bytes=null;image=canvas=blob=output=null;
+   let failed;
+   try{image?.close?.()}catch(error){failed=error;}
+   try{if(canvas){canvas.width=0;canvas.height=0;}}catch(error){failed ||=error;}
+   if(!discard(packet.bytes))failed ||=Error('Image input backing could not be released.');
+   packet.bytes=null;image=canvas=blob=output=null;
+   if(failed){failed.resourcesReleased=false;throw failed;}
   }
  }
  scope.onmessage=async event=>{
@@ -32,7 +37,7 @@
   if(active){scope.postMessage({id:packet?.id,error:{message:'An index image is already converting.'},released:false});return;}
   active=true;
   try{const value=await convert(packet);scope.postMessage({id:packet.id,...value,released:true},[value.bytes]);}
-  catch(error){discard(packet?.bytes);if(packet)packet.bytes=null;scope.postMessage({id:packet?.id,error:{message:error?.message||String(error),code:error?.code},released:true});}
+  catch(error){const released=discard(packet?.bytes)&&error?.resourcesReleased!==false;if(packet)packet.bytes=null;scope.postMessage({id:packet?.id,error:{message:error?.message||String(error),code:error?.code},released});}
   finally{active=false;}
  };
 })(self);
