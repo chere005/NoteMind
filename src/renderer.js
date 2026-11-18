@@ -122,7 +122,7 @@ document.querySelectorAll('[data-command]').forEach(button=>button.onclick=()=>f
 let graphicsEditRun=0,graphicsEditAbort=null;
 async function editGraphics(img) {
  const run=++graphicsEditRun;graphicsEditAbort?.abort();const controller=new AbortController();graphicsEditAbort=controller;
- const sync=window.NoteMindDocumentSync,tab=activeTab,name=img.dataset.asset,expectedData=tab.doc.assets[name],sidecar=tab.doc.assets[name+'.json'];
+ const sync=window.NoteMindDocumentSync,tab=activeTab,name=img.dataset.asset,expectedData=tab.doc.assets[name],sidecar=tab.doc.assets[name+'.json'],expectedIdentity=sync?.assetIdentity?.(tab.doc.assets,name);
  let captured;
  try{
   captured=sync?.capture({...tab.doc,assets:sync.copyAssets(tab.doc.assets)})||{assets:{...tab.doc.assets}};
@@ -130,8 +130,8 @@ async function editGraphics(img) {
   const sheet=!sidecar?null:sync?.isRef?.(sidecar)?await sync.withAssetBytes(captured.assets,name+'.json',{signal:controller.signal},bytes=>NoteMindGraphics.decodeAsync(bytes,{owned:true,signal:controller.signal})):await NoteMindGraphics.decodeBase64Async(sidecar,{signal:controller.signal});
   if(!url&&!sheet&&sync?.isRef?.(expectedData))url=await sync.withAssetBytes(captured.assets,name,{signal:controller.signal},bytes=>{const type=sync.info(captured.assets,name).mime;if(!/^image\//.test(type))throw Error('The original picture is unavailable.');const chunks=[];for(let offset=0;offset<bytes.length;offset+=24576)chunks.push(btoa(String.fromCharCode(...bytes.subarray(offset,offset+24576))));return 'data:'+type+';base64,'+chunks.join('');});
   if(controller.signal.aborted||run!==graphicsEditRun||!tabs.includes(tab))return false;
-  if(tab.doc.assets[name]!==expectedData||tab.doc.assets[name+'.json']!==sidecar)throw Error('The original image changed while the drawing was loading. Open it again to edit the current image.');
-  window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url,sheet,target:{tabId:tab.id,assetName:name,...(sync?.assetIdentity?{expectedIdentity:sync.assetIdentity(captured.assets,name)}:{expectedData})}}}));if($('pane').hidden)$('paneToggle').click();return true;
+  if((expectedIdentity!==undefined?(!Object.hasOwn(tab.doc.assets,name)||sync.assetIdentity(tab.doc.assets,name)!==expectedIdentity):tab.doc.assets[name]!==expectedData)||tab.doc.assets[name+'.json']!==sidecar)throw Error('The original image changed while the drawing was loading. Open it again to edit the current image.');
+  window.dispatchEvent(new CustomEvent('tablet-edit-image',{detail:{url,sheet,target:{tabId:tab.id,assetName:name,...(expectedIdentity!==undefined?{expectedIdentity}:{expectedData})}}}));if($('pane').hidden)$('paneToggle').click();return true;
  }catch(error){if(controller.signal.aborted)return false;throw error;}finally{sync?.releaseDocument?.(captured);if(graphicsEditAbort===controller)graphicsEditAbort=null;}
 }
 function insertAsset(name, data, sheet=null, sidecar=null,sidecarChunks=null,imageChunks=null) {
