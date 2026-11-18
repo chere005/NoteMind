@@ -1,5 +1,17 @@
 # First stable bundle review
 
+## November17 6:18PM Central checkpoint
+
+Root15163be includes the sparse-save fixes, streamed snapshot publication, read-only exact import preflight and the D2 import feature. Installed0.35.0 is untouched. One native/build lane at nice15; hidden disposable profiles only. No caps/workloads/oracles reduced and no forcedGC/cache-pressure shortcuts.
+
+- Unique2M actual App/IPC paired baselinec033df2→candidatef7a18a6: both actualexit0, all public JSON/body/identity/fresh-worker/close-reopen proofs exact. Erase15,539.9→4,397.3ms (-71.70%); Undo15,647.4→4,421.1ms (-71.75%); candidate peak1,052,147,712B, post-open UIgap6.4ms. One pair only, final frozen repeats required. Raw artifacts retained under test-results/performance/sparse-save-pair-c033df2-f7a18a6/.
+- Word actual mixed198MiB caller407481d exits0 at521,486,336B;16MiBtable361c833 exits0 at559,382,528B;16MiBinline361c833 exits0 at909,230,080B with exact477,804,840B XML/CRC/count. Table observer was bounded after an instrumentation-only report overflow. Final packaged repeats remain required.
+- Canonical100JPEG opening/typing/autosave pass after raw spooling and streamed history/CAS; scrolling still exceeds1GiB. d94f59c decoded-estimate quota is integrated but insufficient. Eager replacement, DOM cloning,16MiBSkia flag, forced presentation, full-resolution bitmaprenderer canvas and alternate bitmap readiness diagnostics did not resolve growth; none is accepted product source. All100 bitmap pixels matched, but the canvas performance candidate failed.
+- LIGHT/kNone allocator diagnostics confirm an unlocked17,285,120B software decoded-image entry after open. Persistent Tracing Service overhead makes that diagnostic hit the guard earlier; this is observer overhead, not a product regression. Next attribution scope skips editing to measure scroll cache growth separately; canonical acceptance remains unchanged.
+- D2 imports integrated15163be: captured page chooser, bounded native-text-first page loading, exact UTF8/manifest/recovery/ZIP admission, pending PDF-ink readiness, coalesced durable cancellation, owned bounded history and stale decorated-caret repair.70focused cases pass.19actual100-page PDF component stages exit0 at991,887,360B with zero runtime errors. Actual complete Notepad/Main/preload/DOM/recovery gate is next.
+- First data/UI review scopes passed; first performance role remains open on image memory. After all features: fresh bugs/UIUX/performance panel, fixes/retests, then3fresh whole-app audits and fixes. Fullsuite/preflight/build/signature/packaged stress/recovery/soak/mainpush/install have not been claimed complete.
+
+
 This records the first independent bugs/data, UI/UX and performance/architecture panel. It does not count as the later all-feature panel or final three whole-app audits.
 
 ## Bugs and data integrity — passed
