@@ -1,0 +1,27 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),domino=require('@mixmark-io/domino');
+const noop=()=>{},link='[Linked Note](notemind:B)';
+function fixture({path='/fixture/A.nm',waitForFlush=false,assignId=false}={}){
+ const dom=domino.createWindow('<article id="rich"></article><span id="status"></span>'),document=dom.document;
+ dom.Element.prototype.append=function(...nodes){for(const node of nodes)this.appendChild(typeof node==='string'?document.createTextNode(node):node)};dom.Element.prototype.replaceChildren=function(...nodes){this.innerHTML='';this.append(...nodes)};
+ const a={id:'tab-A',doc:{id:assignId?undefined:'A',path,text:'leftRIGHT',assets:{},meta:{}},visual:false},c={id:'tab-C',doc:{id:'C',path:'/fixture/C.nm',text:'Other note',assets:{},meta:{}},visual:false},errors=[],records=[{id:'A',title:'Original',meta:{}},{id:'B',title:'Linked Note',meta:{}},{id:'C',title:'Other',meta:{}}];let dialog,finishFlush;
+ const source={value:a.doc.text,selectionStart:4,selectionEnd:4,addEventListener:noop,setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end},setRangeText(text,start,end){this.value=this.value.slice(0,start)+text+this.value.slice(end);this.selectionStart=this.selectionEnd=start+text.length}},api={onChanged:noop,onIndexProgress:noop,list:async()=>records,settings:async()=>({smartFolders:[],sort:'manual'})};
+ const context={document,source,visual:false,rich:document.getElementById('rich'),activeTab:a,doc:a.doc,tabs:[a,c],NoteMindDocument:require('../src/document-renderer.cjs'),escapeHtml:String,structuredClone,AbortController,Date,crypto:require('node:crypto'),setTimeout:()=>1,clearTimeout:noop,$:id=>document.getElementById(id)||{},updateTitle:noop,currentText:()=>source.value,Event:class{constructor(type){this.type=type}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail}},window:{notemind:{notes:api},addEventListener:noop,dispatchEvent:()=>true},action:run=>Promise.resolve().then(run).catch(error=>errors.push(error.message))};
+ context.rememberCurrent=()=>{context.activeTab.doc.text=source.value};context.activateTab=target=>{context.rememberCurrent();context.activeTab=target;context.doc=target.doc;source.value=target.doc.text;source.selectionStart=source.selectionEnd=source.value.length};context.window.NoteMindWriting={insertMarkdown(text){source.setRangeText(text,source.selectionStart,source.selectionEnd);context.doc.text=source.value}};context.window.NoteMindNoteTitle=require('../src/notes-title.js');
+ vm.createContext(context);vm.runInContext(fs.readFileSync('src/notes-core.js','utf8'),context);const notes=context.window.NoteMindNotes;
+ notes.flush=async()=>{if(waitForFlush)await new Promise(resolve=>finishFlush=resolve);if(assignId)a.doc.id='A'};
+ notes.dialog=(_title,body)=>{dialog=document.createElement('div');dialog.innerHTML=body;for(const field of dialog.querySelectorAll('input,select'))Object.defineProperty(field,'value',{value:'',writable:true});dialog.close=()=>dialog.remove();document.body.append(dialog);return dialog};
+ vm.runInContext(fs.readFileSync('src/notes-library.js','utf8'),context);
+ return{a,c,context,notes,errors,open:()=>context.window.NoteMindLibrary.library({link:true}),finishFlush:()=>finishFlush(),get dialog(){return dialog},choose:()=>[...dialog.querySelectorAll('.notes-record-open')].find(button=>button.textContent.includes('Linked Note')).onclick()};
+}
+test('note links retain their original owner and caret across a tab switch in the dialog',async()=>{
+ for(const path of ['/fixture/A.nm','/fixture/A.txt','/fixture/A.py']){const h=fixture({path});await h.open();h.context.activateTab(h.c);await h.choose();assert.equal(h.a.doc.text,'left'+link+'RIGHT');assert.equal(h.c.doc.text,'Other note');assert.equal(h.context.activeTab,h.c);assert.deepEqual(h.errors,[])}
+});
+test('link capture precedes a pending flush and excludes the original post-flush identity',async()=>{
+ const h=fixture({waitForFlush:true,assignId:true}),opening=h.open();h.context.activateTab(h.c);h.finishFlush();await opening;assert.doesNotMatch(h.dialog.querySelector('.notes-records').textContent,/Original/);assert.match(h.dialog.querySelector('.notes-records').textContent,/Other/);await h.choose();assert.equal(h.a.doc.text,'left'+link+'RIGHT');assert.equal(h.c.doc.text,'Other note');assert.deepEqual(h.errors,[]);
+});
+test('closing the initiating note rejects a selected link without redirecting it to the current note',async()=>{
+ const h=fixture();await h.open();h.context.activateTab(h.c);h.context.tabs=[h.c];await h.choose();assert.equal(h.a.doc.text,'leftRIGHT');assert.equal(h.c.doc.text,'Other note');assert.match(h.errors[0],/original Notepad is no longer open/);
+});
+test('text-only owned Markdown remains supported while graphics and attachments retain their file restrictions',()=>{
+ for(const path of ['/fixture/A.txt','/fixture/A.py']){const h=fixture({path}),target=h.notes.captureInsertion();h.context.activateTab(h.c);assert.equal(h.notes.insertMarkdownFor(target,link),true);assert.equal(h.a.doc.text,'left'+link+'RIGHT');for(const options of [{assets:{'assets/x.png':'AAAA'}},{graphic:'assets/x.png'},{attachment:{name:'assets/a.pdf',info:{}}}])assert.throws(()=>h.notes.insertMarkdownFor(target,'bad',options),/before inserting graphics or attachments/);assert.equal(h.a.doc.text,'left'+link+'RIGHT');assert.deepEqual(Object.keys(h.a.doc.assets),[]);assert.equal(h.c.doc.text,'Other note')}
+});
