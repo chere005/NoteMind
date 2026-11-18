@@ -7,7 +7,7 @@ test('open tabs keep independent dirty buffers and guard closing', async () => {
   class Element {
     constructor() { this.children = []; this.style = {}; this.hidden = false; this.value = ''; this.contentEditable = 'true'; this.classList = { toggle() {} }; }
     setAttribute() {} addEventListener() {} append(...nodes) { this.children.push(...nodes); } replaceChildren() { this.children = []; }
-    querySelectorAll() { return []; } focus() {} setRangeText(text) { this.value += text; }
+    querySelectorAll() { return []; } focus() {} setSelectionRange(start,end,direction){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;} get textLength(){return this.value.length;} setRangeText(text) { this.value += text; }
     set innerHTML(value) { this.html = value; this.childNodes = []; } get innerHTML() { return this.html || ''; }
   }
   const ids = ['rich','source','title','documentTabs','toolbar','visual','markdown','modeLabel','status','new','open','save','saveAs','heading','insertImage','run','output','outputText','closeOutput','stopPython','paneToggle','pane'];
@@ -16,9 +16,9 @@ test('open tabs keep independent dirty buffers and guard closing', async () => {
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/renderer.js'), 'utf8'), context);
   elements.markdown.onclick(); elements.source.value = 'first draft'; elements.source.oninput();
   handlers['notemind-open-path']({ detail: 'C:\\example\\other.md' }); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(elements.source.value, 'C:\\example\\other.md');
+  assert.equal(context.currentText(), 'C:\\example\\other.md');assert.equal(elements.source.value,'');
   elements.documentTabs.children[0].children[0].onclick(); assert.equal(elements.source.value, 'first draft');
   elements.documentTabs.children[0].children[1].onclick(); assert.equal(elements.documentTabs.children.length, 2);
-  elements.documentTabs.children[1].children[0].onclick(); assert.equal(elements.source.value, 'C:\\example\\other.md');
+  elements.documentTabs.children[1].children[0].onclick(); assert.equal(context.currentText(), 'C:\\example\\other.md');assert.equal(elements.source.value,'');
 });
 

@@ -40,8 +40,8 @@ test('first edit of an unhinted local image captures its actual DocSync identity
  const target=h.events[0].detail.target;assert.equal(target.expectedIdentity,originalKey);assert.equal(Object.hasOwn(target,'expectedData'),false);
  assert.equal(sync.assetIdentity(h.a.doc.assets,target.assetName),target.expectedIdentity,'unchanged first edit remains eligible for Save to Original');
  h.a.doc.text='![Image](assets/a.svg)';h.a.doc.meta={};let replace;
- Object.assign(h.c,{rememberCurrent(){},updateTitle(){},source:{},rich:{},render:()=>'',NoteMindDocument:require('../src/document-renderer.cjs'),NoteMindReferenceRewrite:require('../src/markdown-reference-rewrite.js'),alert:message=>assert.fail(message)});
- h.c.window.addEventListener=(_name,listener)=>replace=listener;
+ Object.assign(h.c,{rememberCurrent(){},updateTitle(){},source:{value:''},rich:{innerHTML:''},visual:false,render:()=>'',NoteMindDocument:require('../src/document-renderer.cjs'),NoteMindReferenceRewrite:require('../src/markdown-reference-rewrite.js'),alert:message=>assert.fail(message)});
+ require('./helpers/editor-publication.cjs').install(h.c,source);h.c.window.addEventListener=(_name,listener)=>replace=listener;
  vm.runInNewContext(source.split('\n').find(line=>line.startsWith("window.addEventListener('tablet-replace',")),h.c);
  const event={detail:{target,name:'assets/edited.png',data:'TkVX'},preventDefault(){this.defaultPrevented=true}};replace(event);
  assert.equal(event.defaultPrevented,undefined);assert.equal(h.a.doc.assets['assets/edited.png'],'TkVX');assert.equal(target.expectedIdentity,sync.assetIdentity(h.a.doc.assets,'assets/edited.png'));
