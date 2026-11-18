@@ -6,3 +6,12 @@
 - `NOTEMIND_QUIT_TEST_PAD=1 node_modules/.bin/electron test/hidden-runner.cjs quit-exits` exited 0 in all three cases with a simulated extended pen display.
 - The installed 0.39.0 copy stayed alive after two normal Quit requests. The isolated test did not reproduce the hang, so its cause and fix remain open.
 - `npm test` was not required because this task changed only the test and this report.
+
+## Task 2 — Moved controls
+- Updated the five hidden scripts' steps and replaced checks for direct or separate controls with checks for menu actions, sheet actions in the pen bar, an empty header slot, always-present swatches, and width and Wacom choices in their menus.
+- `node_modules/.bin/electron test/hidden-runner.cjs drawing-tools` exited 1 twice. The new orientation path passed, then the script expected the legacy `sheets.json` file.
+- `node_modules/.bin/electron test/hidden-runner.cjs pad-app` exited 1 twice. On the second run the sidebar menus and width choice passed, then the drawing flush timed out.
+- `node_modules/.bin/electron test/hidden-runner.cjs review` exited 1 twice. The moved controls passed, then the script expected the legacy `sheets.json` file.
+- `node_modules/.bin/electron test/hidden-runner.cjs welcome-guide` exited 1 twice. Both the edit button and the example image were missing after reopening the guide.
+- `node_modules/.bin/electron test/hidden-runner.cjs workspace-ux` exited 0 twice, including the orientation and Wacom menu checks.
+- The runs redirected Documents to the test profile. Four scripts remain unqualified. Fixtures, storage reads, and unrelated checks are unchanged.

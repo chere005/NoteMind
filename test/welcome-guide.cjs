@@ -22,8 +22,14 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   await js(()=>{const cell=rich.querySelector('td'),r=document.createRange();r.selectNodeContents(cell);getSelection().removeAllRanges();getSelection().addRange(r);});await w.webContents.insertText('My edited example');await js(()=>NoteMindNotes.flush());
   const edited=format.decode(fs.readFileSync(file));check(edited.text.includes('My edited example')&& /\[x\]\s+Tick this box\./.test(edited.text),'Checklist and table edits save through the normal editor');check(JSON.stringify(edited.assets)===JSON.stringify(original.assets),'Editing examples retains the drawing and PDF assets');
   await js(()=>NoteMindHelp.welcomeNote());check(await js(()=>tabs.filter(t=>t.doc.path===doc.path).length===1&&currentText().includes('My edited example')&&rich.querySelector('input').checked),'Reopening Help preserves guide edits and uses one tab');
-  await js(()=>{rich.querySelector('[data-edit-graphics]').click();});await wait(()=>!!document.querySelector('[data-tablet=pane-save][aria-label="Save to Original"]'));
-  check(await js(()=>!!document.querySelector('[data-tablet=surface]')&&!!document.querySelector('[data-tablet=pane-save][aria-label="Save to Original"]')),'The ink example opens in the actual drawing editor with an original target');
+  await js(()=>{const ink=rich.querySelector('img[data-asset="assets/welcome-ink.svg"]');ink.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:500,clientY:100}));});
+  await wait(()=>!!document.querySelector('.float-menu [data-menu-label="Edit with Tablet"]'));
+  await js(()=>document.querySelector('.float-menu [data-menu-label="Edit with Tablet"]').click());
+  await wait(()=>document.querySelector('.sheet-scroll .sheet-tab.on .name')?.textContent==='Welcome sketch');
+  await js(()=>document.querySelector('.sheet-tabs [data-bar=pane-menu]').click());
+  await wait(()=>!!document.querySelector('.float-menu [data-bar=pane-save-original]'));
+  check(await js(()=>!!document.querySelector('[data-tablet=surface]')&&!!document.querySelector('.float-menu [data-bar=pane-save-original]')),'The ink example opens in the actual drawing editor with an original target');
+  await js(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
   await js(()=>{rich.querySelector('[data-attachment]').click();});await wait(()=>document.querySelectorAll('.document-workspace:not([hidden]) [data-preview-page]').length===2);
   check(await js(()=>document.querySelector('.document-workspace:not([hidden])').dataset.docKind==='pdf'&&document.querySelectorAll('.document-workspace:not([hidden]) [data-preview-page]').length===2),'The bundled reference opens as a real two-page PDF');
   Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Welcome').click();let start;for(let i=0;i<100&&!start;i++){start=BrowserWindow.getAllWindows().find(b=>b!==w&&b.webContents.getURL().endsWith('welcome.html'));if(!start)await pause(50);}if(!start)throw Error('Welcome screen missing');
