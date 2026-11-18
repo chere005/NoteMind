@@ -32,3 +32,17 @@ test('failed asynchronous reorder cannot restore stale focus on a later viewport
 test('an older reorder rejection cannot cancel the newer pending focus owner',async()=>{
  const h=harness(),pending=[];h.props.onReorder=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}));h.render();h.focus('Page 0');page(h,0).props.onKeyDown(h.event('ArrowDown',{altKey:true}));page(h,0).props.onKeyDown(h.event('ArrowDown',{altKey:true}));pending[0].reject(Error('Old request failed'));await new Promise(setImmediate);h.render();assert.equal(h.find(node=>node.props?.role==='alert'),undefined);h.props.pages=require('../src/page-overview-coordinator.cjs').reorderPages(h.props.pages,'p0','p4');h.render();assert.equal(h.focused,'Page 0');pending[1].resolve();await new Promise(setImmediate);
 });
+
+test('production overview callbacks ignore foreign cancellation and delayed capture loss',()=>{
+ for(const callback of ['onPointerCancel','onLostPointerCapture']){
+  const h=harness(6),button=page(h,0),capture={setPointerCapture(){}},event=(pointerId,clientX=0)=>({pointerId,button:0,clientX,clientY:20,timeStamp:10,detail:1,currentTarget:capture,preventDefault(){}});
+  h.scroller.getBoundingClientRect=()=>({left:0,right:600,top:0,bottom:400});h.scroller.contains=()=>true;h.scroller.ownerDocument.elementFromPoint=()=>({closest:()=>({dataset:{overviewPageId:'p3'}})});
+  button.props.onPointerDown(event(1));button.props.onPointerMove(event(1,20));button.props[callback](event(2));button.props.onPointerUp(event(1,20));
+  assert.deepEqual(h.calls,[['p0','p3']],callback+' must preserve the owning pointer');
+  // Capture loss from the completed gesture must not cancel its successor.
+  button.props.onPointerDown(event(2));button.props.onPointerMove(event(2,20));button.props[callback](event(1));button.props.onPointerUp(event(2,20));
+  assert.deepEqual(h.calls,[['p0','p3'],['p0','p3']],callback+' must ignore the old pointer');
+  button.props.onPointerDown(event(3));button.props.onPointerMove(event(3,20));button.props[callback](event(3));button.props.onPointerUp(event(3,20));
+  assert.equal(h.calls.length,2,callback+' must still cancel the owning pointer');h.unmount();
+ }
+});
