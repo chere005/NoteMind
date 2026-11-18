@@ -58,13 +58,13 @@ class TextReader {
  }
  preemptBackground(){for(const job of this.jobs.values())if(job.worker&&job.priority==='background'){const worker=job.worker;job.worker=null;clearTimeout(job.timer);this.queue.push(job);this.progress(job,'Queued');this.release(worker);}}
  complete(job,error,result){
-  if(!this.jobs.has(job.id))return;if(error){job.formatController?.abort();return this.finish(job,error);}
+  if(this.jobs.get(job.id)!==job)return;if(error){job.formatController?.abort();return this.finish(job,error);}
   if(job.formatting)return;if(!Array.isArray(result?.lines))return this.finish(job,Error('The text reader returned an invalid result.'));
   job.formatting=true;const controller=job.formatController=new AbortController(),pending=require('./ocr-reading-order.cjs').readingOrder(result.lines,{signal:controller.signal});this.formats.add(pending);
-  void pending.then(text=>{this.formats.delete(pending);if(this.jobs.has(job.id))this.finish(job,null,{...result,text});else this.pump();},failure=>{this.formats.delete(pending);if(this.jobs.has(job.id))this.finish(job,failure);else this.pump();});
+  void pending.then(text=>{this.formats.delete(pending);if(this.jobs.get(job.id)===job)this.finish(job,null,{...result,text});else this.pump();},failure=>{this.formats.delete(pending);if(this.jobs.get(job.id)===job)this.finish(job,failure);else this.pump();});
  }
  finish(job,error,result){
-  if(!this.jobs.has(job.id))return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.bytes=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
+  if(this.jobs.get(job.id)!==job)return;this.jobs.delete(job.id);this.bytes-=job.bytes.length;job.bytes=null;job.cleanup?.();clearTimeout(job.timer);const worker=job.worker;job.worker=null;const record=worker&&this.records.get(worker);if(record)record.job=null;
   let value;if(!error)try{value={text:result.text,lines:result.lines,language:job.language,timing:result.timing};this.rememberResult(job.key,value);}catch(failure){error=failure;}
   if(worker){if(error)this.release(worker);else this.park(worker);}
   if(error)job.reject(error);else job.resolve(this.publicResult(value,job.textOnly));this.pump();
@@ -74,7 +74,7 @@ class TextReader {
  rememberResult(key,value){if(this.disposed||this.cacheCounting)return;const admit=bytes=>{if(this.disposed||!Number.isFinite(bytes)||bytes>this.maxCacheBytes)return;const prior=this.cache.get(key);if(prior){this.cache.delete(key);this.cacheBytes-=prior.bytes;}while(this.cache.size&&(this.cache.size>=32||this.cacheBytes+bytes>this.maxCacheBytes)){const first=this.cache.keys().next().value;this.cacheBytes-=this.cache.get(first).bytes;this.cache.delete(first);}this.cache.set(key,{value,bytes});this.cacheBytes+=bytes;},bytes=require('./ocr-cache-bytes.cjs').resultBytes(value,this.maxCacheBytes,{cancelled:()=>this.disposed});if(bytes?.then){this.cacheCounting=true;const pending=bytes.then(admit).finally(()=>{this.cacheCounting=false;if(this.cachePending===pending)this.cachePending=null;});this.cachePending=pending;}else admit(bytes);}
  pump(){
   if(this.disposed||this.stopFailure||this.formats.size||(this.workers.size&&!this.idleWorker)||!this.queue.length)return;
-  const next=this.queue.findIndex(job=>job.priority==='foreground'),job=this.queue.splice(next<0?0:next,1)[0];if(!this.jobs.has(job.id)){this.pump();return;}
+  const next=this.queue.findIndex(job=>job.priority==='foreground'),job=this.queue.splice(next<0?0:next,1)[0];if(this.jobs.get(job.id)!==job){this.pump();return;}
   let worker=this.idleWorker;if(worker){this.idleWorker=null;this.clearIdleTimer();}
   else try{worker=this.workerFactory(path.join(folder,'worker.mjs'),{workerData:{folder,threads:this.threads}});this.attach(worker);}catch(error){this.complete(job,error);return;}
   job.worker=worker;job.wireId=++this.wireSequence;this.records.get(worker).job=job;this.progress(job,'Reading text');
