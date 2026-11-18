@@ -31,11 +31,17 @@ class RawSpoolJournal{
  claim(file,stat){let fd;try{this.check();const name=path.basename(file);if(path.dirname(file)!==this.directory||!/^[-a-f0-9]{36}\.raw$/.test(name))throw changed();fd=this.io.openSync(path.join(this.directory,RECEIPT),this.io.constants.O_RDWR|(this.io.constants.O_NOFOLLOW||0)|(this.io.constants.O_NONBLOCK||0));if(stamp(regular(this.io.fstatSync(fd,{bigint:true})))!==stamp(this.stat))throw changed();let row=Buffer.from(line(claimRow(this.authority,this.generation,name,identity(regular(stat)))));if(this.rows>=this.maxClaims||this.appendAt+row.length+1>OWNER_BYTES+(this.slot+1)*SLOT_BYTES){this.compact(fd);row=Buffer.from(line(claimRow(this.authority,this.generation,name,identity(regular(stat)))));}writeAll(this.io,fd,row,this.appendAt);writeAll(this.io,fd,Buffer.from([0]),this.appendAt+row.length);this.io.fsyncSync(fd);const next=regular(this.io.fstatSync(fd,{bigint:true}));if(!same(identity(next),this.authority.receipt)||stamp(next)!==stamp(regular(this.io.lstatSync(path.join(this.directory,RECEIPT),{bigint:true}))))throw changed();verifyDirectory(this.directory,this.authority.directory,this.io);this.stat=next;this.rows++;this.appendAt+=row.length;this.claims.set(name,identity(stat));}catch(error){throw ownerLost(error);}finally{if(fd!==undefined)this.io.closeSync(fd);}}
 }
 
-async function cleanupSpoolDirectory(directory,{io=fs,authority,check=()=>{}}={}){
+function finishSpoolDirectory(directory,final,{io=fs,check=()=>{}}={}){
+ check();try{verifyDirectory(directory,final.directory,io);}catch(error){if(error.code==='ENOENT'&&!io.existsSync(directory))return;throw error;}
+ const names=io.readdirSync(directory);if(names.some(name=>name!==RECEIPT))throw changed();
+ if(names.length){const receipt=path.join(directory,RECEIPT);if(stamp(regular(io.lstatSync(receipt,{bigint:true})))!==final.receipt)throw changed();check();verifyDirectory(directory,final.directory,io);io.unlinkSync(receipt);}
+ check();verifyDirectory(directory,final.directory,io);io.rmdirSync(directory);
+}
+async function cleanupSpoolDirectory(directory,{io=fs,authority,check=()=>{},onFinalizing=()=>{}}={}){
  let value;try{value=readOwner(directory,{io,authority});}catch(error){if(error.cause?.code==='ENOENT'&&!io.existsSync(directory))return;throw error;}const {claims}=value,receipt=path.join(directory,RECEIPT),verify=()=>{check();verifyDirectory(directory,value.authority.directory,io);if(stamp(regular(io.lstatSync(receipt,{bigint:true})))!==stamp(value.stat))throw changed();};
  verify();const existing=[];for(const[name,owned]of claims){const file=path.join(directory,name);let stat;try{stat=regular(io.lstatSync(file,{bigint:true}));}catch(error){if(error.code==='ENOENT'||error.code==='ARCHIVE_RAW_SPOOL_CHANGED')continue;throw changed(error);}if(same(identity(stat),owned))existing.push([file,owned]);}
  for(let at=0;at<existing.length;at++){verify();const[file,owned]=existing[at];let stat;try{stat=regular(io.lstatSync(file,{bigint:true}));}catch(error){if(error.code==='ENOENT')continue;throw changed(error);}if(!same(identity(stat),owned))throw changed();io.unlinkSync(file);if(at%32===31)await new Promise(setImmediate);}
- verify();if(io.readdirSync(directory).some(name=>name!==RECEIPT))throw changed();io.unlinkSync(receipt);verifyDirectory(directory,value.authority.directory,io);io.rmdirSync(directory);
+ verify();if(io.readdirSync(directory).some(name=>name!==RECEIPT))throw changed();const final={directory:{...value.authority.directory},receipt:stamp(value.stat)};onFinalizing(final);finishSpoolDirectory(directory,final,{io,check});
 }
 function ownerAlive(pid){try{process.kill(pid,0);return true;}catch(error){return error.code!=='ESRCH';}}
 async function cleanupDeadSpoolDirectories({root=os.tmpdir(),io=fs,limit=4,scanLimit=256,isAlive=ownerAlive}={}){
@@ -43,7 +49,7 @@ async function cleanupDeadSpoolDirectories({root=os.tmpdir(),io=fs,limit=4,scanL
 }
 function createSpoolDirectory({root=os.tmpdir(),io=fs,pid=process.pid}={}){
  const directory=io.mkdtempSync(path.join(root,PREFIX));io.chmodSync(directory,0o700);const state=directoryState(directory,io),file=path.join(directory,RECEIPT),fd=io.openSync(file,'wx',0o600),receipt=identity(io.fstatSync(fd,{bigint:true})),authority={id:randomUUID(),pid,uid:process.getuid?.()||0,directory:state,receipt};
- try{const text=line({format:'notemind-raw-owner',version:2,...authority}),bytes=Buffer.alloc(OWNER_BYTES);if(Buffer.byteLength(text)>OWNER_BYTES)throw Error('Private archive owner path is too long.');bytes.write(text);writeAll(io,fd,bytes,0);io.fsyncSync(fd);writeCheckpoint(io,fd,authority,0,1,new Map());}finally{io.closeSync(fd);}let removed=false,pending;
- return{directory,authority,cleanup(){if(removed)return Promise.resolve();if(pending)return pending;pending=cleanupSpoolDirectory(directory,{io,authority}).then(()=>{removed=true;},error=>{pending=null;throw error;});return pending;}};
+ try{const text=line({format:'notemind-raw-owner',version:2,...authority}),bytes=Buffer.alloc(OWNER_BYTES);if(Buffer.byteLength(text)>OWNER_BYTES)throw Error('Private archive owner path is too long.');bytes.write(text);writeAll(io,fd,bytes,0);io.fsyncSync(fd);writeCheckpoint(io,fd,authority,0,1,new Map());}finally{io.closeSync(fd);}let removed=false,pending,final;
+ return{directory,authority,cleanup(){if(removed)return Promise.resolve();if(pending)return pending;pending=(final?Promise.resolve().then(()=>finishSpoolDirectory(directory,final,{io})):cleanupSpoolDirectory(directory,{io,authority,onFinalizing:value=>{final=value;}})).then(()=>{removed=true;},error=>{pending=null;throw error;});return pending;}};
 }
 module.exports={createSpoolDirectory,RawSpoolJournal,cleanupSpoolDirectory,cleanupDeadSpoolDirectories,readOwner,RECEIPT,ownerLost};
