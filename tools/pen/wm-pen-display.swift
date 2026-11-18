@@ -228,7 +228,8 @@ struct Side: Equatable {
  * Any other shape is not a button report (nil).
  */
 func sideState(_ bytes: [UInt8]) -> Side? {
-    guard bytes.count >= 3, bytes[0] == 0x1E, bytes[1] == 0x01 else { return nil }
+    guard bytes.count >= 3, bytes[0] == 0x1E, bytes[1] <= 1 else { return nil }
+    if bytes[1] == 0 { return Side() }
     let status = bytes[2]
     let range = status & 0xC0 == 0xC0
     return Side(tip: range && status & 0x01 != 0, lower: range && status & 0x02 != 0, upper: range && status & 0x04 != 0, range: range)

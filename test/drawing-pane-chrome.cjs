@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { app } = require('electron');
+const { app, Menu } = require('electron');
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'notemind-drawing-chrome-'));
 process.env.NOTEMIND_DATA = profile;
@@ -61,6 +61,11 @@ app.once('browser-window-created', (_, window) => {
       })()`);
 
       let state = await layout();
+      const nativeLabels = name => Menu.getApplicationMenu().items.find(item => item.label === name).submenu.items.map(item => item.label);
+      assert.ok(!nativeLabels('Capture').some(label => label.includes('Wacom Screen')));
+      assert.ok(nativeLabels('File').includes('Close Window') && !nativeLabels('Window').includes('Close Window'));
+      assert.ok(nativeLabels('Window').includes('Zoom Window'));
+      assert.ok(nativeLabels('Help').includes('Welcome Screen') && !nativeLabels('File').includes('Welcome'));
       assert.equal(state.overlay, false, 'The drawing sheet has no floating precision controls');
       assert.equal(state.oldOptions, false, 'The pen toolbar has no drawing options button');
       assert.ok(state.aligned, 'The drawing and Notepad menus align in the top row');
@@ -70,7 +75,7 @@ app.once('browser-window-created', (_, window) => {
       await tick();
       const rows = await js(`[...document.querySelectorAll('.float-menu [data-bar]')]
         .map(button => button.dataset.bar)`);
-      for (const action of ['pane-save', 'pane-paper', 'pane-orientation', 'clear']) {
+      for (const action of ['pane-save', 'pane-paper', 'pane-orientation', 'pane-wacom', 'clear']) {
         assert.ok(rows.includes(action), `Missing drawing option ${action}`);
       }
       await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
@@ -80,10 +85,38 @@ app.once('browser-window-created', (_, window) => {
       assert.equal(state.addTabCount, 2);
       assert.match(state.activeTab, /^Sheet 2/);
 
+      const setScale = value => js(`(() => {
+        const field = document.querySelector('.tablet-footer [data-drawing-zoom]');
+        field.value = ${JSON.stringify(value)};
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      const scale = () => js(`(() => {
+        const field = document.querySelector('.tablet-footer [data-drawing-zoom]');
+        const sheet = document.querySelector('[data-tablet=surface]');
+        const width = sheet.getBoundingClientRect().width;
+        return { value: field.value, width, pixels: width / JSON.parse(sheet.dataset.sheetViewport).width };
+      })()`);
+      const fitted = await scale();
+      assert.equal(fitted.value, 'fit');
+      await setScale('150');
+      await tick();
+      const enlarged = await scale();
+      assert.equal(enlarged.value, '150');
+      assert.ok(Math.abs(enlarged.pixels / fitted.pixels - 1.5) < .01);
+
       window.setContentSize(1080, 850);
       await tick();
       state = await layout();
       assert.ok(state.aligned && state.addBesideTabs && state.available, JSON.stringify(state));
+      const narrower = await scale();
+      assert.notEqual(narrower.width, enlarged.width);
+      assert.equal(narrower.value, '150');
+      assert.ok(Math.abs(narrower.pixels - enlarged.pixels) < 1, 'Resizing must preserve the chosen drawing scale');
+      await setScale('50');
+      await tick();
+      const reduced = await scale();
+      assert.equal(reduced.value, '50');
+      assert.ok(Math.abs(reduced.pixels / enlarged.pixels - 1 / 3) < .01);
       finish();
     } catch (error) {
       finish(error);

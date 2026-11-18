@@ -155,7 +155,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  const physicalButtons=async patch=>{w.webContents.send('pen:buttons-push',physicalState(patch));await wait(40)};
  const physicalPoint=(await shownStrokes())[0].points[0],physicalInk=JSON.stringify((await strokes()));
  await child.webContents.executeJavaScript(`window.__physicalDowns=0;window.__physicalDownListener=event=>{if(event.pointerId===9091)window.__physicalDowns++};document.querySelector('[data-tablet=surface]').addEventListener('pointerdown',window.__physicalDownListener);void 0`);
- const physicalPointer=async(type,point,{button=0,buttons=0,pressure=0}={})=>{await child.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet=surface]'),r=surface.getBoundingClientRect();surface.dispatchEvent(new PointerEvent(${JSON.stringify(type)},{pointerType:'pen',pointerId:9091,isPrimary:true,button:${button},buttons:${buttons},pressure:${pressure},clientX:r.left+r.width*${point.x},clientY:r.top+r.height*${point.y},bubbles:true,cancelable:true}))})()`);await wait(30)};
+ const physicalPointer=async(type,point,{button=0,buttons=0,pressure=0,pointerType='pen'}={})=>{await child.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet=surface]'),r=surface.getBoundingClientRect();surface.dispatchEvent(new PointerEvent(${JSON.stringify(type)},{pointerType:${JSON.stringify(pointerType)},pointerId:9091,isPrimary:true,button:${button},buttons:${buttons},pressure:${pressure},clientX:r.left+r.width*${point.x},clientY:r.top+r.height*${point.y},bubbles:true,cancelable:true}))})()`);await wait(30)};
  const savedStrokeCount=async(count,label)=>{for(let n=0;n<40;n++){if((await strokes()).length===count)return;await wait(50)}throw Error(label)};
  const airDouble=async side=>{for(let n=0;n<2;n++){await physicalButtons({[side]:true});await physicalButtons({});}};
  // DOM contact can arrive before the HID tip report; both inputs keep the physical button slot.
@@ -175,6 +175,14 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(await child.webContents.executeJavaScript('window.__physicalDowns')!==2)throw Error('The delayed HID report started a duplicate far-button gesture');
  if(!await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pen]').getAttribute('aria-pressed')==='true'`))throw Error('A physical button hold changed the active Pen tool');
  await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=surface]').removeEventListener('pointerdown',window.__physicalDownListener);window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
+ await physicalButtons({lower:true,tip:true});
+ await physicalPointer('pointerdown',physicalPoint,{pointerType:'mouse',button:2,buttons:2});
+ await physicalPointer('pointermove',physicalPoint,{pointerType:'mouse',button:-1,buttons:2});
+ await physicalButtons({lower:true});
+ await physicalPointer('pointerup',physicalPoint,{pointerType:'mouse',button:2});
+ await physicalButtons({});
+ await savedStrokeCount(0,'Mouse-form Wacom contact ignored the physical Erase button');
+ await airDouble('lower');await savedStrokeCount(1,'Physical Undo did not restore ink after the driver fallback gesture');
  await physicalButtons({range:false});await wait(350);
  checkpoint('rotated page controls and pen/mouse coordinates');
  const openOrientation=async()=>{
@@ -213,11 +221,17 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(!child.isDestroyed()||JSON.stringify((await strokes()))!==inkBeforeClose||await w.webContents.executeJavaScript(`document.getElementById('pane').hidden`))throw Error('Closing the tablet hid the capture pane or changed its drawing instead of only closing the tablet window');
  expectedTabletClose=false;
  if(!await w.webContents.executeJavaScript(`!!document.querySelector('#tablet-root .tablet-pane')`))throw Error('Drawing did not return to the main window');
- const openSource=async()=>{await w.webContents.executeJavaScript(`document.querySelector('[data-bar=video-menu]').click();void 0`);await wait(60);};
- const toggleWacom=async()=>{await openSource();await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=video-wacom]').click();void 0`);};
- await openSource();
- const toggle=await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=video-wacom]')?.getAttribute('aria-checked')==='false'`);
- if(!toggle)throw Error('The capture source menu did not offer Use Wacom Screen');
+ const openDrawingOptions=async()=>{
+  for(let i=0;i<30;i++){
+   if(await w.webContents.executeJavaScript(`(()=>{if(document.querySelector('.float-menu [data-bar=pane-wacom]'))return true;const menu=document.querySelector('.sheet-tabs [data-bar=pane-menu]');if(menu&&menu.getAttribute('aria-expanded')!=='true')menu.click();return false})()`))return;
+   await wait(100);
+  }
+  throw Error('Drawing options did not open with Use Wacom Screen');
+ };
+ const toggleWacom=async()=>{await openDrawingOptions();await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=pane-wacom]').click();void 0`);};
+ await openDrawingOptions();
+ const toggle=await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=pane-wacom]')?.getAttribute('aria-checked')==='false'`);
+ if(!toggle)throw Error('Drawing options did not offer Use Wacom Screen');
  await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
  await wait(650);const inkBefore=JSON.stringify((await sheets())[0].strokes);
  await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
@@ -230,7 +244,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(JSON.parse(fs.readFileSync(path.join(root,'pad.json'),'utf8')).enabled!==false)throw Error('The drawing-location toggle did not remember the window location');
  if(!display.isDestroyed()||!await w.webContents.executeJavaScript(`!!document.querySelector('#tablet-root [data-tablet="surface"]')`))throw Error('The drawing-location toggle did not return the same page to the main window');
  expectedTabletClose=false;
- await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder button[data-drawing-location="wacom"]')`))break;}
+ await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
  display=electron.BrowserWindow.getAllWindows().find(x=>x!==w);if(!display)throw Error('The drawing-location toggle did not recreate the tablet window');display.webContents.setBackgroundThrottling(false);watchTablet(display);if(JSON.stringify((await strokes()))!==inkBefore)throw Error('The drawing-location off/on cycle changed existing ink');
  for(const aspect of [1/3,3,.125,8,.1,10]){
   stage='imported aspect '+aspect;

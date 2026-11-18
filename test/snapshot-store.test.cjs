@@ -30,6 +30,24 @@ test('snapshot object publication survives concurrent publishers without replaci
  await Promise.all([snapshots.publishSnapshot(root,'one',prepared),snapshots.publishSnapshot(root,'two',prepared)]);assert.equal((await objectFiles(root)).length,1);assert.deepEqual(await snapshots.readSnapshot(root,'one'),doc);assert.deepEqual(await snapshots.readSnapshot(root,'two'),doc);
  await assert.rejects(snapshots.publishSnapshot(root,'one',snapshots.prepareSnapshot({...doc,text:'overwrite'})),{code:'EEXIST'});assert.equal((await snapshots.readSnapshot(root,'one')).text,doc.text);
 });
+test('snapshot publication rechecks an asset when a concurrent publisher retires its link',async t=>{
+ for(const retirementCheck of [1,2]){
+  const root=await fixture(t),doc=document({'assets/a.bin':Buffer.from('shared version asset').toString('base64')}),first=snapshots.prepareSnapshot(doc);
+  await snapshots.publishSnapshot(root,'first',first);
+  const ref=first.manifest.assets['assets/a.bin'],file=snapshots.objectFile(root,ref.hash),link=file+'.publisher.tmp';
+  await fs.link(file,link);
+  const readStat=fs.lstat;let checks=0;
+  const mocked=t.mock.method(fs,'lstat',async(name,...args)=>{
+   if(name===file&&++checks===retirementCheck)await fs.unlink(link);
+   return readStat(name,...args);
+  });
+  const next={...doc,text:'Version reusing the shared asset'};
+  await snapshots.publishSnapshot(root,'next',snapshots.prepareSnapshot(next,{knownHashes:[ref.hash]}));
+  mocked.mock.restore();
+  assert.ok(checks>retirementCheck,'verification reopened the exact asset after the link retired');
+  assert.deepEqual(await snapshots.readSnapshot(root,'next'),next);
+ }
+});
 test('snapshot reads reject missing, corrupted and forged asset references',async t=>{
  const root=await fixture(t),doc=document({'assets/a.bin':Buffer.from('original').toString('base64')}),prepared=snapshots.prepareSnapshot(doc);await snapshots.publishSnapshot(root,'one',prepared);const ref=prepared.manifest.assets['assets/a.bin'],file=snapshots.objectFile(root,ref.hash),original=await fs.readFile(file);
  await fs.writeFile(file,Buffer.alloc(original.length,1));await assert.rejects(snapshots.readSnapshot(root,'one'),/damaged/);

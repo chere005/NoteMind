@@ -26,9 +26,7 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   check(await js(()=>{const bar=document.getElementById('pen-control'),r=bar.getBoundingClientRect();return r.height<=70&&[...bar.querySelectorAll('button,select')].every(el=>{const b=el.getBoundingClientRect();return !b.width||(b.left>=r.left&&b.right<=r.right&&b.bottom<=r.bottom);});}),'the visible pen controls fit the pen bar');
   await js(()=>document.querySelector('.sheet-tabs [data-bar=pane-menu]').click());await pause(80);
   check(await js(()=>!!document.querySelector('.float-menu [data-bar=pane-orientation]')),'drawing options contains orientation');
-  await js(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
-  await js(()=>document.querySelector('[data-bar=video-menu]').click());await pause(80);
-  check(await js(()=>!!document.querySelector('.float-menu [data-bar=video-wacom]')),'the capture source menu contains Use Wacom Screen');
+  check(await js(()=>!!document.querySelector('.float-menu [data-bar=pane-wacom]')),'drawing options contains Use Wacom Screen');
   await js(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
   await js(()=>document.getElementById('writingTools').click());await pause(80);
   check(await js(()=>['Underline','Strikethrough','Inline Code','Lists','Paragraph'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.getAttribute('data-menu-label')===label))),'Format retains access to advanced formatting and list menus when controls are hidden');

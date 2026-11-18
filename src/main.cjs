@@ -129,7 +129,6 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
       {label:'Import',submenu:[{label:'Markdown as Notepad…',click:command('importMarkdown')},{label:'Word or PDF…',click:command('importDocument')},{label:'Read Text from Image…',click:command('readImage')}]},
       {label:'Export',submenu:[{label:'Export as PDF…',accelerator:'CmdOrCtrl+Shift+E',click:command('exportPDF')},{label:'Word…',click:command('exportWord')},{label:'Drawing…',click:command('exportDrawing')}]},
       {type:'separator'},
-      {label:'Welcome',click:command('welcome')},
       {label:'Close Tab',accelerator:'CmdOrCtrl+W',click:command('closeTab')},
       {label:'Close Window',click:()=>win.close()},
     ]},
@@ -143,15 +142,15 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
     {label:'Drawing',submenu:[['undo','Undo Drawing'],['redo','Redo Drawing'],['toggleErase','Erase Tool'],['toggleSelect','Select Tool'],['togglePenDraws','Pen Always Draws'],['nextColour','Next Colour'],['prevColour','Previous Colour'],['wider','Wider Line'],['thinner','Thinner Line'],['deleteSelection','Delete Selection'],['clearSelection','Clear Selection'],['sendWriting','Send Drawing'],['sendPage','Send Picture'],['clearSheet','Clear Sheet'],['nextSheet','Next Sheet'],['prevSheet','Previous Sheet']].map(([id,label])=>({label,click:command('pen:'+id)}))},
 
-    {label:'Capture',submenu:[{label:'Switch Wacom Screen / Window',click:command('padToggle')},{type:'separator'},{label:'Drawing',click:command('source:tablet')},{label:'Camera',click:command('source:camera')},{label:'Turn Input Off',click:command('inputOff')},{label:'Tablet Settings…',click:command('penSettings')},{label:'Refresh Device List',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},{label:'Aspect Ratio',submenu:[['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']].map(([value,label])=>({label,click:command('cameraAspect:'+value)}))}]},
+    {label:'Capture',submenu:[{label:'Drawing',click:command('source:tablet')},{label:'Camera',click:command('source:camera')},{label:'Turn Input Off',click:command('inputOff')},{label:'Tablet Settings…',click:command('penSettings')},{label:'Refresh Device List',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},{label:'Aspect Ratio',submenu:[['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']].map(([value,label])=>({label,click:command('cameraAspect:'+value)}))}]},
 
     {label:'Notepad',submenu:[['writingTools','Formatting Options…'],['noteInfo','Tags and Pin…'],['attachments','Attachments…'],['attachFiles','Attach Files…'],['scanPages','Multipage Scan…'],['insertNoteLink','Link to Notepad…'],['indexImages','Read Images for Search'],['library','All Notepads…'],['smartFolders','Smart Folders…'],['versions','Version History…'],['recentlyDeleted','Recently Deleted…']].map(([id,label])=>({label,click:command(id)}))},
 
     { label: 'Tools', submenu: [{ label: 'Run Python', accelerator: 'F5', click: command('run') },{label:'Stop Python',click:()=>stopPython()},{label:'Python Interpreter…',click:command('pythonSetup')},{type:'separator'},{label:'Clean Up Unused Images…',click:command('cleanAssets')}] },
 
-    {label:'Help',submenu:[{label:'Welcome to NoteMind',click:command('welcomeNote')},{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
+    {label:'Help',submenu:[{label:'Welcome to NoteMind',click:command('welcomeNote')},{label:'Welcome Screen',click:command('welcome')},{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
 
-    {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')},{label:'Close Window',click:()=>win.close()}]},
+    {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom Window',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')}]},
 
   ]));
   buildMenu();

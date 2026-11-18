@@ -25,9 +25,9 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   await command('pen:undo');check(Math.abs((await sheets())[0].strokes[0].points[0].x-.2)<.01,'one Undo restores the entire selection move');
   await command('pen:redo');check(Math.abs((await sheets())[0].strokes[0].points[0].x-.35)<.01,'Redo restores the moved ink');
   await pointer('pointerdown',.4,.25);await pointer('pointermove',.5,.25);await pointer('pointercancel',.5,.25,false,true);await pause(650);check(Math.abs((await sheets())[0].strokes[0].points[0].x-.35)<.01,'cancelling a selection move preserves its original ink');
-  await option('clear');await pause(650);check((await sheets())[0].strokes.length===0,'Clear Sheet empties the drawing from the options menu');await command('pen:undo');check((await sheets())[0].strokes.length===2,'clearing a sheet is undoable');
+  await click('#pen-control [data-tablet=clear]');await pause(650);check((await sheets())[0].strokes.length===0,'Clear Page empties the drawing from the pen bar');await command('pen:undo');check((await sheets())[0].strokes.length===2,'clearing a sheet is undoable');
   await command('pen:clearSelection');await click('[data-capture=ink]');await pause(250);
-  check(await js(`document.querySelectorAll('#rich .graphics-pane').length===1&&Object.keys(doc.assets).some(n=>n.endsWith('.json'))`),'bringing in creates a docked graphics pane with editable ink');
+  check(await js(`document.querySelectorAll('#rich .graphics-pane.floating-graphics').length===1&&Object.keys(doc.assets).some(n=>n.endsWith('.json'))`),'Insert Writing defaults to floating and preserves editable ink');
   check(await js(`NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===2`),'the stored graphics pane retains both strokes');
   await js(`(()=>{const name=document.querySelector('#rich img[data-asset]').dataset.asset+'.json',sheet=NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[name]))));sheet.aspect=.75;doc.assets[name]=btoa(unescape(encodeURIComponent(NoteMindGraphics.encode(sheet))))})()`);
   await click('[data-edit-graphics]');await pause(650);check((await sheets()).length===2&&(await sheets())[1].strokes.length===2&&(await sheets())[1].aspect===.75,'Edit in Wacom restores the editable stroke data and preserves its aspect ratio');
@@ -39,6 +39,18 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   check(await js(`(async()=>{const img=document.querySelector('#rich .graphics-pane.ink-only>img');if(!img)return false;await img.decode();const canvas=document.createElement('canvas');canvas.width=100;canvas.height=100;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,100,100);const pixels=ctx.getImageData(0,0,100,100).data;return pixels[3]===0&&pixels.some((value,index)=>index%4===3&&value>0)})()`),'Save to Original preserves the transparent writing and ink');
   await js(`document.querySelector('#rich').focus()`);await command('undoText');
   check(await js(`NoteMindGraphics.decode(decodeURIComponent(escape(atob(doc.assets[document.querySelector('#rich img[data-asset]').dataset.asset+'.json'])))).strokes.length===2`),'a Notepad Undo restores the original pane and sidecar together');
+  await click('[data-tablet=bring-menu]');await pause(60);
+  const dock='.float-menu [data-bar=bring-docked]';
+  const checked=()=>js(`document.querySelector(${JSON.stringify(dock)})?.getAttribute('aria-checked')`);
+  check(await checked()==='false','Dock in Notepad initially has no checkmark');
+  await click(dock);await pause(60);
+  check(await checked()==='true','Dock in Notepad updates while the menu stays open');
+  await click('.float-menu [data-bar=bring-writing]');await pause(250);
+  check(await js(`(() => {const pane=document.querySelector('#rich .graphics-pane.ink-only:not(.floating-graphics)');return pane&&doc.meta.graphicsPanes[pane.querySelector('img').dataset.asset].docked===true})()`),'Dock in Notepad inserts writing in a framed graphics pane');
+  await click('[data-tablet=bring-menu]');await pause(60);
+  check(await checked()==='true','the next insertion retains the chosen layout');
+  await click('.float-menu [data-bar=bring-page]');await pause(450);
+  check(await js(`(() => {const pane=document.querySelector('#rich .graphics-pane:not(.ink-only):not(.floating-graphics)');return pane&&doc.meta.graphicsPanes[pane.querySelector('img').dataset.asset].docked===true})()`),'Whole Sheet as Picture uses the same dock setting');
   fs.writeFileSync(path.join(root,'drawing-tools.png'),(await w.webContents.capturePage()).toPNG());
   report.ok=true;
  }catch(error){report.ok=false;report.error=error.stack;report.console=await js(`({errors:document.getElementById('status').textContent,sheets:[...document.querySelectorAll('.sheet-tab .name')].map(n=>n.textContent)})`).catch(()=>null);}

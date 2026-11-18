@@ -21,10 +21,8 @@ export function PadHost({children}:{children:ReactNode}){
   const api=(window as any).notemind?.pad;if(!api)return
   let live=true;const receive=(next:PadState)=>{if(live&&next)setState(next)}
   api.state().then(receive).catch(()=>{});const off=api.onState(receive),offFrame=api.onFrame((data:string)=>{if(live)setFrame(data)})
-  const toggle=(event:Event)=>{if((event as CustomEvent).detail==='padToggle')api.set(!state?.enabled).then(receive).catch(()=>{})}
-  window.addEventListener('notemind-command',toggle)
-  return()=>{live=false;off();offFrame();window.removeEventListener('notemind-command',toggle)}
- },[state?.enabled])
+  return()=>{live=false;off();offFrame()}
+ },[])
  useEffect(()=>{
   if(!state?.available||!state.enabled||!state.owned){setTarget(null);return}
   let cancelled=false,pad:Window|null=null

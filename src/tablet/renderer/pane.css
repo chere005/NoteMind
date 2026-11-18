@@ -21,7 +21,7 @@
 
 /* One tool bar on a sheet: its actions (CameraHeader.tsx's TabletHeader) follow the pen's controls, so the pane has two bars. */
 .tablet-pane>.pen-bar,.pane-chrome-slot>.pen-bar{container-type:inline-size}
-.pen-bar .pen-trailing{display:contents}
+.pen-bar :is(.pen-trailing,.pen-insert-actions){display:contents}
 .pen-bar .grow{flex:1 1 auto;min-width:0}
 .pen-bar .pen-kind{flex:none}
 .pen-bar [data-capture="ink"]>.wm-icon{display:none}
@@ -49,12 +49,17 @@
 }
 /* The width Sean keeps the pane at (380px). The bar is the query's container and cannot close its own gap: its items do. */
 @container (max-width:395px){
- .pen-bar>*,.pen-bar .pen-trailing>*{margin-left:-2px}
+ .pen-bar>*,.pen-bar .pen-trailing>*,.pen-bar .pen-insert-actions>*{margin-left:-2px}
  .pen-bar .pen-swatches{gap:3px}
  .pen-bar .pen-swatch{width:18px;min-width:18px;height:18px}
  .pen-bar .pen-swatch::after{inset:-6px -1.5px}
 }
-/* A pane narrower than its tools scrolls them; Insert stays in reach at the right edge. */
-.pen-bar .pen-trailing>.bar-split.primary{position:sticky;right:0;z-index:1;box-shadow:0 0 0 4px var(--bar-strip)}
+/* A pane narrower than its tools scrolls them; keep the page actions in reach at the right edge. */
+.pen-bar .pen-insert-actions>.bar-split.primary{position:sticky;right:0;z-index:1;box-shadow:0 0 0 4px var(--bar-strip)}
+@container (max-width:360px){
+ .pen-bar .pen-insert-actions{display:flex;flex:none;align-items:center;gap:3px;position:sticky;right:0;z-index:1;background:var(--bar-strip);box-shadow:-4px 0 var(--bar-strip)}
+ .pen-bar .pen-insert-actions>.grow{display:none}
+ .pen-bar .pen-insert-actions>.bar-split.primary{position:static;box-shadow:none}
+}
 /* The width's number is never squeezed away where it is shown. */
 .pen-bar .pen-width-select{flex:none}

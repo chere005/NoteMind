@@ -150,7 +150,7 @@ app.on('browser-window-created', (_, w) => {
       report.wide = state;
       check(state.rows.length === 2, 'A drawing sheet shows exactly two bars: ' + JSON.stringify(state.rows));
       check(!state.location, 'The Wacom screen switch is not a button on the tool bar');
-      check(!state.saveButton && !state.clearButton, 'Save and Clear are menu rows, not bar buttons');
+      check(!state.saveButton && state.clearButton, 'Clear Page is on the pen bar and Save is in Drawing options');
       fits(state, 'at the default width');
       check(state.standard === 6 && state.custom, 'All six colours and the custom colour show at the default width');
 
@@ -164,12 +164,13 @@ app.on('browser-window-created', (_, w) => {
       check(rows.includes('pane-save') && rows.includes('clear'), 'The options menu holds Save Sheet and Clear the Sheet: ' + rows);
       check(rows.includes('pane-paper') && rows.includes('pane-orientation'),
         'The options menu holds Paper and Tablet Orientation: ' + rows);
+      check(rows.includes('pane-wacom'), 'Drawing options contains Use Wacom Screen');
       await shot('dark-options-menu');
       await escape();
       await click('[data-bar=video-menu]');
       await pause(400);
       const sourceRows = await js(`[...document.querySelectorAll('.float-menu [data-bar]')].map(e=>e.dataset.bar)`);
-      check(sourceRows.includes('video-wacom'), 'The capture source menu holds Use Wacom Screen: ' + sourceRows);
+      check(!sourceRows.includes('video-wacom'), 'The capture source menu no longer duplicates the Wacom switch');
       await shot('dark-source-menu');
       await escape();
 
@@ -308,8 +309,8 @@ app.on('browser-window-created', (_, w) => {
       report.pane380 = state;
       check(state.width <= 400, 'The pane took the 380 pixel width: ' + state.width);
       fits(state, 'in a 380 pixel pane');
-      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,ink,bring-menu',
-        'A 380 pixel pane shows pen, eraser, select, colours, undo, Insert and options: ' + state.order);
+      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,clear,ink,bring-menu',
+        'A 380 pixel pane shows pen, eraser, select, colours, Undo, Clear Page and Insert: ' + state.order);
       check(!state.widthSelect && !state.presets && !state.paper, 'Width, presets and paper leave a 380 pixel bar');
       colour = await tap('Purple');
       check(colour.pressed === 'true' && colour.colour.toLowerCase() === '#8e44ad',

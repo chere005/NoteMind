@@ -20,7 +20,7 @@ export type HelperLine =
   | { k: "access"; v: "granted" | "denied" | "undecided" }
   | { k: "device"; name: string; pid: number; maxX: number; maxY: number; maxP: number }
   | { k: "opened" }
-  | { k: "refused"; why: string }
+  | { k: "refused"; why: string; penDisplay?: boolean }
   | { k: "p"; f: number; x: number; y: number; p: number }
   | { k: "raw"; hex: string }
   | { k: "log"; m: string }
@@ -145,7 +145,7 @@ export class MacPenBackend implements PenBackend {
             case "refused":
               ctx.trace.event(this.name, "refused", { why: line.why })
               if (settled) this.core.error(line.why, true)
-              settle(this.fail(line.why, /unplugged|no Wacom/.test(line.why) ? "after-replug" : "later"))
+              settle(this.fail(line.why, line.penDisplay ? "never" : /unplugged|no Wacom/.test(line.why) ? "after-replug" : "later"))
               break
             case "p":
               this.report(line)

@@ -15,7 +15,7 @@ main{position:relative}
 /* Footer: word count, last save, zoom. */
 footer #wordCount,footer #savedAt{margin-left:14px;white-space:nowrap}
 footer #modeLabel{margin-left:auto}
-footer #zoomBox{background:transparent;color:inherit;border:0;font:inherit;margin-left:auto;cursor:pointer}
+footer #zoomBox,.tablet-footer [data-drawing-zoom]{background:transparent;color:inherit;border:0;font:inherit;margin-left:auto;cursor:pointer}
 
 /* Export as PDF: options beside a preview of the first page. */
 .pdf-dialog{width:min(720px,92vw)}
@@ -55,5 +55,5 @@ footer #zoomBox{background:transparent;color:inherit;border:0;font:inherit;margi
 
 #rich>[data-editor-tail]{min-height:1.5em;margin-bottom:1.5em}
 
-#rich .graphics-pane.ink-only{border:0;border-radius:0;background:transparent}
-@media(prefers-color-scheme:dark){#rich .graphics-pane.ink-only>img{filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #aeb6c4)}}
+#rich .graphics-pane.floating-graphics{border:0;border-radius:0;background:transparent}
+@media(prefers-color-scheme:dark){#rich .graphics-pane.ink-only.floating-graphics>img{filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #aeb6c4)}}
