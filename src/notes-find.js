@@ -68,8 +68,8 @@
   index=-1;refresh();$('status').textContent='Replaced '+total+(total===1?' match':' matches');
  }
  input.oninput=()=>{index=-1;refresh();move(0);};
- input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();move(e.shiftKey?-1:1);}if(e.key==='Escape'){e.preventDefault();close();}};
- replacement.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();if(e.ctrlKey||e.metaKey)replaceAll();else replaceCurrent();}if(e.key==='Escape'){e.preventDefault();close();}};
+ input.onkeydown=e=>{if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;if(e.key==='Enter'){e.preventDefault();move(e.shiftKey?-1:1);}if(e.key==='Escape'){e.preventDefault();close();}};
+ replacement.onkeydown=e=>{if(e.defaultPrevented||e.isComposing||e.keyCode===229)return;if(e.key==='Enter'){e.preventDefault();if(e.ctrlKey||e.metaKey)replaceAll();else replaceCurrent();}if(e.key==='Escape'){e.preventDefault();close();}};
  button('prev').onclick=()=>move(-1);button('next').onclick=()=>move(1);button('close').onclick=close;button('replace').onclick=replaceCurrent;button('all').onclick=replaceAll;
  button('case').onclick=()=>{options.matchCase=!options.matchCase;syncToggles();saveOptions();index=-1;refresh();move(0);};
  button('word').onclick=()=>{options.wholeWord=!options.wholeWord;syncToggles();saveOptions();index=-1;refresh();move(0);};
