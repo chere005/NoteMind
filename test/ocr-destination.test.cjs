@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=requir
 const renderer=fs.readFileSync(require.resolve('../src/renderer.js'),'utf8');
 const readImage=renderer.slice(renderer.indexOf('async function readImage('),renderer.indexOf("window.addEventListener('notemind-imported'"));
 function setup(){
- const controls=Object.fromEntries(['img','area','status','insert','new','again','language','svg','positions','cancel'].map(name=>[name,{value:'',disabled:false,append(){},replaceChildren(){},setAttribute(){}}]));
+ const controls=Object.fromEntries(['img','area','status','insert','new','again','language','svg','positions','cancel'].map(name=>[name,{value:'',disabled:false,append(){},replaceChildren(){},setAttribute(){},removeAttribute(name){delete this[name];}}]));
  const lookup={'img':controls.img,'textarea':controls.area,'.ocr-status':controls.status,'[data-act=insert]':controls.insert,'[data-act=new]':controls.new,'[data-act=again]':controls.again,'select':controls.language,'svg':controls.svg,'input':controls.positions,'[data-act=cancel]':controls.cancel};
  const dialog={querySelector:s=>lookup[s],showModal(){},close(){this.onclose?.()},remove(){},set innerHTML(value){}};
  const sourceTab={id:1},calls=[],notes=[],cancelled=[],jobs=[];let progress,stopped=0;
