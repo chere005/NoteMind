@@ -1,6 +1,6 @@
 // One disposable worker realm owns immutable Blob wrappers and the URLs derived from them.
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports={createProtocol:factory};else{const protocol=factory({post:value=>root.postMessage(value)});root.onmessage=event=>protocol.receive(event.data);}})(typeof self==='undefined'?this:self,function({post,BlobClass=Blob,urls=URL}={}){
- const jobs=new Map(),owned=new Set(),MAX_BYTES=199*1024*1024,CHUNK=196608;
+ const jobs=new Map(),owned=new Map(),MAX_BYTES=199*1024*1024,CHUNK=196608;
  const discard=bytes=>{if(bytes?.byteLength&&bytes.buffer instanceof ArrayBuffer&&bytes.byteOffset===0&&bytes.byteLength===bytes.buffer.byteLength&&typeof bytes.buffer.transfer==='function')bytes.buffer.transfer(0)};
  function receive(packet){let input=packet?.data;
   try{
@@ -17,9 +17,9 @@
    if(op==='finish'){
     const job=jobs.get(packet.job);if(!job||job.received!==job.bytes)throw Error('Incomplete picture source.');
     const blob=new BlobClass(job.parts,{type:job.type});if(blob.size!==job.bytes)throw Error('Picture source length changed.');
-    const url=urls.createObjectURL(blob);owned.add(url);jobs.delete(packet.job);post({id,url,bytes:blob.size});return;
+    const url=urls.createObjectURL(blob);owned.set(url,packet.job);jobs.delete(packet.job);post({id,url,bytes:blob.size});return;
    }
-   if(op==='cancel'){jobs.delete(packet.job);post({id,ok:true});return;}
+   if(op==='cancel'){jobs.delete(packet.job);for(const[url,job]of owned)if(job===packet.job){urls.revokeObjectURL(url);owned.delete(url);}post({id,ok:true});return;}
    if(op==='release'){if(!owned.delete(packet.url))throw Error('Picture URL belongs to another owner.');urls.revokeObjectURL(packet.url);post({id,ok:true});return;}
    throw Error('Invalid picture worker operation.');
   }catch(error){if(Number.isSafeInteger(packet?.job))jobs.delete(packet.job);post({id:packet?.id,error:error.message});}
