@@ -15,7 +15,7 @@ async function fixture({paths=true,count=2}={}){
  c.rememberCurrent=()=>{if(c.activeTab){c.doc.text=source.value;c.activeTab.doc=c.doc;c.activeTab.dirty=c.dirty;}};
  c.activateTab=target=>{if(c.activeTab===target)return;c.rememberCurrent();c.activeTab=target;c.doc=target.doc;c.dirty=target.dirty;source.value=target.doc.text;};
  c.window.NoteMindNoteTitle=require('../src/notes-title.js'); vm.createContext(c);vm.runInContext(fs.readFileSync('src/notes-core.js','utf8'),c);
- const renderer=fs.readFileSync('src/renderer.js','utf8');vm.runInContext(renderer.match(/^function refreshEditor[\s\S]*?^}/m)[0],c);vm.runInContext(renderer.slice(renderer.indexOf('function addTab('),renderer.indexOf('\nfunction escapeHtml')),c);
+ const renderer=fs.readFileSync('src/renderer.js','utf8');vm.runInContext(renderer.match(/^function sourceCaret.*$/m)[0]+'\n'+renderer.match(/^function refreshEditor[\s\S]*?^}/m)[0],c);vm.runInContext(renderer.slice(renderer.indexOf('function addTab('),renderer.indexOf('\nfunction escapeHtml')),c);
  const notes=c.window.NoteMindNotes;await notes.startup(null);
  function edit(tab,text){if(c.activeTab===tab){source.value=text;c.dirty=true;}else tab.doc.text=text;tab.dirty=true;notes.changed(tab);}
  return {c,a,b,cTab,api,notes,hooks,events,sessions,stored,elements,source,edit};

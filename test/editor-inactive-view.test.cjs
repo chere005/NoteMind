@@ -7,7 +7,7 @@ function fixture(code=read()){
  const c={document,rich,source,sourceCarets:new WeakMap(),activeTab:null,doc:{text:'',assets:{},meta:{}},dirty:false,visual:true,richChanged:false,tabs:[],NoteMindDocument:renderer,NoteMindImagePreviews:{retainMany:noop,url:()=>'',size:()=>null},$:id=>document.getElementById(id),updateTitle:noop,window:{NoteMindNotes:{changedView:()=>events.push('view')}},markDirty:()=>events.push('dirty')};
  const lines=code.split('\n'),one=name=>lines.find(line=>line.startsWith('function '+name+'('));
  const helpers=code.match(/^function refreshEditor[\s\S]*?^}/m)?.[0]||'';
- vm.runInNewContext(['rememberCurrent','activateTab','render','visualAccess','currentText','rememberSourceCaret','switchMode'].map(one).filter(Boolean).join('\n')+'\n'+helpers+'\n'+code.slice(code.indexOf('function insertText('),code.indexOf('\n\nasync function readImage(')),c);
+ vm.runInNewContext(['rememberCurrent','activateTab','render','visualAccess','currentText','sourceCaret','rememberSourceCaret','switchMode'].map(one).filter(Boolean).join('\n')+'\n'+helpers+'\n'+code.slice(code.indexOf('function insertText('),code.indexOf('\n\nasync function readImage(')),c);
  let renders=0;const render=c.render;c.render=text=>{renders++;return render(text)};
  const tab=(text,visual=true)=>{const tab={doc:{text,assets:{},meta:{}},visual,dirty:false};c.tabs.push(tab);return tab};
  return {c,rich,source,tab,events,get renders(){return renders}};
@@ -31,4 +31,5 @@ test('unchanged autosave publication preserves the live control, native selectio
 test('history restore keeps source mode free of hidden rendered copies and remains reversible',()=>{
  const file=require.resolve('./notes-history-budget.test.cjs'),prefix=fs.readFileSync(file,'utf8').split("\ntest('typing undo")[0],make=new Function('require',prefix+'\nreturn fixture;')(require('node:module').createRequire(file)),f=make({text:'original'});f.edit('edited');f.api.step();assert.equal(f.c.source.value,'original');assert.equal(f.c.rich.innerHTML,'');f.api.step(true);assert.equal(f.c.source.value,'edited');assert.equal(f.c.rich.innerHTML,'');
 });
+test('source caret receipts discard departed text and weakly identify replaced documents',()=>{const f=fixture(),a=f.tab('original',false),b=f.tab('other',true);f.c.activateTab(a);f.source.setSelectionRange(1,2);f.c.switchMode(true);const receipt=f.c.sourceCarets.get(a);assert.equal(receipt.document.deref(),a.doc);assert.equal(receipt.text,'original');f.rich.innerHTML='<p>new visual content</p>';f.c.richChanged=true;f.c.activateTab(b);assert.equal(f.c.sourceCarets.has(a),false);f.c.activateTab(a);f.c.switchMode(false);f.c.switchMode(true);a.doc=f.c.doc={...a.doc,text:'new document'};f.c.refreshEditor();assert.equal(f.c.sourceCarets.has(a),false);});
 module.exports={fixture};
