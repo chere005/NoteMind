@@ -6,9 +6,9 @@ const {keyPath}=require('./path-key.cjs');
 const digest = data => createHash('sha256').update(data).digest('hex');
 const titleOf = text => String(text || '').split(/\r?\n/).map(s => s.replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ x]\]\s*)?)/i, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/[*_`=]/g, '').trim()).find(Boolean)?.slice(0, 100) || 'Untitled';
 const metadata = value => ({tags: [...new Set((Array.isArray(value?.tags) ? value.tags : []).map(t => String(t).trim().replace(/^#/, '').slice(0, 60)).filter(Boolean))].slice(0, 100), pinned: !!value?.pinned, collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter(x => typeof x === 'string').slice(0, 1000) : [], attachments: value?.attachments && typeof value.attachments==='object' ? value.attachments : {}, graphicsPanes: Object.fromEntries(Object.entries(value?.graphicsPanes||{}).filter(([,pane])=>pane?.version===1).map(([name])=>[name,{version:1}]))});
-async function atomic(file, data) {
+async function atomic(file, data, {valid}={}) {
  const directory=path.dirname(file),created=await fs.mkdir(directory, {recursive:true}),temp=file+'.'+randomUUID()+'.tmp';let handle,published=false;
- try {handle=await fs.open(temp,'wx');await handle.writeFile(data);await handle.sync();await handle.close();handle=null;await fs.rename(temp,file);published=true;await require('./snapshot-store.cjs').syncHierarchy(created||directory,directory);}
+ try {if(valid&&!valid())return false;handle=await fs.open(temp,'wx');await handle.writeFile(data);await handle.sync();await handle.close();handle=null;if(valid&&!valid())return false;await fs.rename(temp,file);published=true;await require('./snapshot-store.cjs').syncHierarchy(created||directory,directory);}
  catch(error){if(published)error.notemindFileCommitted=true;throw error;}
  finally {await handle?.close();await fs.unlink(temp).catch(() => {});}
 }
@@ -24,7 +24,7 @@ class NotesStore {
  constructor(root, recoveryRoot = path.join(root, 'recovery')) { this.root = root; this.recoveryRoot = recoveryRoot; this.pending = Promise.resolve(); this.snapshotObjects = new Map(); this.versionPending = new Map(); }
  async readIndexState() { try {const encoded=await fs.readFile(path.join(this.root,'index.json')),index=await archiveCodec.parseJson(encoded);if(!index||typeof index!=='object'||Array.isArray(index)||!index.records||typeof index.records!=='object'||Array.isArray(index.records))throw Error('The Notepad library index is damaged.');Object.setPrototypeOf(index.records,null);return {index,encoded};}catch(e){if(e.code!=='ENOENT')throw e;return {index:{records:Object.create(null),smartFolders:[],deleted:[],sort:'manual'},encoded:null};} }
  async readIndex() { return (await this.readIndexState()).index; }
- async transaction(fn) {
+ async transaction(fn,{valid}={}) {
   const run = () => require('./native-file-lock.cjs').runWithNativeLock(path.join(this.root,'index.json'),async () => {
    await fs.mkdir(this.root, {recursive:true});const lock=path.join(this.root,'.lock'),candidate=lock+'-'+randomUUID();let acquired=false,ownerStat;
    // Publish a complete owner record atomically, including if the app exits during acquisition.
@@ -38,7 +38,7 @@ class NotesStore {
      if(stat&&!alive){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===stat.ino&&current.dev===stat.dev)await fs.unlink(lock).catch(()=>{});}await new Promise(resolve=>setTimeout(resolve,40));
     }
     if(!acquired)throw Error('The Notepad library is busy. Try again.');
-    const {index,encoded}=await this.readIndexState(),result=await fn(index),next=await archiveCodec.stringifyJson(index);if(encoded===null||!encoded.equals(next))await atomic(path.join(this.root,'index.json'),next);return result;
+    const {index,encoded}=await this.readIndexState();if(valid&&!valid())return false;const result=await fn(index);if(valid&&!valid())return false;const next=await archiveCodec.stringifyJson(index);if(valid&&!valid())return false;if(encoded===null||!encoded.equals(next)){if(await atomic(path.join(this.root,'index.json'),next,{valid})===false)return false;}return result;
    }finally{await fs.unlink(candidate).catch(()=>{});if(acquired){const current=await fs.stat(lock).catch(()=>null);if(current&&current.ino===ownerStat?.ino&&current.dev===ownerStat?.dev)await fs.unlink(lock).catch(()=>{});}}
   },{maxWaitMs:10000});
   const result = this.pending.catch(()=>{}).then(run); this.pending=result; return result;
@@ -156,7 +156,7 @@ class NotesStore {
  }
  async versions(id) { return (await this.readIndex()).records[id]?.versions || []; }
  async versionDoc(id, version) {const entry=(await this.versions(id)).find(v=>v.id===version);if(!entry)throw Error('This version is unavailable.');if(entry.storage==='snapshot-v1')return archiveCodec.readSnapshot(this.root,version);if(entry.storage)throw Error('This version format is not supported.');if(!/^[\w-]{1,80}$/.test(version))throw Error('Invalid version identity.');const {files,kind,...doc}=await archiveCodec.decode(await fs.readFile(path.join(this.root,'versions',version+'.wm')),{files:false});return doc;}
- async indexText(id, values) { return this.transaction(index=>{const r=index.records[id];if(r){r.imageText=Object.values(values).map(x=>x.text || '').join('\n');r.ocr=values;}}); }
+ async indexText(id, values, {valid}={}) { return this.transaction(index=>{const r=index.records[id];if(!r||r.deleted)return false;r.imageText=Object.values(values).map(x=>x.text || '').join('\n');r.ocr=values;return true;},{valid}); }
  async ocrCache(id) { return (await this.readIndex()).records[id]?.ocr || {}; }
  async captureDeleted(source) { const id=randomUUID(),saved=path.join(this.root,'deleted',id);await fs.mkdir(path.dirname(saved),{recursive:true});await require('./markdown-files.cjs').capture(source,saved);return {id,path:source,name:path.basename(source),deletedAt:new Date().toISOString(),saved}; }
  async finishDeleted(item) {return this.transaction(index=>{index.deleted.push(item);for(const r of Object.values(index.records))if(r.path && (keyPath(r.path)===keyPath(item.path)||keyPath(r.path).startsWith(keyPath(item.path)+path.sep)))r.deleted=item.id;});}
