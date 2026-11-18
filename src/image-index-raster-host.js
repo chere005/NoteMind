@@ -2,14 +2,14 @@
 // framework belongs to that page; each byte/bitmap/canvas owner is acknowledged.
 function installImageIndexRasterHost(key,workerURL,makeBytes){
  if(Object.hasOwn(window,key))throw Error('Image conversion host already exists.');
- const bytes=makeBytes({entryLimit:50*1024*1024,limit:100*1024*1024}),worker=new Worker(workerURL),jobs=new Map();let serial=0,active=null,broken=null,cancelledNonce=null;
+ const bytes=makeBytes({entryLimit:50*1024*1024,limit:100*1024*1024,consumeOwned:true}),worker=new Worker(workerURL),jobs=new Map();let serial=0,active=null,broken=null,cancelledNonce=null;
  const error=value=>Object.assign(Error(value?.message||'Image conversion failed.'),{name:value?.name||'Error',code:value?.code});
  worker.onmessage=event=>{const packet=event.data,job=jobs.get(packet?.id);if(!job||active!==job){try{packet?.bytes?.transfer?.(0)}catch{}return;}
   if(packet.released!==true){broken=Error('Image conversion resources have not been released.');job.reject(broken);return;}
   jobs.delete(job.id);active=null;job.drain();
   if(packet.error){job.reject(error(packet.error));return;}
   if(!(packet.bytes instanceof ArrayBuffer)||!packet.bytes.byteLength||packet.bytes.byteLength>50*1024*1024||!Number.isSafeInteger(packet.width)||packet.width<1||!Number.isSafeInteger(packet.height)||packet.height<1||packet.width>2400||packet.height>2400){try{packet.bytes?.transfer?.(0)}catch{}job.reject(Error('Invalid image conversion output.'));return;}
-  try{job.resolve({data:bytes.publish(job.owner,new Uint8Array(packet.bytes)),width:packet.width,height:packet.height});}catch(failure){try{packet.bytes.transfer?.(0)}catch{}job.reject(failure);}
+  try{job.resolve({data:bytes.publishOwned(job.owner,packet.bytes),width:packet.width,height:packet.height});}catch(failure){try{packet.bytes.transfer?.(0)}catch{}job.reject(failure);}
  };
  worker.onerror=event=>{broken=Error(event.message||'Image conversion worker stopped.');active?.reject(broken);};
  const tools=nonce=>({image(input,type,clean,maxDimension,dimensions){
