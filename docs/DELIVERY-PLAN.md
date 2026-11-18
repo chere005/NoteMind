@@ -1,6 +1,6 @@
 # NoteMind delivery plan
 
-Updated November 17, 2026, 8:53 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
+Updated November 17, 2026, 9 PM Central. This is the active plan for the whole requested scope, including the next stable increment, all approved features, and every required review round.
 
 ## Incremental timeline and priorities
 
@@ -17,7 +17,7 @@ Sean will hand this to Claude tomorrow. Use **8 AM Central, November 18** as the
 | 5–7 AM | Full preflight after the requested phase is coherent; packaged/source fidelity, strict signature, frozen scale/recovery/soak gates. |
 | 7–8 AM | Preserve the exact build/source/artifact identities and prepare Claude’s handoff with reproducible evidence and measured gains. |
 
-These are working targets. A failed gate takes priority over optional additions. The first-install estimate of 10–11 PM is conditional on all gates for that increment passing; it is not a promised installation. Notify before a tested install and preserve Sean’s active application. Next whole-timeline status is 9 PM Central and hourly thereafter.
+These are working targets. A failed gate takes priority over optional additions. The first-install estimate of 10–11 PM is conditional on all gates for that increment passing; it is not a promised installation. Notify before a tested install and preserve Sean’s active application. The 9 PM whole-timeline status was delivered; the next is 10 PM Central and hourly thereafter.
 
 Revised after Sean's request to make progress visible sooner and review the features together with performance work. **The requested feature bundle is integrated; ownership and scale closures are active.** Foundation memory/export fixes stay actively owned in parallel; the broad review is moved onto the first useful feature bundle instead of waiting for a separate foundation-only audit.
 
@@ -69,6 +69,19 @@ Report the checkpoint in chat when reached, alongside the hourly whole-roadmap u
 - Keep findings and requested planning in this chat/repository; do not put this work in TaskMind.
 
 ## Work happening now
+
+## November 17, 9 PM Central checkpoint
+
+Deadline: best tested state for Claude by **8 AM Central November 18**. The installed 0.35.0 is untouched. Root source is recoverable at `64a022b`; a development bundle was built at that source, but release qualification, full preflight, main push and installation are still pending. The 9 PM chat status was delivered; next whole-timeline update is 10 PM. The 10–11 PM install estimate remains conditional.
+
+- The full mixed 100-image automatic-index workflow still fails before OCR models start. The image-only converter baseline `659f3e0` failed at scroll 5 / 1,096,876,032 B; adding previous-file entry retirement alone (`80c0fa9`) failed at scroll 5 / 1,103,200,256 B. The latter report exercises `publishVersion`, not `publishVersionFromFile`, so the correct file-retirement fix has **no measured memory gain in this lane**. Main is about 340 MB; the extra helper is about 84–89 MB. No cap, heap, GC, source/pixel or workload weakening is accepted.
+- Architecture's existing-renderer OffscreenCanvas prototype passed all 14 exact native RGBA/dimension cases: PNG/JPEG resize, alpha, tiny/wide, P3 and eight JPEG orientations. The resource-only early ImageBitmap close/canvas reset leaf is integrated (`2f09db3`); its independent repeat at `a0baa7f` also passed every preceding hash, at 802,553,856 B sampled peak. These are narrow kernel proofs, not mixed-app acceptance. The earlier `06d1f91` full report was overwritten by the fixture's fixed filename; its hashes/log are recorded, and subsequent artifacts must be source named. Production host-worker ownership/ACK integration is actively assigned and must pass the unchanged aggregate guard with actual OCR completion.
+- Lazy recognizer source is integrated (`fc5119b`): zero-box detection loads neither recognizer; English-only crops never load Japanese; exact eager/lazy lines, confidence, crop order and coordinates agree. Twelve author checks and the 33 affected integrated checks pass. Native model peak/latency improvement is not yet measured.
+- Bounded Word preview source and Main/preload/React viewport wiring are integrated (`319a058`, `049dc6e`), including source-revision-bound Convert. Client/IPC/IO lifecycle checks pass 23/23. Independent review found FIFO blocking, unstarted cancellation against an unrelated worker, duplicate/saturated close, and zero-based ordered-list handling; fixes are integrated (`f599c56`, `906da21`) and 20 affected backend checks pass. The new source-named actual UI pixel/layout/text/Convert/close gate is prepared; native acceptance is pending, as are large preview/Word100 and TIFF proofs. Preview disk admission and lease-aware media retention are separately assigned before closure.
+- Pure title-stage microbench (`ed3d340`) preserves exact titles: median 2 MiB 0.674→0.023 ms and 16 MiB 5.467→0.011 ms. These are stage measurements, not end-to-end typing claims. Earlier actual 2M-stroke save improvements remain qualified pending final frozen repeats.
+
+Active lanes: Root UI integration/native proof; architecture mixed image/OCR ownership; performance independent preview review/budget dependency and Main memory attribution; data preview lifecycle/budget integration, then TIFF scratch. One heavy/native/build runs at a time at nice 15, hidden and nonfocusable with native pen/media disabled. Recovered 2.31 GB is allocated stopped-profile space with exact cleanup receipts, not a claim about unique APFS capacity. Formal useful-bundle, feature-inclusive and three fresh whole-app audit closures remain open; leaf reviews do not substitute for them.
+
 
 ## November 17, 8 PM Central checkpoint
 
