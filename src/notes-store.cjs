@@ -49,8 +49,11 @@ class NotesStore {
    let id=existing?.id || doc.id || randomUUID();
    if(!/^[\w-]{1,80}$/.test(id)) id=randomUUID();
    const other=index.records[id];
-   if(other?.deleted)throw Error('This Notepad is in Recently Deleted. Restore it before editing.');
-   if(other?.path && doc.path && keyPath(other.path)!==keyPath(doc.path) && await fs.stat(other.path).catch(()=>null)) id=randomUUID();
+   if(other?.deleted){
+    if(doc.path&&!existing&&options.adoptDraft!==true)id=randomUUID();
+    else throw Error('This Notepad is in Recently Deleted. Restore it before editing.');
+   }else if(other&&doc.path&&!other.path&&options.adoptDraft!==true)id=randomUUID();
+   else if(other?.path && doc.path && keyPath(other.path)!==keyPath(doc.path) && await fs.stat(other.path).catch(()=>null)) id=randomUUID();
    const previous=index.records[id] || {}, now=new Date().toISOString();
    const meta=metadata(options.meta ?? doc.meta ?? previous.meta),title=doc.title || await resolveTitleOf(doc.text);
    const entry={...previous, id, path:doc.path || null, title, text:doc.text, meta, created:previous.created || doc.created || now, modified:options.modified || (previous.text===doc.text && previous.title===title && JSON.stringify(previous.meta)===JSON.stringify(meta) ? previous.modified || now : now), attachments:Object.keys(doc.assets || {}).filter(n=>!n.endsWith('.json'))};
@@ -83,7 +86,7 @@ class NotesStore {
   const state={recoveryId:'00000000-0000-0000-0000-000000000000',path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle},canonical=await require('./markdown-files.cjs').canonicalAsync(registered);check();
   const result=await archiveCodec.validateNotepad(canonical,{extra:{'recovery.json':state},signal});check();return result;
  }
- async draft(doc) { return this.transaction(async index=>{const registered=await this.registerInIndex(index,doc,{meta:doc.meta}),state={recoveryId:randomUUID(),path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle}; await atomicArchive(path.join(this.recoveryRoot, registered.id+'.wm'), await require('./markdown-files.cjs').canonicalAsync(registered),{extra:{'recovery.json':state}}); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify(state));index.records[registered.id].recoveryRoot=this.recoveryRoot;return {...registered,recoveryId:state.recoveryId};}); }
+ async draft(doc) { return this.transaction(async index=>{const registered=await this.registerInIndex(index,doc,{meta:doc.meta,adoptDraft:true}),state={recoveryId:randomUUID(),path:registered.path,visual:doc.visual!==false,dirty:!!doc.dirty,revision:doc.revision,initialFolder:doc.initialFolder,manualTitle:!!doc.manualTitle}; await atomicArchive(path.join(this.recoveryRoot, registered.id+'.wm'), await require('./markdown-files.cjs').canonicalAsync(registered),{extra:{'recovery.json':state}}); await atomic(path.join(this.recoveryRoot, registered.id+'.json'),JSON.stringify(state));index.records[registered.id].recoveryRoot=this.recoveryRoot;return {...registered,recoveryId:state.recoveryId};}); }
  async recordCommitIntent(doc,file,revision) {
   if(!doc||typeof doc.id!=='string'||!/^[\w-]{1,80}$/.test(doc.id)||typeof file!=='string'||!path.isAbsolute(file)||typeof revision!=='string'||!/^[a-f0-9]{64}$/.test(revision))throw Error('Invalid document commit intent.');
   const id=doc.id,stateFile=path.join(this.recoveryRoot,id+'.json'),archive=path.join(this.recoveryRoot,id+'.wm');let needsDraft=!doc.recoveryId,expectedRecoveryId=doc.recoveryId;
