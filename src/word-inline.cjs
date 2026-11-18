@@ -70,7 +70,7 @@ class TokenView {
 }
 class Tokens {
   constructor(check) {
-    this.check = check; this.work = 0; this.count = 0; this.rows = 0; this.names = ['']; this.nameIds = new Map([['', 0]]); this.strings = new Strings(); this.cache = new Cache(); this.children = new Map(); this.pendingAttrs = null;
+    this.check = check; this.work = 0; this.count = 0; this.rows = 0; this.names = ['']; this.nameIds = new Map([['', 0]]); this.strings = new Strings(); this.cache = new Cache(); this.children = new Map(); this.ownedChildren = new Set(); this.pendingAttrs = null;
     this.type = new Column(Uint8Array); this.tag = new Column(Uint8Array); this.content = new Column(Uint32Array); this.attrs = new Column(Uint32Array); this.meta = new Column(Uint32Array); this.level = new Column(Int32Array); this.nesting = new Column(Int8Array); this.order = new Column(Uint32Array);
     this.tokens = new Proxy([], {
       get: (target, key) => {
@@ -152,7 +152,7 @@ function parseInline(text, md, env, {check = () => {}, onStats} = {}) {
     };
   });
   ruleView.getRules = () => rules; localInline.ruler = ruleView;
-  localInline.parse = (source, _md, childEnv, out) => { if (source.length < 32768) { md.inline.parse(source, md, childEnv, out); return; } const children = parseInline(source, md, childEnv, {check}); childPackets.set(out, children); };
+  localInline.parse = (source, _md, childEnv, out) => { if (source.length < 32768) { md.inline.parse(source, md, childEnv, out); return; } const children = parseInline(source, md, childEnv, {check}); tokens.ownedChildren.add(children); childPackets.set(out, children); };
   const state = new md.inline.State(text, localMD, env, tokens.tokens);
   const stack = []; let current = delimiters.makeList(); state.delimiters = current.list;
   const packedMeta = state.tokens_meta = new Proxy([], {get: (_target,key) => { if (key === 'length') return metaLength; if (isIndex(key)) { const id = metaLists.get(Number(key)); return id ? {delimiters: delimiters.list(id)} : undefined; } return undefined; }});
@@ -178,7 +178,7 @@ function parseInline(text, md, env, {check = () => {}, onStats} = {}) {
   for (const key of ['marker','length','token','end','flags','listId','first','count','last','noncontiguous','offset']) delimiters[key].release();
   if (delimiters.order?.byteLength) discard(delimiters.order.buffer);
   metaLists.release(); positions.release();
-  if (!complete) { for (const key of ['type','tag','content','attrs','meta','level','nesting','order']) tokens[key].release(); tokens.children.clear(); tokens.strings.values.length = 0; }
+  if (!complete) releaseInline(tokens.tokens);
   }
 }
 // Same Markdown delimiter pairing, with a fixed-width jump ledger rather than an expanding number array.
@@ -303,7 +303,10 @@ function releaseInline(children) {
   const store = owners.get(children); if (!store) return false;
   owners.delete(children);
   for (const nested of store.children.values()) releaseInline(nested);
+  // A child can complete before its parent's image token is attached, or be
+  // replaced by an extension. Its creator retains exact cleanup authority.
+  for (const nested of store.ownedChildren) releaseInline(nested);
   for (const key of ['type','tag','content','attrs','meta','level','nesting','order']) store[key].release();
-  store.cache.values.clear(); store.children.clear(); store.pendingAttrs = null; store.strings.values.length = 0; store.strings.short.clear(); store.names.length = 0; store.nameIds.clear(); store.count = 0; return true;
+  store.cache.values.clear(); store.children.clear(); store.ownedChildren.clear(); store.pendingAttrs = null; store.strings.values.length = 0; store.strings.short.clear(); store.names.length = 0; store.nameIds.clear(); store.count = 0; return true;
 }
 module.exports = {parseInline, linkifyTokens, joinText, releaseInline, Tokens, Delimiters};
