@@ -56,15 +56,15 @@ module.exports = function installFeatures(window, projectService) {
   return result.filePath;
  }));
  ipcMain.handle('save-pane',(event,sheet,svg,file,options)=>outputWrite(async()=>{
-  const graphics=require('./graphics-pane.js'),token=sheet&&Object.hasOwn(sheet,'drawingUpload')?sheet.drawingUpload:null;let lease,sidecar;
+  const graphics=require('./graphics-pane.js'),token=sheet&&Object.hasOwn(sheet,'drawingUpload')?sheet.drawingUpload:null;let lease,sidecar,encoded;
   try{
    if(token!==null){if(Object.keys(sheet).length!==1||typeof token!=='string'||svg!==null)throw Error('Invalid uploaded drawing sheet.');lease=drawingSaves.consume(event?.sender,token);lease.check();}
    else if(sheet&&Object.hasOwn(sheet,'encodedGraphics')){const value=sheet.encodedGraphics;if(Object.keys(sheet).length!==1||typeof value!=='string'||!value.length||value.length%4!==0||value.length>Math.ceil(graphics.MAX_BINARY_BYTES/3)*4||Buffer.from(value.slice(0,12),'base64').subarray(0,8).toString('ascii')!==graphics.BINARY_MAGIC||!/^[a-z0-9+/]*={0,2}$/i.test(value.slice(-4)))throw Error('Invalid encoded drawing sheet.');sidecar=value;}else sidecar=graphics.encodeBase64(sheet);
    const result=file?{filePath:file,canceled:false}:await dialog.showSaveDialog(win(),{defaultPath:'Drawing.nm',filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;lease?.check();
    const dest=require('./path-key.cjs').physicalPath(result.filePath),guard=require('./guarded-write.cjs'),versioned=options?.versioned===true,expected=file&&versioned&&options.expected?options.expected:await guard.fingerprintFile(dest),codec=require('./archive-codec.cjs');
-   const encoded=lease?await codec.encodeDrawingOwned(lease.payload):await codec.encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});lease?.check();
+   encoded=lease?await codec.encodeDrawingOwned(lease.payload):await codec.encodeWithDigest({text:'![Drawing](assets/drawing.svg)\n',assets:{'assets/drawing.svg':svg,'assets/drawing.svg.json':sidecar},meta:{graphicsPanes:{'assets/drawing.svg':{version:1}}}},{kind:'drawing',extra:{'drawing.json':{sheet:'assets/drawing.svg.json',image:'assets/drawing.svg'}}});lease?.check();
    const data=encoded.bytes;try{await guard.replaceIfUnchanged(dest,data,expected,{beforeCommit:()=>lease?.check()});}catch(error){if(!error.notemindFileCommitted)throw error;try{await dialog.showMessageBox?.(win(),{type:'warning',message:'The drawing was saved',detail:error.message});}catch{}}return versioned?{file:dest,revision:{sha256:encoded.revision,bytes:data.length}}:dest;
-  }finally{if(lease)lease.release();else if(token!==null){try{drawingSaves.cancel(event?.sender,token)}catch{}}}
+  }finally{require('./archive-input-ownership.cjs').discardPrivateArchiveBytes(encoded?.bytes);if(lease)lease.release();else if(token!==null){try{drawingSaves.cancel(event?.sender,token)}catch{}}}
  }));
  ipcMain.handle('open-pane',async(event,options)=>{
   const result=await dialog.showOpenDialog(win(),{properties:['openFile'],filters:[{name:'Notepad',extensions:['nm','wm']}]});if(result.canceled)return null;
