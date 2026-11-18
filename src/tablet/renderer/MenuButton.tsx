@@ -127,7 +127,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
             // (A button that only opens a menu leaves the right-click to the bar, whose own menu is Customize toolbar…)
             onContextMenu={(event) => { if (!split) return; event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
             onKeyDown={(event) => {
-              if (disabled) return
+              if (disabled||event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229) return
               if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
             }}
             onClick={() => {
@@ -159,7 +159,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
                   // (A right-click on the arrow is the menu too, not the bar's Customize toolbar…)
                   onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!disabled) open() }}
                   onKeyDown={(event) => {
-                    if (disabled) return
+                    if (disabled||event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229) return
                     if (["ArrowDown","ArrowUp"].includes(event.key)) { event.preventDefault();event.stopPropagation(); open(event.key==="ArrowDown"?"first":"last") }
                   }}
                   onClick={() => {
