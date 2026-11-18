@@ -8,7 +8,7 @@ const discard=bytes=>{if(ArrayBuffer.isView(bytes)&&!bytes.byteOffset&&bytes.byt
 // A verified source snapshot needs no document permit/raw lease while OCR runs.
 // Each image is one fair scheduling unit; foreground work pauses background jobs.
 function createIndexer({store,documentIO,send,storage=codec,tempRoot,maxPending=16,maxSpoolBytes=384*1024*1024,prepare=prepareIndexSources,activityMs=1000,foregroundGraceMs=500,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}){
- if(!Number.isSafeInteger(foregroundGraceMs)||foregroundGraceMs<0||foregroundGraceMs>5000)throw Error('Invalid image-search foreground grace.');const stopWait=require('./image-index-stop-wait.cjs').createStopWaiter({setTimer,clearTimer});
+ if(!Number.isSafeInteger(foregroundGraceMs)||foregroundGraceMs<0||foregroundGraceMs>5000)throw Error('Invalid image-search foreground grace.');const stopWait=require('./image-index-stop-wait.cjs').createStopWaiter({setTimer,clearTimer,now});
  const scheduler=new AsyncResource('NoteMindImageIndex'),pumpOwned=()=>scheduler.runInAsyncScope(pump);
  const owners=new WeakMap(),legacy={},states=new Set(),queue=[],revisions=new Map();let running=false,active=null,foreground=0,spoolBytes=0,nextRevision=0,closed=false,activityUntil=0,activityTimer=null,engine=null,engineDrop=null,engineTimer=null;
  const reserve=bytes=>{if(spoolBytes+bytes>maxSpoolBytes)throw Error('Image search temporary sources are busy. Try again shortly.');spoolBytes+=bytes;let done=false;return()=>{if(!done){done=true;spoolBytes-=bytes}}};
