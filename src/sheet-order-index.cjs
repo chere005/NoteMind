@@ -23,6 +23,15 @@ function decodeLeaf(bytes){
  for(let i=0;i<count;i++){const chunk=metadata.chunks[bytes.readUInt32LE(offset+20)],flags=bytes.readUInt32LE(offset+28),record={id:bytes.readDoubleLE(offset),hash:bytes.readUInt32LE(offset+8).toString(16).padStart(8,'0')+bytes.readUInt32LE(offset+12).toString(16).padStart(8,'0'),points:bytes.readUInt32LE(offset+16),chunk,strokeIndex:bytes.readUInt32LE(offset+24),...(flags&1?{pressure:true}:{})};if(flags>1)throw Error('Invalid drawing order flags.');validRecord(record);records.push(record);seen+=record.points;offset+=32;}
  if(seen!==points||seen>MAX_POINTS)throw Error('Invalid drawing point count.');return {kind:'leaf',height:1,count,points,records};
 }
+// Read-only signatures need every validation proof, but not a graph of stroke
+// records or newly formatted per-stroke hash strings. Validate the complete
+// bounded leaf before publishing any words to the caller.
+function inspectLeafFingerprints(bytes,check=()=>{}){
+ if(bytes.length<24||!bytes.subarray(0,8).equals(MAGIC))throw Error('Invalid drawing order leaf.');const length=bytes.readUInt32LE(8),count=bytes.readUInt32LE(12),points=bytes.readDoubleLE(16);if(!count||count>LEAF||length>MAX_NODE||24+length+count*32!==bytes.length)throw Error('Invalid drawing order leaf size.');
+ const metadata=JSON.parse(bytes.subarray(24,24+length).toString('utf8'));if(!Array.isArray(metadata.chunks)||!metadata.chunks.length||metadata.chunks.length>LEAF)throw Error('Invalid drawing chunk index.');metadata.chunks.forEach(ref=>validateRef(ref));const used=new Set();let seen=0;
+ for(let at=24+length,end=bytes.length;at<end;at+=32){check();const id=bytes.readDoubleLE(at),n=bytes.readUInt32LE(at+16),chunk=bytes.readUInt32LE(at+20),stroke=bytes.readUInt32LE(at+24),flags=bytes.readUInt32LE(at+28);if(!Number.isSafeInteger(id)||id<=0||n>MAX_POINTS||chunk>=metadata.chunks.length||stroke>=MAX_STROKES||flags>1)throw Error('Invalid drawing stroke reference.');seen+=n;used.add(chunk);}
+ if(seen!==points||seen>MAX_POINTS)throw Error('Invalid drawing point count.');return{count,points,offset:24+length,chunks:metadata.chunks,used};
+}
 // Cache decoded ownership, not wire bytes. Allow for wide/cons strings, boxed
 // numbers, spare array capacity and property storage; shared chunk refs count once.
 function retainedNodeBytes(node,limit=Infinity){
@@ -69,7 +78,22 @@ class SheetOrderIndex{
  async *records(root,ancestors=new Set(),options={}){
   options.work?.check();descriptor(root);if(!root.count)return;if(ancestors.has(root.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(root.ref.sha256);const node=await this.node(root,options);options.work?.check();if(node.kind==='leaf'){for(const record of node.records){options.work?.check();yield record;if(options.work?.poll())await options.work.pause();}return;}for(const child of node.children){options.work?.check();yield*this.records(child,path,options);}
  }
+ async visitFingerprintWords(root,visit,options={}){
+  if(typeof visit!=='function')throw Error('Invalid drawing fingerprint visitor.');let work=0;
+  const check=()=>{if(options.signal?.aborted)throw Object.assign(Error('Drawing signature cancelled.'),{name:'AbortError'});options.work?.check();};
+  const walk=async(current,ancestors)=>{
+   check();descriptor(current);if(!current.count)return;if(ancestors.has(current.ref.sha256))throw Error('Cyclic drawing index.');const path=new Set(ancestors);path.add(current.ref.sha256);
+   if(current.height===1){
+    const bytes=await this.packs.read(current.ref,MAX_NODE,options);check();const leaf=inspectLeafFingerprints(bytes,check);if(leaf.count!==current.count||leaf.points!==current.points)throw Error('Invalid drawing order descriptor.');
+    if(current.packFilter){const filter=Buffer.alloc(FILTER_BYTES);addPack(filter,current.ref.pack);for(const index of leaf.used)addPack(filter,leaf.chunks[index].pack);if(filter.toString('base64')!==current.packFilter)throw Error('Invalid drawing pack membership.');}
+    check();for(let at=leaf.offset;at<bytes.length;at+=32){check();visit(bytes.readUInt32LE(at+8),bytes.readUInt32LE(at+12));}
+    work+=leaf.count;if(work>=8192||options.work?.poll()){work=0;await(options.work?.pause?options.work.pause():options.yieldControl?options.yieldControl():new Promise(setImmediate));check();}return;
+   }
+   const node=await this.node(current,options);check();for(const child of node.children)await walk(child,path);
+  };
+  await walk(root,new Set());check();
+ }
  stats(){return {cacheBytes:this.cacheBytes,cacheEntries:this.cache.size,cacheRecords:this.cacheRecords};}
  clear(){this.cache.clear();this.cacheBytes=0;this.cacheRecords=0;}
 }
-module.exports={SheetOrderIndex,encodeLeaf,decodeLeaf,retainedNodeBytes,validRecord,strokeBytes,descriptor,empty,mayContain,packFilter,LEAF,FANOUT,MAX_STROKES,MAX_POINTS,MAX_NODE};
+module.exports={SheetOrderIndex,encodeLeaf,decodeLeaf,inspectLeafFingerprints,retainedNodeBytes,validRecord,strokeBytes,descriptor,empty,mayContain,packFilter,LEAF,FANOUT,MAX_STROKES,MAX_POINTS,MAX_NODE};
