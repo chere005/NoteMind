@@ -52,6 +52,8 @@ interface Props {
   dataBar?: string
   /** Test hook on the menu this button opens (`data-bar` of the floating menu). */
   menuBar?: string
+  /** A split whose menu hangs from its LEFT edge (the first button of a bar at the right of the window: its menu stays over its own pane). */
+  menuFromLeft?: boolean
   /** More test hooks, `data-<name>`: `{ tablet: "undo" }` is `data-tablet="undo"` (the video pane's buttons keep theirs). */
   data?: Record<string, string>
   style?: React.CSSProperties
@@ -63,9 +65,9 @@ const HOLD_MS = 500
 const dataAttributes = (data: Record<string, string> | undefined) =>
   Object.fromEntries(Object.entries(data ?? {}).map(([key, value]) => [`data-${key}`, value]))
 
-export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on, tint, disabled, mainOff, chevron, primary, caretTitle, optionsLabel, caretDataBar, caretData, live, className, dataBar, menuBar, data, style, children }: Props) {
+export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on, tint, disabled, mainOff, chevron, primary, caretTitle, optionsLabel, caretDataBar, caretData, live, className, dataBar, menuBar, menuFromLeft, data, style, children }: Props) {
   const sequence=useRef(0),menuId=useId(),focusTarget=useRef<HTMLElement|null>(null)
-  const split = shapeOf(onMain) === "split"
+  const split = shapeOf(onMain) === "split", fromRight = split && !menuFromLeft
   const button = useRef<HTMLButtonElement>(null)
   const caret = useRef<HTMLButtonElement>(null)
   const shape = useRef<HTMLSpanElement>(null)
@@ -86,7 +88,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
     const box = menuRect(element)
     isOpen.current=true
     focusTarget.current=button.current?.ownerDocument.activeElement as HTMLElement
-    setAt({ serial:++sequence.current,initialFocus,x: split ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })
+    setAt({ serial:++sequence.current,initialFocus,x: fromRight ? box.right : box.left, y: box.bottom + 2, left: box.left, items: list() })
   }
   // A bar's menu is a chrome action: when it goes (Escape, a click elsewhere, a pick) the keyboard is the notes' again
   // (a field a menu item opened keeps it).
@@ -170,7 +172,7 @@ export function MenuButton({ icon, label, title, name, items, onOpen, onMain, on
           </button>
         </span>
       ) : main}
-      {at && <FloatingMenu key={at.serial} x={at.x} y={at.y} items={live ? list() : at.items} right={split} leftX={at.left} dataBar={menuBar} id={menuId} label={name||title} ownerDocument={button.current?.ownerDocument} returnTo={focusTarget.current} trigger={split?caret.current:button.current} initialFocus={at.initialFocus} onClose={close} />}
+      {at && <FloatingMenu key={at.serial} x={at.x} y={at.y} items={live ? list() : at.items} right={fromRight} leftX={at.left} dataBar={menuBar} id={menuId} label={name||title} ownerDocument={button.current?.ownerDocument} returnTo={focusTarget.current} trigger={split?caret.current:button.current} initialFocus={at.initialFocus} onClose={close} />}
     </>
   )
 }

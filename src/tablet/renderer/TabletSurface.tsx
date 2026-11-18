@@ -41,6 +41,8 @@ import {useInkSelection} from "./useInkSelection"
 import {InkSelectionActions} from "./InkSelectionActions"
 import {certifyFreshStroke,prepareFreshStroke} from "../../drawing-history.js"
 import {lineStroke,constrainedEnd} from "../../ink-constraints.cjs"
+import {HIGHLIGHT_SHARE,createNib,kindOn,kindWidth,nibLineScale,nibTaper,nibTaperEnd,tintToward,type Nib} from "./penKinds"
+import {placeBeneath} from "./inkBeneath"
 import {usePrecisionView} from "./usePrecisionView"
 import {PrecisionControls} from "./PrecisionControls"
 import "./tablet.css"
@@ -103,7 +105,9 @@ type Gesture = { pointerId: number } & (
   // A stroke and an erase belong to the sheet they began on (a key can open another tab while the pen is down).
   // `out`: on a sheet bound to a drawing region, the pen left the region: the stroke was made up to its edge, and a new one
   // begins where it comes back in (nothing is drawn outside the region, nothing is pinned to its border).
-  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;constraint?:{enabled:boolean;stepDegrees?:number;metric:Point;frame?:Rect|null};full?:boolean;out?: boolean;bounds:{x:number;y:number;right:number;bottom:number} }
+  | { kind: "draw"; stroke: InkStroke; drawn: number; pen: boolean; page: TabletPage; reservation:ReturnType<typeof reserveInkStroke>;constraint?:{enabled:boolean;stepDegrees?:number;metric:Point;frame?:Rect|null};full?:boolean;out?: boolean;bounds:{x:number;y:number;right:number;bottom:number}
+    // A kind of pen that is not drawn straight onto the ink (penKinds.ts): the nib makes its own pressures, the highlighter goes under the ink.
+    look?:{kind:'fountain';nib:Nib;at:{x:number;y:number;t:number};taper:number;base:number}|{kind:'highlighter';ink:string} }
   | { kind: "erase"; marked: boolean; page: TabletPage }
   | {
     kind: "box"; mode: "new" | "move" | "resize"
@@ -127,7 +131,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const lineCanvas = useRef<HTMLCanvasElement | null>(null)
   const bindLineCanvas=useCallback((node:HTMLCanvasElement|null)=>{const old=lineCanvas.current;if(old&&old!==node)old.width=old.height=1;lineCanvas.current=node},[])
-  const pendingLines = useRef(new Map<InkStroke,{page:TabletPage;preview:InkStroke}>())
+  const pendingLines = useRef(new Map<InkStroke,{page:TabletPage;preview:InkStroke;ink?:string}>())
   const backdrop = useRef<HTMLCanvasElement | null>(null)
   // The visible sheet owns its image independently of the bounded shared LRU.
   const loadedBackdrop = useRef<{file:string;image:HTMLImageElement}|null>(null)
@@ -199,7 +203,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     try{const operation=beginInkMutation(g.page,(_strokes:any,signal:AbortSignal)=>transformDrawingInk(source,from,to,{signal}),{onCommit:()=>{if(g.page===latest.current.page)schedule(true);latest.current.onEdited(g.page)}});void operation.done.catch((error:any)=>{if(g.page===latest.current.page){schedule(true);latest.current.onBox(g.origin)}reportError(error)})}catch(error){restorePreview(g);latest.current.onBox(g.origin);reportError(error)}
   }
 
-  const linePreview=(g:Extract<Gesture,{kind:'draw'}>):InkStroke=>{const stroke=g.stroke,first=stroke.points[0]!,last=stroke.points.at(-1)!,target=constrainedEnd(first,last,{stepDegrees:g.constraint?.stepDegrees,metric:g.constraint?.metric,frame:g.constraint?.frame});return{colorHex:stroke.colorHex,width:stroke.width,points:stroke.points.length===1?[first]:[first,target],...(stroke.pressures?{pressures:stroke.points.length===1?[stroke.pressures[0]!]:[stroke.pressures[0]!,stroke.pressures.at(-1)!]}:{})}}
+  const linePreview=(g:Extract<Gesture,{kind:'draw'}>):InkStroke=>{const stroke=g.stroke,first=stroke.points[0]!,last=stroke.points.at(-1)!,target=constrainedEnd(first,last,{stepDegrees:g.constraint?.stepDegrees,metric:g.constraint?.metric,frame:g.constraint?.frame});return{colorHex:stroke.colorHex,width:g.look?.kind==='fountain'?g.look.base*nibLineScale((target.x-first.x)*pageSize().width,(target.y-first.y)*pageSize().height):stroke.width,points:stroke.points.length===1?[first]:[first,target],...(stroke.pressures?{pressures:stroke.points.length===1?[stroke.pressures[0]!]:[stroke.pressures[0]!,stroke.pressures.at(-1)!]}:{})}}
+
+  // Shown on the layer above the ink until it is made: a ruled line, a nib's stroke (its tip thin, as it will end), a highlighter's band (translucent: the writing under the pen shows).
+  const over=(g:Extract<Gesture,{kind:'draw'}>)=>!!g.constraint?.enabled||!!g.look
+  const overLook=(g:Extract<Gesture,{kind:'draw'}>)=>({preview:g.constraint?.enabled?linePreview(g):g.look?.kind==='fountain'&&g.stroke.pressures?{...g.stroke,pressures:nibTaperEnd(g.stroke.pressures.slice(),g.stroke.points,pageSize(),g.look.taper)}:g.stroke,ink:g.look?.kind==='highlighter'?g.look.ink:undefined})
+  const paintOver=(ctx:CanvasRenderingContext2D,item:{preview:InkStroke;ink?:string})=>{if(item.ink===undefined){paintStrokes(ctx,[item.preview],toPixel,unit(),undefined,0,tint);return}ctx.globalAlpha=HIGHLIGHT_SHARE;paintStrokes(ctx,[item.preview],toPixel,unit(),tint(item.ink));ctx.globalAlpha=1}
+  // The pressure kept for a new point: the device's, or the nib's own.
+  const inked=(g:Extract<Gesture,{kind:'draw'}>,px:Point,sample:PointerEvent,held?:number)=>{const look=g.look;if(look?.kind!=='fountain')return sample.pressure>0?sample.pressure:held??.5;const made=look.nib.next(px.x-look.at.x,px.y-look.at.y,sample.timeStamp-look.at.t,g.pen&&penSettings().pressure&&sample.pressure>0?sample.pressure:null);look.at={x:px.x,y:px.y,t:sample.timeStamp};return made}
 
   const paint = useCallback(() => {
     frame.current = null
@@ -215,8 +226,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if(retained){retained.width=retained.height=1}canvasView.current={page:currentPage,region:{...currentView}}
     context.current ??= element.getContext("2d", { desynchronized: true })
     const ctx = context.current
-    const previewLayer=lineCanvas.current,liveLine=gesture.current;let needsPreview=liveLine?.kind==='draw'&&liveLine.constraint?.enabled&&!liveLine.out;for(const item of pendingLines.current.values())if(item.page===latest.current.page){needsPreview=true;break}
-    if(previewLayer&&needsPreview){if(previewLayer.width!==w)previewLayer.width=w;if(previewLayer.height!==h)previewLayer.height=h;const previewContext=previewLayer.getContext('2d');if(previewContext){previewContext.setTransform(ratio,0,0,ratio,0,0);previewContext.clearRect(0,0,size.current.width,size.current.height);for(const item of pendingLines.current.values())if(item.page===latest.current.page)paintStrokes(previewContext,[item.preview],toPixel,unit(),undefined,0,tint);if(liveLine?.kind==='draw'&&liveLine.constraint?.enabled&&!liveLine.out)paintStrokes(previewContext,[linePreview(liveLine)],toPixel,unit(),undefined,0,tint)}}else if(previewLayer&&(previewLayer.width!==1||previewLayer.height!==1)){previewLayer.width=previewLayer.height=1}
+    const previewLayer=lineCanvas.current,liveLine=gesture.current;let needsPreview=liveLine?.kind==='draw'&&over(liveLine)&&!liveLine.out;for(const item of pendingLines.current.values())if(item.page===latest.current.page){needsPreview=true;break}
+    if(previewLayer&&needsPreview){if(previewLayer.width!==w)previewLayer.width=w;if(previewLayer.height!==h)previewLayer.height=h;const previewContext=previewLayer.getContext('2d');if(previewContext){previewContext.setTransform(ratio,0,0,ratio,0,0);previewContext.clearRect(0,0,size.current.width,size.current.height);for(const item of pendingLines.current.values())if(item.page===latest.current.page)paintOver(previewContext,item);if(liveLine?.kind==='draw'&&over(liveLine)&&!liveLine.out)paintOver(previewContext,overLook(liveLine))}}else if(previewLayer&&(previewLayer.width!==1||previewLayer.height!==1)){previewLayer.width=previewLayer.height=1}
     if (!ctx) return
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     const g = gesture.current
@@ -266,7 +277,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       return
     }
     if((pendingInkMutation(latest.current.page)||pendingStrokes.current.get(latest.current.page)?.size)&&everything.current){
-      if(g?.kind==='draw'&&!g.constraint?.enabled&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
+      if(g?.kind==='draw'&&!over(g)&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
       return
     }
     if (everything.current) {
@@ -287,7 +298,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           const complete=await paintStrokesYielding(ctx,scene.strokes,toPixel,unit(),undefined,0,tint,{cancelled:()=>!valid(),yieldControl:graphics.yieldTask})
           if(complete&&valid()){paintedInk.current={page:current,strokes:scene.strokes,key};rasterPending.current=false;extraDirty.current.splice(0,dirtyCount)}
         })
-        if(g?.kind==='draw'&&!g.constraint?.enabled&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
+        if(g?.kind==='draw'&&!over(g)&&!g.out&&g.stroke.points.length>g.drawn){paintStrokes(ctx,[g.stroke],toPixel,unit(),undefined,g.drawn,tint);g.drawn=g.stroke.points.length}
         return
       }
       raster.current?.dispose();raster.current=null;rasterPending.current=false;lastDense.current=false
@@ -295,14 +306,14 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       ctx.clearRect(0, 0, element.width, element.height)
       paintStrokes(ctx, latest.current.page.strokes, toPixel, unit(), undefined, 0, tint)
       // A stroke under the pen is repainted whole after a resize or an erase.
-      if (g?.kind === "draw" && !g.constraint?.enabled && !g.out) {
+      if (g?.kind === "draw" && !over(g) && !g.out) {
         paintStrokes(ctx, [g.stroke], toPixel, unit(), undefined, 0, tint)
         g.drawn = g.stroke.points.length
       }
       paintedInk.current={page:current,strokes:current.strokes,key}
       return
     }
-    if (g?.kind === "draw" && !g.constraint?.enabled && g.stroke.points.length > g.drawn) {
+    if (g?.kind === "draw" && !over(g) && g.stroke.points.length > g.drawn) {
       // Only the segments that are new since the last frame.
       paintStrokes(ctx, [g.stroke], toPixel, unit(), undefined, g.drawn, tint)
       g.drawn = g.stroke.points.length
@@ -324,8 +335,19 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   const commitStroke=(g:Extract<Gesture,{kind:'draw'}>)=>{
     primeStrokeBox(g.stroke,g.bounds)
+    const look=g.look,ruled=g.constraint?.enabled?linePreview(g):null
+    // A ruled nib line takes its one width now. A nib's own stroke ends thin, and goes onto the ink exactly as the layer above showed it.
+    if(ruled)g.stroke.width=ruled.width
+    else if(look?.kind==='fountain'){if(g.stroke.pressures)nibTaperEnd(g.stroke.pressures,g.stroke.points,pageSize(),look.taper);if(g.page===latest.current.page&&context.current){paintStrokes(context.current,[g.stroke],toPixel,unit(),undefined,0,tint);g.drawn=g.stroke.points.length;schedule()}}
     const owned={...g},source=g.stroke,owner=g.page;let pending=false
-    if(g.constraint?.enabled)pendingLines.current.set(source,{page:owner,preview:linePreview(g)})
+    if(ruled)pendingLines.current.set(source,{page:owner,preview:ruled,ink:look?.kind==='highlighter'?look.ink:undefined})
+    if(look?.kind==='highlighter'){
+      // Under the ink, as one undoable change of the sheet (inkBeneath.ts); its band stays on the layer above until it is there.
+      if(!ruled)pendingLines.current.set(source,{page:owner,preview:source,ink:look.ink})
+      const settled=()=>{pendingLines.current.delete(source);g.reservation.release();if(owner===latest.current.page)schedule(true)}
+      try{void placeBeneath(controllerFor(owner),owner,source,ruled?(stroke,options)=>prepareFreshStroke(stroke,value=>lineStroke(value,{...options,stepDegrees:g.constraint!.stepDegrees,metric:g.constraint!.metric,frame:g.constraint!.frame})):undefined).then(settled,settled)}catch(error){settled();reportError(error)}
+      return
+    }
     const completed=()=>{const held=pendingStrokes.current.get(owner);held?.delete(source);held?.delete(owned.stroke);pendingLines.current.delete(source);if(held&&!held.size)pendingStrokes.current.delete(owner);if(pending){if(owner===latest.current.page)schedule(true);latest.current.onEdited(owner)}}
     try{const done=appendInkStroke(owner,owned.stroke,{nativeCanonical:true,reservation:owned.reservation,prepare:g.constraint?.enabled?(stroke,options)=>prepareFreshStroke(stroke,value=>lineStroke(value,{...options,stepDegrees:g.constraint!.stepDegrees,metric:g.constraint!.metric,frame:g.constraint!.frame})):undefined,commit:candidate=>{const held=pendingStrokes.current.get(owner);if(held?.delete(owned.stroke))held.add(candidate);owned.stroke=candidate;if(g.constraint?.enabled)owned.drawn=0;return commitStrokeNow(owned)},onCommit:completed});if(done){pending=true;let held=pendingStrokes.current.get(owner);if(!held)pendingStrokes.current.set(owner,held=new Set());held.add(owned.stroke);paintVersion.current++;void done.catch(error=>{completed();reportError(error)})}}catch(error){pendingLines.current.delete(source);if(owner===latest.current.page)schedule(true);reportError(error)}
   }
@@ -643,13 +665,16 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     } else {
       let reservation:ReturnType<typeof reserveInkStroke>;try{reservation=reserveInkStroke(latest.current.page);fullPages.current.delete(latest.current.page)}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY')reportCapacity(latest.current.page);else reportError(error);return}
       const pressure = event.pressure > 0 ? event.pressure : 0.5
+      // What this kind of pen captures (penKinds.ts); a stroke is stored the same way for all of them.
+      const kind=kindOn(penSettings().kind,latest.current.page.backdrop?'picture':'sheet'),ruled=precision.line||event.shiftKey,wide=kindWidth(kind,latest.current.width),base=wide * SHEET_REF / Math.max(1, pageSize().width)
+      const look=kind==='fountain'?{kind,nib:createNib(nibTaper(wide)),at:{x:px.x,y:px.y,t:event.timeStamp},taper:nibTaper(wide),base}:kind==='highlighter'?{kind,ink:latest.current.colour}:undefined
       gesture.current = {
-        reservation,constraint:{enabled:precision.line||event.shiftKey,stepDegrees:event.shiftKey?(precision.angle||15):precision.angle||undefined,frame:latest.current.regionBox?{...latest.current.regionBox}:null,metric:{x:Math.max(1,pageSize().width),y:Math.max(1,pageSize().height)}},kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
+        look,reservation,constraint:{enabled:ruled,stepDegrees:event.shiftKey?(precision.angle||15):precision.angle||undefined,frame:latest.current.regionBox?{...latest.current.regionBox}:null,metric:{x:Math.max(1,pageSize().width),y:Math.max(1,pageSize().height)}},kind: "draw", pointerId: event.pointerId, drawn: 0, pen, page: latest.current.page,bounds:{x:point.x,y:point.y,right:point.x,bottom:point.y},
         stroke: certifyFreshStroke({
-          colorHex: latest.current.colour,
-          width: latest.current.width * SHEET_REF / Math.max(1, pageSize().width),
+          colorHex: kind==='highlighter'?tintToward(tint(latest.current.colour),colourOfPaper(latest.current.paper.colour).paper):latest.current.colour,
+          width: base,
           points: [point],
-          ...(pen && penSettings().pressure ? { pressures: [pressure] } : {}),
+          ...(look?.kind==='fountain' ? (ruled ? {} : { pressures: [look.nib.next(0, 0, 0, null)] }) : kind==='pen' && pen && penSettings().pressure ? { pressures: [pressure] } : {}),
         }),
       }
       schedule()
@@ -695,6 +720,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           try{g.reservation=reserveInkStroke(g.page);accepted=true}catch(error:any){if(error?.code==='NOTEMIND_INK_CAPACITY'){g.full=true;reportCapacity(g.page)}else reportError(error);continue}
           const { points: _points, pressures, ...rest } = g.stroke
           g.stroke = certifyFreshStroke({ ...rest, points: [], ...(pressures ? { pressures: [] } : {}) })
+          if(g.look?.kind==='fountain')g.look.nib.restart()
           g.drawn = 0
           g.bounds={x:Infinity,y:Infinity,right:-Infinity,bottom:-Infinity}
           g.out = false
@@ -702,7 +728,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         if(!accepted&&!g.reservation.accept()){g.full=true;reportCapacity(g.page);continue}
         g.stroke.points.push(here.unit)
         g.bounds.x=Math.min(g.bounds.x,here.unit.x);g.bounds.y=Math.min(g.bounds.y,here.unit.y);g.bounds.right=Math.max(g.bounds.right,here.unit.x);g.bounds.bottom=Math.max(g.bounds.bottom,here.unit.y)
-        g.stroke.pressures?.push(sample.pressure > 0 ? sample.pressure : 0.5)
+        g.stroke.pressures?.push(inked(g,here.px,sample))
         if (!here.inside) {
           // Out of the region: the stroke ends at its edge, and is made now.
           paint()
@@ -745,7 +771,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         if(g.reservation.accept()){
           g.stroke.points.push(point)
           g.bounds.x=Math.min(g.bounds.x,point.x);g.bounds.y=Math.min(g.bounds.y,point.y);g.bounds.right=Math.max(g.bounds.right,point.x);g.bounds.bottom=Math.max(g.bounds.bottom,point.y)
-          g.stroke.pressures?.push(event.pressure > 0 ? event.pressure : g.stroke.pressures[g.stroke.pressures.length - 1] ?? .5)
+          g.stroke.pressures?.push(inked(g,at(event).px,event,g.stroke.pressures[g.stroke.pressures.length - 1]))
         }else{g.full=true;reportCapacity(g.page)}
       }
     }

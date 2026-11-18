@@ -2,8 +2,8 @@
 
 import { Icon, type IconName } from "./icons"
 import { MenuButton } from "./MenuButton"
-import { PaperMenu } from "./PaperMenu"
-import { OrientationMenu } from "./OrientationSelect"
+import { PaperMenu, usePaperItems } from "./PaperMenu"
+import { useOrientationItems } from "./OrientationSelect"
 import { BringInMenu } from "./BringInMenu"
 import type { BringTo, CaptureMode } from "./cameraSettings"
 import type { HeaderFit } from "./cameraHeaderFit"
@@ -142,25 +142,27 @@ interface TabletProps {
 
 export function TabletHeader(p:TabletProps) {
  const original=p.files?.picture?.saveOriginal
- return <div className="bar-row camera-bar camera-head" role="toolbar" aria-label="Tablet sheet" data-camera-head="tablet">
-  {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
-  <PaperMenu/><OrientationMenu/>
+ const orientation=useOrientationItems(),paper=usePaperItems()
+ // Paper is always in the options menu: its button is on the bar only when the bar has room for it (pane.css).
+ const sheet=[{label:'Paper',dataBar:'pane-paper',submenu:paper},{label:'Tablet Orientation',dataBar:'pane-orientation',submenu:orientation}]
+ const clear={label:'Clear the Sheet',disabled:!p.canClear,dataBar:'clear',onClick:p.onClear}
+ // Not a bar of its own: these follow the pen's controls on the pen bar (PenControl's `trailing`), so the pane has two bars.
+ return <span className="pen-trailing" role="group" aria-label="Tablet sheet" data-camera-head="tablet">
   <span className="toolbar-separator"/>
+  {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
+  <PaperMenu/>
   <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo"/></button>
-  <button type="button" className="bar-btn danger" data-tablet="clear" data-bar="clear" aria-label="Clear the Sheet" title="Clear all strokes; Undo restores them" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash"/></button>
   <span className="grow"/>
-  {p.files&&<button type="button" className="bar-btn label" data-tablet="pane-save" aria-label={original?'Save to Original':'Save Sheet'} title={original?'Update the original graphics pane in the Notepad':p.files.file?'Save drawing changes':'Save this drawing as a .nm file'} onClick={original||p.files.save}><Icon name="save"/><span className="bar-label-text">{original?'Update':'Save'}</span></button>}
   <BringInMenu title="Insert drawing into the open Notepad" off={p.bringOff} onBring={p.onBring} onPage={p.onBringPage}/>
-  <MenuButton icon="more" name="Drawing options" title="Save, open and keep drawings" data={{tablet:'pane-menu'}} dataBar="pane-menu" items={p.files?[
-   ...(p.files.picture?[
-    {label:'Save to Original',disabled:!original,dataBar:'pane-save-original',onClick:original||(()=>{})},
-    {label:'Save as New Image…',dataBar:'pane-save-new',onClick:p.files.picture.saveNew},'-' as const,
-   ]:[]),
+  <MenuButton icon="more" name="Drawing options" title="Save, open, keep, paper and clear" data={{tablet:'pane-menu'}} dataBar="pane-menu" live items={p.files?[
+   {label:original?'Save to Original':'Save Sheet',dataBar:original?'pane-save-original':'pane-save',onClick:original||p.files.save},
+   ...(p.files.picture?[{label:'Save as New Image…',dataBar:'pane-save-new',onClick:p.files.picture.saveNew}]:[]),
    {label:'Save Drawing As…',dataBar:'pane-save-as',onClick:p.files.saveAs},{label:'Open Drawing…',dataBar:'pane-open',onClick:p.files.open},
    ...(p.files.rescan?[{label:'Rescan with Camera',dataBar:'pane-rescan',onClick:p.files.rescan}]:[]),'-',
    {header:'Keep a copy with'},
    {label:'The open note',checked:p.files.keptNote,disabled:!p.files.canKeepNote,dataBar:'pane-keep-note',onClick:()=>p.files.onKeep('note',!p.files.keptNote)},
    {label:'This project',checked:p.files.keptProject,disabled:!p.files.canKeepProject,dataBar:'pane-keep-project',onClick:()=>p.files.onKeep('project',!p.files.keptProject)},
-  ]:[]}/>
- </div>
+   '-',...sheet,clear,
+  ]:[...sheet,clear]}/>
+ </span>
 }

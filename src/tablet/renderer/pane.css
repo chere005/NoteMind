@@ -3,8 +3,8 @@
 .word-page{position:relative}.tablet-pane .sheet-tab.doc .wm-icon{flex:none;opacity:.75}
 
 .tablet-pane>.pen-bar,.pane-chrome-slot>.pen-bar{display:flex;align-items:center;flex:none;gap:5px;height:36px;min-height:36px;padding:4px 8px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;background:var(--bar-strip);border-bottom:1px solid var(--wm-rule);-webkit-app-region:no-drag}
-.pen-bar .pen-swatches{display:flex;flex:none;align-items:center;gap:5px;padding:0 4px}.pen-bar .pen-colour-menu{display:none}
-.pen-bar .pen-swatch{flex:none;width:18px;min-width:18px;height:18px;padding:0;border:1px solid var(--wm-muted);border-radius:50%}
+.pen-bar .pen-swatches{display:flex;flex:none;align-items:center;gap:5px;padding:0 4px}
+.pen-bar .pen-swatch{position:relative;flex:none;width:22px;min-width:22px;height:22px;padding:0;border:1px solid var(--wm-muted);border-radius:50%}
 .pen-bar .pen-swatch.custom{background:conic-gradient(#f2542d,#f5b700,#2fbf71,#2d7dd2,#8e44ad,#f2542d)}
 .pen-bar .pen-swatch.on{outline:2px solid var(--wm-text);outline-offset:2px}
 .pen-bar .pen-width-select{height:26px;padding:0 4px;color:var(--wm-text);background:var(--wm-page);border:1px solid var(--wm-rule);border-radius:4px;font:inherit}
@@ -18,3 +18,45 @@
 .pad-mirror-image{position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;pointer-events:none}
 .pad-mirror img{position:absolute;display:block;max-width:none;max-height:none;user-select:none;pointer-events:none}
 .pad-status{flex:none;margin:0;padding:4px 8px;font-size:11px}
+
+/* One tool bar on a sheet: its actions (CameraHeader.tsx's TabletHeader) follow the pen's controls, so the pane has two bars. */
+.tablet-pane>.pen-bar,.pane-chrome-slot>.pen-bar{container-type:inline-size}
+.pen-bar .pen-trailing{display:contents}
+.pen-bar .grow{flex:1 1 auto;min-width:0}
+.pen-bar .pen-kind{flex:none}
+.pen-bar [data-capture="ink"]>.wm-icon{display:none}
+/* The colours are always swatches on the bar (the id outranks workspace.css's older rule that put them away at 380px).
+   A swatch is tapped anywhere in its column of the bar, not only on its dot. */
+#pen-control.pen-bar .pen-swatches{display:flex}
+.pen-bar .pen-swatch::after{content:"";position:absolute;inset:-6px -2.5px}
+/* A sheet's bar without room for everything: the width and the presets are in the pen's menu, the paper in the options menu. */
+@container (max-width:671px){
+ .pen-bar:has(.pen-trailing) :is(.pen-width-select,.pen-presets,[data-tablet="paper"],.toolbar-separator){display:none}
+}
+@container (max-width:480px){
+ .pen-bar [data-capture="ink"]>.wm-icon{display:block}
+ .pen-bar [data-capture="ink"]>.bar-label-text{display:none}
+}
+/* Narrower: first the buttons tighten, then the swatches (never under 18px), so every colour stays on the bar. */
+@container (max-width:455px){
+ .pen-bar .bar-btn:not(.caret){min-width:24px;padding:0 3px}
+}
+@container (max-width:419px){
+ .pen-bar .pen-swatches{gap:4px;padding:0 2px}
+ .pen-bar .pen-swatch{width:20px;min-width:20px;height:20px}
+ .pen-bar .pen-swatch::after{inset:-6px -2px}
+ .pen-bar .pen-swatch.on{outline-width:1.5px;outline-offset:1px}
+}
+/* The width Sean keeps the pane at (380px). The bar is the query's container and cannot close its own gap: its items do. */
+@container (max-width:395px){
+ .pen-bar>*,.pen-bar .pen-trailing>*{margin-left:-2px}
+ .pen-bar .pen-swatches{gap:3px}
+ .pen-bar .pen-swatch{width:18px;min-width:18px;height:18px}
+ .pen-bar .pen-swatch::after{inset:-6px -1.5px}
+}
+/* A pane narrower than its tools scrolls them; Insert and the options menu stay in reach at the right edge. */
+.pen-bar .pen-trailing>.bar-split.primary{position:sticky;right:calc(var(--bar-btn) + 5px);z-index:1;box-shadow:0 0 0 4px var(--bar-strip)}
+.pen-bar [data-bar="pane-menu"]{position:sticky;right:0;z-index:1;background:var(--bar-strip);box-shadow:0 0 0 4px var(--bar-strip),8px 0 0 4px var(--bar-strip),-3px 0 0 4px var(--bar-strip)}
+.pen-bar [data-bar="pane-menu"]:hover:not(:disabled){background:var(--bar-fill)}
+/* The width's number is never squeezed away where it is shown. */
+.pen-bar .pen-width-select{flex:none}

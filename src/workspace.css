@@ -28,10 +28,3 @@ main{container-type:inline-size;container-name:editor}
  #toolbar [data-format],#toolbar #insertTable{display:none}
  #toolbar #heading{min-width:88px}
 }
-@container drawing (max-width:380px){
- #pen-control.pen-bar{display:flex;gap:5px}
- .pen-bar .pen-swatches{display:none}
- .pen-bar .pen-colour-menu{display:inline-flex}
- .pen-bar .pen-width-select{min-width:0;max-width:66px}
- .pen-bar .drawing-location{margin-left:auto}
-}

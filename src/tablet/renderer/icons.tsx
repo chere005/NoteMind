@@ -53,6 +53,10 @@ const PATHS = {
   drawregion: "<rect x=\"2\" y=\"3\" width=\"12\" height=\"10\" rx=\"1.5\"/><path d=\"M4.5 10.25c1.4-3 2.4-3 3.5-1s2.1 1 3.5-2.25\"/>",
   cursor: "<path d=\"M4 2.5 12.5 8.5 8.75 9.25 10.75 13 9 13.75 7 10 4.5 12.5z\" fill=\"currentColor\" fill-opacity=\".15\"/>",
   pen: "<path d=\"m3 13 .75-3.25L10.5 3l2.5 2.5-6.75 6.75z\"/><path d=\"m9.25 4.25 2.5 2.5\"/>",
+  // The pen's kinds (penKinds.ts): a felt tip, a nib with its slit, a chisel tip over the band it leaves.
+  marker: "<path d=\"m10 1.75 4.25 4.25-5 5-4.25-4.25z\"/><path d=\"M6.25 8 3.5 10.75 3 13l2.25-.5L8 9.75z\" fill=\"currentColor\"/>",
+  fountain: "<path d=\"m2.75 13.25 1.5-6L8.5 3.5l4 4-3.75 4.25z\"/><path d=\"m2.75 13.25 4.25-4.25\"/><circle cx=\"7.6\" cy=\"8.4\" r=\".8\" fill=\"currentColor\" stroke=\"none\"/><path d=\"m8.5 3.5 2-1.75 3.75 3.75-1.75 2\"/>",
+  highlighter: "<path d=\"m10.25 1.5 4.25 4.25-5 5-4.25-4.25z\"/><path d=\"M6.25 7.5 3.75 10l2 2 2.5-2.5z\" fill=\"currentColor\"/><path d=\"M2 14h12\" stroke-width=\"2.75\" stroke-opacity=\".4\"/>",
   select: "<rect x=\"2.5\" y=\"2.5\" width=\"11\" height=\"11\" rx=\"1\" stroke-dasharray=\"2.2 1.6\"/>",
   eraser: "<path d=\"m2.75 9.75 6-6a1.5 1.5 0 0 1 2.1 0l2.9 2.9a1.5 1.5 0 0 1 0 2.1l-3.75 3.75H6.5z\"/><path d=\"m6 7 4 4\"/><path d=\"M9.5 12.5h4\"/>",
   shapes: "<circle cx=\"6\" cy=\"6\" r=\"4\"/><rect x=\"7.5\" y=\"7.5\" width=\"6.5\" height=\"6.5\" rx=\"1\"/>",

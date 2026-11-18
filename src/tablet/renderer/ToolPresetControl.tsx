@@ -7,7 +7,9 @@ import type {ToolPresetController} from './toolPresetController';
 import {installToolPresetKeyboard} from './toolPresetKeyboard';
 import './toolPresets.css';
 type Naming={kind:'add'|'rename';id?:string;name:string;settings:ToolSettings;doc:Document};
-export function ToolPresetControl({controller,state,enabled=true,onError}:{controller:ToolPresetController;state:ToolPresetState;enabled?:boolean;onError?:(message:string)=>void}){
+type PresetProps={controller:ToolPresetController;state:ToolPresetState;enabled?:boolean;onError?:(message:string)=>void};
+// The presets' rows for any menu (the pen's too): `host` goes on an element of the bar that is seen whenever the bar is.
+export function useToolPresetMenu({controller,state,enabled=true,onError}:PresetProps){
  const host=useRef<HTMLSpanElement>(null),active=useRef(enabled),[naming,setNaming]=useState<Naming|null>(null);active.current=enabled;
  const run=(action:()=>unknown)=>{try{action();}catch(error){onError?.((error as Error).message||String(error));}};
  useEffect(()=>{const element=host.current,view=element?.ownerDocument.defaultView;if(!view)return;return installToolPresetKeyboard(view as Window&typeof globalThis,controller,()=>active.current&&!!host.current?.getClientRects().length&&!host.current?.closest('[hidden]'));},[controller]);
@@ -20,7 +22,11 @@ export function ToolPresetControl({controller,state,enabled=true,onError}:{contr
   {label:'Rename preset…',disabled:!state.presets.length,dataBar:'tool-preset-rename',submenu:state.presets.map(preset=>({label:preset.name,onClick:()=>name('rename',preset.id)}))},
   {label:'Delete preset',disabled:!state.presets.length,dataBar:'tool-preset-delete',submenu:state.presets.map(preset=>({label:preset.name,danger:true,onClick:()=>run(()=>controller.remove(preset.id))}))},
  ];
- return <span ref={host} className="tool-preset-control"><MenuButton icon="list" name="Tool presets" title="Tool presets" dataBar="tool-presets" live items={items}/>{naming&&<PresetNameDialog value={naming} onClose={()=>setNaming(null)} onSave={value=>{if(naming.kind==='add')controller.add(value,naming.settings);else controller.rename(naming.id!,value);}}/>}</span>;
+ return {host,items,dialog:naming&&<PresetNameDialog value={naming} onClose={()=>setNaming(null)} onSave={value=>{if(naming.kind==='add')controller.add(value,naming.settings);else controller.rename(naming.id!,value);}}/>};
+}
+export function ToolPresetControl(props:PresetProps){
+ const menu=useToolPresetMenu(props);
+ return <span ref={menu.host} className="tool-preset-control"><MenuButton icon="list" name="Tool presets" title="Tool presets" dataBar="tool-presets" live items={menu.items}/>{menu.dialog}</span>;
 }
 function PresetNameDialog({value,onClose,onSave}:{value:Naming;onClose:()=>void;onSave:(name:string)=>void}){
  const dialog=useRef<HTMLDialogElement>(null),field=useRef<HTMLInputElement>(null),composing=useRef(false),[name,setName]=useState(value.name),[error,setError]=useState(''),title=value.kind==='add'?'Save tool preset':'Rename tool preset';

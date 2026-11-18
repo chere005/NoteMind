@@ -34,6 +34,8 @@ export type MenuItem =
     dataBar?: string
     /** Drawn as a warning (Move to Trash…). */
     danger?: boolean
+    /** The row's tooltip when its label is not enough (why it is off). */
+    title?: string
   }
 
 const unavailableKey=(event:{defaultPrevented?:boolean;isComposing?:boolean;keyCode?:number;nativeEvent?:KeyboardEvent})=>event.defaultPrevented||event.isComposing||event.nativeEvent?.isComposing||event.keyCode===229||event.nativeEvent?.keyCode===229
@@ -119,7 +121,7 @@ function MenuLevel({items,doc,token,id,label,dataBar,point,anchor,initialFocus="
       const nested=item.submenu,expanded=open?.index===index,childId=id+'-'+index
       const show=(anchor:HTMLElement,keyboard=false)=>setOpen({index,anchor,keyboard})
       return <div className="float-row" key={index} onMouseEnter={event=>{if(item.disabled){setOpen(null);focus(box.current);return}const button=event.currentTarget.querySelector('button');focus(button);nested?show(button):setOpen(null)}}>
-        <button role={item.checked!==undefined||item.toggle!==undefined?'menuitemcheckbox':'menuitem'} tabIndex={-1} aria-checked={item.checked??item.toggle} aria-haspopup={nested?'menu':undefined} aria-expanded={nested?expanded:undefined} aria-controls={expanded?childId:undefined} data-menu-label={item.label} title={item.label+(item.hint?' ('+chordGlyphs(item.hint,hostPlatform())+')':nested?' options':'')} data-menu-index={index} data-active={activeIndex===index?true:undefined} onFocus={()=>setActiveIndex(index)} disabled={item.disabled} data-bar={item.dataBar} className={item.danger?'danger':undefined}
+        <button role={item.checked!==undefined||item.toggle!==undefined?'menuitemcheckbox':'menuitem'} tabIndex={-1} aria-checked={item.checked??item.toggle} aria-haspopup={nested?'menu':undefined} aria-expanded={nested?expanded:undefined} aria-controls={expanded?childId:undefined} data-menu-label={item.label} title={item.title??item.label+(item.hint?' ('+chordGlyphs(item.hint,hostPlatform())+')':nested?' options':'')} data-menu-index={index} data-active={activeIndex===index?true:undefined} onFocus={()=>setActiveIndex(index)} disabled={item.disabled} data-bar={item.dataBar} className={item.danger?'danger':undefined}
           onKeyDown={event=>{if(unavailableKey(event))return;if(nested&&['ArrowRight','Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();show(event.currentTarget,true)}else if(!nested&&['Enter',' '].includes(event.key)){event.preventDefault();event.stopPropagation();event.currentTarget.click()}}}
           onClick={event=>{if(nested){show(event.currentTarget,event.detail===0);return}if(!item.keepOpen&&item.toggle===undefined)onClose("action");item.onClick?.()}}>
           {ticks&&<span className="float-mark" aria-hidden="true">{item.checked?'✓':null}</span>}

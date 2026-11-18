@@ -42,6 +42,7 @@ import {
   BUTTON_LAYOUT, DEFAULT_BUTTONS, hasDoubleTap, holdMap, migrateButtons,
   type HoldAction, type PenButtonMap, type Slot, type TapAction,
 } from "./penButtons"
+import { isPenKind, type PenKind } from "./penKinds"
 
 export type PenSeen = "none" | "pen" | "pressure"
 
@@ -63,6 +64,8 @@ export interface PenSettings {
   buttons: PenButtonMap
   /** What the bar's one pen button is: the pen or the eraser (the button's own on / off is `mode` / `eraser`). */
   tool: PenTool
+  /** Which pen the pen is on a drawing sheet: Pen, Marker, Fountain Pen or Highlighter (penKinds.ts). Remembered. */
+  kind: PenKind
   /** The Erase tool is on: a press rubs out strokes, whatever the pointer. */
   eraser: boolean
   /** The Select tool is on: a press picks up / moves objects or pulls a marquee. */
@@ -74,16 +77,16 @@ const KEY = "notemind.pen"
 
 const sideOf = (buttons: PenButtonMap): SideButton => (buttons.lower.hold === "erase" ? "erases" : "selects")
 
-function load(): Pick<PenSettings, "penDraws" | "pressure" | "sideButton" | "buttons" | "tool"> {
+function load(): Pick<PenSettings, "penDraws" | "pressure" | "sideButton" | "buttons" | "tool" | "kind"> {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<PenSettings> & { slots?: unknown }
     const buttons = migrateButtons(raw)
     return {
       penDraws: raw.penDraws ?? true, pressure: raw.pressure ?? true, buttons, sideButton: sideOf(buttons),
-      tool: raw.tool === "eraser" ? "eraser" : "pen",
+      tool: raw.tool === "eraser" ? "eraser" : "pen", kind: isPenKind(raw.kind) ? raw.kind : "pen",
     }
   } catch {
-    return { penDraws: true, pressure: true, buttons: { ...DEFAULT_BUTTONS }, sideButton: sideOf(DEFAULT_BUTTONS), tool: "pen" }
+    return { penDraws: true, pressure: true, buttons: { ...DEFAULT_BUTTONS }, sideButton: sideOf(DEFAULT_BUTTONS), tool: "pen", kind: "pen" }
   }
 }
 
@@ -92,13 +95,13 @@ let preferenceRevision = 0
 const listeners = new Set<() => void>()
 
 function set(next: Partial<PenSettings>): void {
-  const persisted = (["penDraws", "pressure", "tool", "buttons"] as const)
+  const persisted = (["penDraws", "pressure", "tool", "kind", "buttons"] as const)
     .some(key => next[key] !== undefined && next[key] !== state[key])
   if (persisted) preferenceRevision++
   state = { ...state, ...next }
   if (persisted) try {
     localStorage.setItem(KEY, JSON.stringify({
-      penDraws: state.penDraws, pressure: state.pressure, tool: state.tool,
+      penDraws: state.penDraws, pressure: state.pressure, tool: state.tool, kind: state.kind,
       buttonLayout: BUTTON_LAYOUT, slots: state.buttons,
       // For an older NoteMind on the same profile.
       buttons: holdMap(state.buttons), sideButton: state.sideButton,
@@ -123,6 +126,8 @@ export function setButton(slot: Slot, job: "hold" | "double", action: HoldAction
 export const setEraser = (eraser: boolean) => set(eraser ? { eraser, tool: "eraser", selectTool: false } : { eraser })
 /** The bar's one button is the pen or the eraser (the dropdown's choice): only WHICH, never on or off. */
 export const setPenTool = (tool: PenTool) => set({ tool })
+/** Which pen the pen is (the pen button's menu): only the kind, the tool is the caller's to choose. */
+export const setPenKind = (kind: PenKind) => set({ kind })
 export const setSelectTool = (selectTool: boolean) => set(selectTool ? { selectTool, eraser: false } : { selectTool })
 
 /** Where the bar's one pen button is: its tool, whether the eraser is on, whether the pen is down (the app's mode). */

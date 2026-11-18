@@ -9,10 +9,10 @@ import { MenuButton } from "./MenuButton"
 import type { MenuItem } from "./FloatingMenu"
 import { PAPER_COLOURS, PAPER_KINDS, PAPER_SPACINGS, pitchOf, setPaper, usePaper } from "./tabletPaper"
 
-export function PaperMenu() {
+/** The Paper menu's rows, for the Paper button and for the options menu's Paper row when the bar has no room for the button. */
+export function usePaperItems(): MenuItem[] {
   const paper = usePaper()
-  const kind = PAPER_KINDS.find((one) => one.value === paper.kind)?.label ?? "Paper"
-  const items: MenuItem[] = [
+  return [
     ...PAPER_KINDS.map((one): MenuItem => ({
       label: one.label, checked: paper.kind === one.value, keepOpen: true, dataBar: `paper-${one.value}`,
       onClick: () => setPaper({ kind: one.value }),
@@ -43,6 +43,12 @@ export function PaperMenu() {
       ),
     },
   ]
+}
+
+export function PaperMenu() {
+  const paper = usePaper()
+  const kind = PAPER_KINDS.find((one) => one.value === paper.kind)?.label ?? "Paper"
+  const items = usePaperItems()
   return (
     <MenuButton name="Paper" live className="menu" data={{ tablet: "paper" }} title={`Paper: ${kind} · Style, spacing and colour`}
                 items={items}>

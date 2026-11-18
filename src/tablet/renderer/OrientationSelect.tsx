@@ -13,19 +13,26 @@ import { setOrientation, useOrientation, setPadChromeOrientation, usePadChromeOr
 
 const TITLE = "Tablet orientation: how the tablet is turned on your desk, as in Wacom Tablet Properties. The sheet takes this shape, and with Pen capture the pen is turned to match."
 
-export function OrientationMenu() {
+/** The four turns and the bars' switch as menu rows: the icon menu's, and the sheet options menu's submenu. */
+export function useOrientationItems() {
   const value = useOrientation()
   const rotateBars = usePadChromeOrientation()
+  return [...ORIENTATIONS.map((one) => ({
+    label: one.label, checked: one.value === value, dataBar: `orientation-${one.value}`,
+    onClick: () => setOrientation(one.value),
+  })), "-" as const, {
+    label: "Rotate menu bars with page", checked: rotateBars, keepOpen: true,
+    dataBar: "orientation-rotate-bars", onClick: () => setPadChromeOrientation(!rotateBars),
+  }]
+}
+
+export function OrientationMenu() {
+  const value = useOrientation()
+  const items = useOrientationItems()
   const now = ORIENTATIONS.find((one) => one.value === value)?.label ?? ""
   return (
     <MenuButton name="Tablet orientation" className="menu" data={{ tablet: "orientation-menu" }} title={`Tablet orientation: ${now}`} live
-                items={[...ORIENTATIONS.map((one) => ({
-                  label: one.label, checked: one.value === value, dataBar: `orientation-${one.value}`,
-                  onClick: () => setOrientation(one.value),
-                })), "-", {
-                  label: "Rotate menu bars with page", checked: rotateBars, keepOpen: true,
-                  dataBar: "orientation-rotate-bars", onClick: () => setPadChromeOrientation(!rotateBars),
-                }]}>
+                items={items}>
       <Icon name="orientation" />
     </MenuButton>
   )

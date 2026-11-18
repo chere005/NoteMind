@@ -2,6 +2,7 @@ import type { InkStroke } from './tabletPage'
 import { pressureScale } from '@notemind/core'
 import { colourOfPaper, inkOn, paintPaper, parsePaper, type Paper } from './tabletPaper'
 import {knownImmutableInk} from '../../drawing-history.js'
+import {inkBox} from '../../stroke-bounds.js'
 
 type Region = { x: number; y: number; width: number; height: number }
 type Source = { name: string; aspect: number; strokes: InkStroke[]; backdrop?: string | null; paper: Paper; target?: any; viewport?: Region }
@@ -9,6 +10,22 @@ type Source = { name: string; aspect: number; strokes: InkStroke[]; backdrop?: s
 /** Committed strokes are immutable; retain their identities while freezing the export's sheet and selection. */
 export function snapshotDrawing(source: Source, selection: Region | null = null) {
   return { ...source, strokes: knownImmutableInk(source.strokes)?source.strokes:source.strokes.slice(), paper: { ...source.paper }, selection: selection ? { ...selection } : null, region: { ...(selection || source.viewport || { x: 0, y: 0, width: 1, height: 1 }) }, target: source.target ? { ...source.target } : null }
+}
+
+/**
+ * What "Writing" brings in when nothing is boxed: the page's full width, from the first line of ink to the last with a
+ * small margin, not the whole sheet. The width stays the page's so the writing keeps its size and place in the note;
+ * only the blank paper above and below goes. Null with no ink.
+ */
+export function writingRegion(strokes: InkStroke[], aspect: number, viewport?: Region | null): Region | null {
+  const box = inkBox(strokes)
+  if (!box.count || !(aspect > 0)) return null
+  const view = viewport || { x: 0, y: 0, width: 1, height: 1 }
+  // The same margin on the page in both directions: 2% of its width.
+  const padX = .02, padY = .02 * aspect
+  const left = Math.max(view.x, Math.min(0, box.x - padX)), right = Math.min(view.x + view.width, Math.max(1, box.right + padX))
+  const top = Math.max(view.y, box.y - padY), bottom = Math.min(view.y + view.height, box.bottom + padY)
+  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null
 }
 
 const attribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
