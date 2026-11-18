@@ -18,18 +18,20 @@
   }finally{if(owned&&answer?.kind==='notemind-asset-chunk-v1'){discard(answer.data);if(typeof answer.receipt==='string')await api.ack(transfer,answer.receipt)}}await yieldTask()}check(signal);if(chars!==info.chars)throw Error('Incomplete returned document image.');let data='';for(const chunk of chunks)data+=chunk;return{data,chunks:Object.freeze(chunks)};
  }
 
- async function* referenceChunks(token,info,{signal}={}){
+ async function* referenceChunks(token,info,{signal,materialize=false,onOpen=()=>{},onRequest=()=>{}}={}){
   if(typeof api.openReference!=='function'||typeof api.finishReference!=='function'||typeof api.ack!=='function')throw Error('Document asset references are unavailable.');check(signal);
-  const requestId=uuid();let transfer,dispatched=false,cancelled=false;
+  const requestId=uuid();onRequest(requestId);let transfer,dispatched=false,cancelled=false;
   const cancel=()=>{if(dispatched&&!cancelled){cancelled=true;try{void Promise.resolve(api.cancelReference?.(requestId)).catch(()=>{})}catch{}}};signal?.addEventListener('abort',cancel,{once:true});
-  try{check(signal);dispatched=true;const opened=await api.openReference(token,{requestId});
-   if(opened?.kind!=='notemind-asset-reference-read-v1'||opened.token!==token||typeof opened.transfer!=='string'||!opened.transfer||opened.bytes!==info.bytes||opened.chars!==info.chars)throw Error('Invalid document asset read receipt.');transfer=opened.transfer;check(signal);
+  try{check(signal);dispatched=true;const opened=await api.openReference(token,{requestId,mode:materialize?'materialize':'stream'});
+   if(opened?.kind!=='notemind-asset-reference-read-v1'||opened.token!==token||typeof opened.transfer!=='string'||!opened.transfer||opened.bytes!==info.bytes||opened.chars!==info.chars||materialize&&(typeof opened.receiverReceipt!=='string'||!opened.receiverReceipt||opened.receiverReceipt.length>128))throw Error('Invalid document asset read receipt.');transfer=opened.transfer;onOpen(opened);check(signal);
    let offset=0;while(offset<info.bytes){check(signal);const answer=await api.read(transfer,token,offset,{owned:true});try{
     check(signal);if(answer?.kind!=='notemind-asset-chunk-v1'||answer.transfer!==transfer||answer.token!==token||answer.offset!==offset||typeof answer.receipt!=='string'||!answer.receipt||answer.receipt.length>128||!Number.isSafeInteger(answer.bytes)||answer.bytes<=0||answer.bytes>196608||offset+answer.bytes>info.bytes||!privateBytes(answer.data)||answer.data.byteLength!==answer.bytes)throw Error('Invalid owned document asset chunk.');
     yield answer.data;offset+=answer.bytes;
    }finally{if(answer?.kind==='notemind-asset-chunk-v1'&&answer.transfer===transfer&&answer.token===token){discard(answer.data);if(typeof answer.receipt==='string'&&await api.ack(transfer,answer.receipt)!==true)throw Error('Document asset chunk acknowledgement failed.');}}await yieldTask();}
    check(signal);const finished=await api.finishReference(transfer);check(signal);if(finished?.done!==true||finished.bytes!==info.bytes||finished.sha256!==info.sha256)throw Error('Document asset source verification failed.');
-  }finally{signal?.removeEventListener('abort',cancel);if(transfer)await api.release(transfer);else cancel();}
+  }finally{signal?.removeEventListener('abort',cancel);if(transfer){if(!materialize)await api.release(transfer);}else cancel();}
  }
- return{upload,pull,referenceChunks,release:transfer=>Promise.resolve().then(()=>api.release(transfer)).catch(()=>{})};
+ async function withReferenceBytes(token,info,options={},run){let result,handle,receipt,requestId;try{let offset=0;for await(const part of referenceChunks(token,info,{...options,materialize:true,onRequest:id=>requestId=id,onOpen:opened=>{handle=opened.transfer;receipt=opened.receiverReceipt;check(options.signal);result=new Uint8Array(info.bytes);}})){if(offset+part.byteLength>info.bytes)throw Error('Document asset receiver length changed.');result.set(part,offset);offset+=part.byteLength;}if(offset!==info.bytes)throw Error('Document asset receiver is incomplete.');check(options.signal);return await run(result);}finally{discard(result);if(handle)await api.release(handle,{receiverReceipt:receipt,receiverReleased:true});else if(requestId)await api.cancelReference?.(requestId,{receiverReleased:true});}}
+ async function adopt(handle,{signal}={}){check(signal);let result;const cancel=()=>{void Promise.resolve().then(()=>api.release(handle)).catch(()=>{});};signal?.addEventListener('abort',cancel,{once:true});try{check(signal);result=await api.adopt(handle);check(signal);return result;}catch(error){if(result?.hold)await api.releaseHold(result.hold);throw error;}finally{signal?.removeEventListener('abort',cancel);}}
+ return{upload,pull,referenceChunks,withReferenceBytes,...(typeof api.adopt==='function'?{adopt}:{}),releaseStrict:transfer=>api.release(transfer),releaseHold:hold=>api.releaseHold(hold),release:transfer=>Promise.resolve().then(()=>api.release(transfer)).catch(()=>{})};
 });
