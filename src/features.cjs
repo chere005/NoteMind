@@ -40,6 +40,7 @@ module.exports = function installFeatures(window, projectService) {
   await fs.writeFile(path.join(profile,'workspace.json'),JSON.stringify(workspace));
   const args = app.isPackaged ? [] : [app.getAppPath()];
   const child = spawn(process.execPath,args,{detached:true,stdio:'ignore',windowsHide:true,env:{...process.env,NOTEMIND_DATA:profile,NOTEMIND_HOME:home,NOTEMIND_WORKSPACES:root}});
+  await new Promise((resolve,reject)=>{child.on('error',reject);child.once('spawn',()=>{if(!Number.isSafeInteger(child.pid)||child.pid<=0)reject(Error('The project window could not start.'));else resolve();});});
   child.unref();
   return child.pid;
  });
