@@ -76,7 +76,7 @@ test('native clipboard writes image and editable ink atomically, preferring ink 
 		async getType(type) { const value = this.data[type]; return value instanceof Blob ? value : new Blob([value]); }
 	}
 	const clipboard = {write:async value => {items = value;}, read:async () => items};
-	const png = Buffer.from('picture');
+	const png = fs.readFileSync(require.resolve('./fixtures/ocr-english.png'));
 	const nativeImage = {createFromBuffer:() => ({isEmpty:() => false, toPNG:() => png})};
 	const api = drawingClipboard({clipboard, ClipboardItem, nativeImage});
 	await api.copy({png:png.toString('base64'), ink:graphics.encodeBase64(sheet())});
@@ -126,4 +126,34 @@ test('copying and pasting a thin stroke keeps its original size and pen width', 
 	assert.ok(Math.abs(page.strokes[0].width - 3) < 1e-10);
 	assert.equal(page.strokes[0].pressures[1], .9);
 	await page.disposeAsync();
+});
+
+test('malformed clipboard placement cannot change the receiving drawing', async () => {
+	const page = new TabletPage(.5), before = page.strokes;
+	for (const region of [{x:Number.MAX_VALUE, y:0, width:1, height:1},
+		{x:0, y:0, width:Number.MIN_VALUE, height:1}]) {
+		await assert.rejects(pasteInk(page, {...sheet(), clipboardRegion:region}, view), /drawing area/);
+		assert.equal(page.strokes, before);
+	}
+	await page.disposeAsync();
+});
+
+test('clipboard image bounds are checked before decoding or opening a sheet', async () => {
+	const header = Buffer.alloc(33);
+	Buffer.from('89504e470d0a1a0a', 'hex').copy(header);
+	header.writeUInt32BE(13, 8);
+	header.write('IHDR', 12);
+	header.writeUInt32BE(100000, 16);
+	header.writeUInt32BE(100000, 20);
+	let nativeReads = 0;
+	class ClipboardItem {
+		constructor(data) {this.types = Object.keys(data); this.data = data;}
+		async getType(type) {return this.data[type];}
+	}
+	const clipboard = {read:async () => [new ClipboardItem({'image/png':new Blob([header])})]};
+	const api = drawingClipboard({clipboard, ClipboardItem,
+		nativeImage:{createFromBuffer:() => {nativeReads++; throw Error('Unexpected native image decode');}}});
+	await assert.rejects(api.read(), /pixel image limit/);
+	await assert.rejects(api.copy({png:header.toString('base64')}), /pixel image limit/);
+	assert.equal(nativeReads, 0);
 });

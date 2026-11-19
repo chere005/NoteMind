@@ -1,5 +1,20 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),{EventEmitter}=require('node:events'),{randomUUID}=require('node:crypto'),{DocumentAssetSessions}=require('../src/document-asset-sessions.cjs'),tick=()=>new Promise(setImmediate);
 const owner=()=>Object.assign(new EventEmitter(),{isDestroyed:()=>false}),descriptor=()=>({rawAssetToken:randomUUID(),bytes:4,chars:8,epoch:1}),deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+test('closing an image-heavy document releases its assets in one batch before retiring the owner', async () => {
+ const who=owner(),gate=deferred(),calls=[];
+ const raw={releaseRawAssets:async (_owner,tokens)=>{calls.push(tokens);if(tokens)await gate.promise;}};
+ const assets=new DocumentAssetSessions({raw}),state=assets.session(who);
+ const photos=Array.from({length:24},descriptor);
+ for(const photo of photos)assets.remember(state,randomUUID(),photo);
+ const quit=assets.dispose();
+ await tick();
+ assert.deepEqual(calls,[photos.map(photo=>photo.rawAssetToken)]);
+ assert.equal(assets.total().bytes,24*8);
+ gate.resolve();
+ await quit;
+ assert.deepEqual(calls,[photos.map(photo=>photo.rawAssetToken),undefined]);
+ assert.equal(assets.total().bytes,0);
+});
 test('global asset disposal closes new owners and joins an accepted raw consumer before owner release',async()=>{
  const entered=deferred(),gate=deferred(),who=owner(),released=[],raw={preflightRawAssets:async()=>({run:fn=>fn(),release:async()=>{}}),releaseRawAssets:async(...args)=>released.push(args)},assets=new DocumentAssetSessions({raw}),packet={version:1,operation:'autosave',document:{text:'Ink'},assets:{},added:{}};const work=assets.run(who,packet,async()=>{entered.resolve();await gate.promise;return null});await entered.promise;let disposed=false;const disposing=Promise.resolve(assets.dispose()).then(()=>disposed=true);await tick();assert.equal(disposed,false);assert.equal(released.length,0);assert.throws(()=>assets.session(owner()),/closed/);gate.resolve();await work;await disposing;assert.equal(assets.states.size,0);assert.equal(released.length,1);
 });

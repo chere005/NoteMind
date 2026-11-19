@@ -31,10 +31,16 @@ test('the built Mac helper decodes display reports without opening hardware',{sk
  const run=(...args)=>JSON.parse(require('node:child_process').execFileSync(path.resolve('src/helpers/wm-pen-display'),args,{encoding:'utf8'}));
  assert.deepEqual(run('--decode','1e 01 c3'),{k:'buttons',range:true,tip:true,lower:true,upper:false});
  assert.deepEqual(run('--decode','1e 01 80'),{k:'buttons',range:false,tip:false,lower:false,upper:false});
+ assert.deepEqual(run('--decode','1e 00 c3'),{k:'buttons',range:false,tip:false,lower:false,upper:false});
  assert.equal(run('--decode','00 01 c3').k,'not-a-button-report');
  assert.equal(run('--describe-one').length,34);
  assert.equal(run('--check-one-hover','c0','5').ready,true);assert.equal(run('--check-one-hover','c1','5').ready,false);assert.equal(run('--check-one-hover','c0','500').ready,false);
  assert.equal(run('--check-one-seize-timeout','1','false','800').expired,true);
+ const displayDriver=(name,pid)=>JSON.parse(require('node:child_process').execFileSync(path.resolve('src/helpers/wm-pen'),
+  ['--uses-display-driver',name,String(pid)],{encoding:'utf8'})).value;
+ assert.equal(displayDriver('Wacom One pen display',0x03ce),true);
+ assert.equal(displayDriver('Wacom Billboard',0x03cf),true);
+ assert.equal(displayDriver('One by Wacom',0x037a),false);
 });
 
 test('display button IPC only serves the app window and stops when disposed',()=>{

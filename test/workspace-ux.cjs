@@ -1,5 +1,5 @@
 const {app}=require('electron'),fs=require('node:fs'),path=require('node:path');
-const root=path.resolve('test-results/workspace-ux-'+Date.now());fs.mkdirSync(root,{recursive:true});process.env.NOTEMIND_DATA=root;app.disableHardwareAcceleration();
+const root=path.resolve('test-results/workspace-ux-'+Date.now());fs.mkdirSync(root,{recursive:true});process.env.NOTEMIND_DATA=root;app.setPath('documents',root);app.disableHardwareAcceleration();
 const folder=path.join(root,'Notes');fs.mkdirSync(folder);fs.mkdirSync(path.join(root,'workspaces'));fs.writeFileSync(path.join(root,'workspaces/index.json'),JSON.stringify([{id:'default',name:'Default Workspace',folders:[folder],files:[]}]));
 const report={root,checks:[]},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));let tested=false;
 app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webContents.setBackgroundThrottling(false);w.webContents.once('did-finish-load',async()=>{
@@ -23,8 +23,11 @@ app.on('browser-window-created',(_,w)=>{if(tested)return;tested=true;w.webConten
   w.setContentSize(800,600);await pause(250);
   check(await js(()=>document.getElementById('sidebar').hidden&&!document.getElementById('sidebarResize').getClientRects().length),'small windows automatically give writing room');
   check(await js(()=>{const main=document.querySelector('main').getBoundingClientRect(),more=document.getElementById('writingTools').getBoundingClientRect();return more.width>0&&more.right<=main.right&&more.left>=main.left&&document.getElementById('toolbar').scrollWidth<=main.width+1;}),'the writing toolbar fits a small editor and keeps More visible');
-  check(await js(()=>{const bar=document.getElementById('pen-control'),r=bar.getBoundingClientRect();return r.height<=70&&[...bar.querySelectorAll('button,select')].every(el=>{const b=el.getBoundingClientRect();return !b.width||(b.left>=r.left&&b.right<=r.right&&b.bottom<=r.bottom);});}),'all pen tools, swatches, width and location fit two rows');
-  check(await js(()=>!!document.querySelector('[data-tablet=orientation-menu]')&&!!document.querySelector('[data-drawing-location]')),'orientation and the drawing location icon are directly available');
+  check(await js(()=>{const bar=document.getElementById('pen-control'),r=bar.getBoundingClientRect();return r.height<=70&&[...bar.querySelectorAll('button,select')].every(el=>{const b=el.getBoundingClientRect();return !b.width||(b.left>=r.left&&b.right<=r.right&&b.bottom<=r.bottom);});}),'the visible pen controls fit the pen bar');
+  await js(()=>document.querySelector('.sheet-tabs [data-bar=pane-menu]').click());await pause(80);
+  check(await js(()=>!!document.querySelector('.float-menu [data-bar=pane-orientation]')),'drawing options contains orientation');
+  check(await js(()=>!!document.querySelector('.float-menu [data-bar=pane-wacom]')),'drawing options contains Use Wacom Screen');
+  await js(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
   await js(()=>document.getElementById('writingTools').click());await pause(80);
   check(await js(()=>['Underline','Strikethrough','Inline Code','Lists','Paragraph'].every(label=>[...document.querySelectorAll('.float-menu button')].some(button=>button.getAttribute('data-menu-label')===label))),'Format retains access to advanced formatting and list menus when controls are hidden');
   await js(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));await pause(80);

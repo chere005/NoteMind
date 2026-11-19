@@ -5,6 +5,7 @@ import { MenuButton } from "./MenuButton"
 import { PaperMenu, usePaperItems } from "./PaperMenu"
 import { useOrientationItems } from "./OrientationSelect"
 import { BringInMenu } from "./BringInMenu"
+import { usePadLocation } from "./DrawingLocation"
 import type { BringTo, CaptureMode } from "./cameraSettings"
 import type { HeaderFit } from "./cameraHeaderFit"
 import {headerFit} from './cameraHeaderFit'
@@ -98,9 +99,9 @@ interface TabletProps {
   canUndo: boolean
   undoTitle: string
   onUndo(): void
-  
   canClear: boolean
   onClear(): void
+  
   to: BringTo
   onBringTo(next: BringTo): void
   
@@ -110,6 +111,8 @@ interface TabletProps {
   onBring(to: BringTo): void
   onBringPage(): void
   onBringSheetText(): void
+  docked: boolean
+  onDocked(docked: boolean): void
   
 
   
@@ -118,6 +121,14 @@ interface TabletProps {
 
   textOff: string | null
   
+  onHide(): void
+  showEditor: boolean
+  onToggleEditor?(): void
+}
+
+interface TabletOptionsProps {
+  canClear: boolean
+  onClear(): void
   files?: {
     save(): void; saveAs(): void; open(): void
     
@@ -134,27 +145,33 @@ interface TabletProps {
     canKeepProject: boolean
     onKeep(to: "note" | "project", on: boolean): void
   }
-  onHide(): void
-  showEditor: boolean
-  onToggleEditor?(): void
 }
 
 
 export function TabletHeader(p:TabletProps) {
- const original=p.files?.picture?.saveOriginal
- const orientation=useOrientationItems(),paper=usePaperItems()
- // Paper is always in the options menu: its button is on the bar only when the bar has room for it (pane.css).
- const sheet=[{label:'Paper',dataBar:'pane-paper',submenu:paper},{label:'Tablet Orientation',dataBar:'pane-orientation',submenu:orientation}]
- const clear={label:'Clear the Sheet',disabled:!p.canClear,dataBar:'clear',onClick:p.onClear}
  // Not a bar of its own: these follow the pen's controls on the pen bar (PenControl's `trailing`), so the pane has two bars.
  return <span className="pen-trailing" role="group" aria-label="Tablet sheet" data-camera-head="tablet">
   <span className="toolbar-separator"/>
   {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
   <PaperMenu/>
   <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo"/></button>
-  <span className="grow"/>
-  <BringInMenu title="Insert drawing into the open Notepad" off={p.bringOff} onBring={p.onBring} onPage={p.onBringPage}/>
-  <MenuButton icon="more" name="Drawing options" title="Save, open, keep, paper and clear" data={{tablet:'pane-menu'}} dataBar="pane-menu" live items={p.files?[
+  <span className="pen-insert-actions">
+    <button type="button" className="bar-btn" data-tablet="clear" aria-label="Clear Page" title="Clear the drawing page" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash"/></button>
+    <span className="grow"/>
+    <BringInMenu title="Insert drawing into the open Notepad" off={p.bringOff} onBring={p.onBring} onPage={p.onBringPage}
+      docked={p.docked} onDocked={p.onDocked}/>
+  </span>
+ </span>
+}
+
+export function TabletOptions(p: TabletOptionsProps) {
+ const original=p.files?.picture?.saveOriginal
+ const orientation=useOrientationItems(),paper=usePaperItems(),pad=usePadLocation()
+ const sheet=[{label:'Paper',dataBar:'pane-paper',submenu:paper},{label:'Tablet Orientation',dataBar:'pane-orientation',submenu:orientation},
+   {label:'Use Wacom Screen',checked:pad.wacom,disabled:pad.busy||!pad.available,dataBar:'pane-wacom',
+    title:pad.available?undefined:'The Wacom must be an extended display',onClick:pad.toggle}]
+ const clear={label:'Clear the Sheet',disabled:!p.canClear,dataBar:'clear',onClick:p.onClear}
+ return <MenuButton icon="more" name="Drawing options" title="Save, open, keep, paper and clear" data={{tablet:'pane-menu'}} dataBar="pane-menu" live items={p.files?[
    {label:original?'Save to Original':'Save Sheet',dataBar:original?'pane-save-original':'pane-save',onClick:original||p.files.save},
    ...(p.files.picture?[{label:'Save as New Image…',dataBar:'pane-save-new',onClick:p.files.picture.saveNew}]:[]),
    {label:'Save Drawing As…',dataBar:'pane-save-as',onClick:p.files.saveAs},{label:'Open Drawing…',dataBar:'pane-open',onClick:p.files.open},
@@ -164,5 +181,4 @@ export function TabletHeader(p:TabletProps) {
    {label:'This project',checked:p.files.keptProject,disabled:!p.files.canKeepProject,dataBar:'pane-keep-project',onClick:()=>p.files.onKeep('project',!p.files.keptProject)},
    '-',...sheet,clear,
   ]:[...sheet,clear]}/>
- </span>
 }

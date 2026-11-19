@@ -5,7 +5,8 @@ const MAX_CLIPBOARD_BYTES = 16 * 1024 * 1024;
 const MARKER = /<meta\s+name="notemind-ink"\s+content="([a-z0-9+/=]+)"\s*\/?\s*>/i;
 const REGION = /<meta\s+name="notemind-ink-region"\s+content="([^"]+)"\s*\/?\s*>/i;
 const validRegion = region => region && [region.x, region.y, region.width, region.height,
-	region.x + region.width, region.y + region.height].every(Number.isFinite) && region.width > 0 && region.height > 0;
+	region.x + region.width, region.y + region.height].every(value =>
+		typeof value === 'number' && Number.isFinite(value * 10000)) && region.width > 0 && region.height > 0;
 
 function clipboardHTML(ink, region = null) {
 	if (!ink) return '';
@@ -69,6 +70,7 @@ async function pasteInk(page, sheet, view, {valid = () => true} = {}) {
 		const source = sheet.clipboardRegion || {x:0, y:0, width:1, height:1};
 		if (!validRegion(source)) throw Error('Invalid pasted drawing area.');
 		const area = inkPlacement(sheet.aspect * source.width / source.height, page.aspect, view, source.width);
+		if (!validRegion(area)) throw Error('The pasted drawing area cannot be represented.');
 		const ink = sheet.strokes.map(stroke => ({
 			...stroke,
 			width: stroke.width * area.width / source.width,
@@ -78,6 +80,7 @@ async function pasteInk(page, sheet, view, {valid = () => true} = {}) {
 			})),
 			...(stroke.pressures ? {pressures: stroke.pressures.slice()} : {}),
 		}));
+		graphics.validate({aspect:page.aspect, strokes:ink});
 		const points = ink.reduce((count, stroke) => count + stroke.points.length, 0);
 		while (valid()) {
 			const before = page.strokes;

@@ -1,0 +1,4 @@
+// Source-only preparation: does not load the native addon or execute inference.
+const path=require('node:path'),{prepareLifecycle}=require('./helpers/ocr-native-lifecycle.cjs'),esbuild=require('esbuild');
+const root=path.resolve(__dirname,'..'),directory=path.resolve('test-results/native-ort-deps'),head=require('node:child_process').execFileSync('git',['rev-parse','--short=8','HEAD'],{cwd:root,encoding:'utf8'}).trim(),output=path.join(directory,'lifecycle-'+head+'-'+Date.now());
+prepareLifecycle({root,dependencyDirectory:directory,output,esbuild}).then(value=>{esbuild.stop();console.log(JSON.stringify({nativeExecuted:false,receipt:value.file,workerSHA:value.receipt.workerSHA,markedBackendSHA:value.receipt.markedBackendSHA,rootHead:value.receipt.rootHead}));},error=>{esbuild.stop();console.error(error);process.exitCode=1;});

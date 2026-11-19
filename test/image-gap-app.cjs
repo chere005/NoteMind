@@ -4,6 +4,7 @@ const {app} = require('electron'), fs = require('node:fs'), path = require('node
 const root = path.resolve('test-results/image-gap-app-' + Date.now());
 fs.mkdirSync(root, {recursive: true});
 process.env.NOTEMIND_DATA = root;
+app.setPath('documents', root);
 app.disableHardwareAcceleration();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const report = {root, checks: []};
@@ -72,6 +73,29 @@ app.on('browser-window-created', (_, w) => {
       check(order[first] === 'pane' && order[first + 1] === 'between' && order[first + 2] === 'pane',
         'Typed text lands between the two drawings: ' + JSON.stringify(order));
       fs.writeFileSync(path.join(root, 'between.png'), (await w.webContents.capturePage()).toPNG());
+
+      const assetState = () => js(`({ names: [...rich.querySelectorAll('img[data-asset]')].map(img => img.dataset.asset),
+        assets: Object.keys(doc.assets), text: currentText() })`);
+      const beforeDelete = await assetState();
+      const center = await js(`(() => {
+        const r = rich.querySelector('img[data-asset]').getBoundingClientRect();
+        return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)};
+      })()`);
+      await mouse(center.x, center.y);
+      check(await js(`NoteMindPicture.selected()?.dataset.asset`) === beforeDelete.names[0],
+        'Clicking an image selects that image');
+      w.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Backspace'});
+      w.webContents.sendInputEvent({type: 'keyUp', keyCode: 'Backspace'});
+      await pause(100);
+      const afterDelete = await assetState(), removed = beforeDelete.names[0];
+      check(afterDelete.names.join() === beforeDelete.names[1] && afterDelete.text.includes('between') &&
+        !afterDelete.assets.includes(removed) && !afterDelete.assets.includes(removed + '.json'),
+      'Backspace removes the selected image and its unreferenced sidecar');
+      await js(`window.dispatchEvent(new CustomEvent('notemind-command', {detail: 'undoText'}))`);
+      await pause(100);
+      const afterUndo = await assetState();
+      check(afterUndo.names.join() === beforeDelete.names.join() && afterUndo.text === beforeDelete.text &&
+        afterUndo.assets.includes(removed + '.json'), 'One undo restores the drawing, its sidecar, and the text');
       report.ok = true;
     } catch (error) {
       report.ok = false;

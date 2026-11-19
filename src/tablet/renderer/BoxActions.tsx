@@ -23,17 +23,20 @@ export interface BoxButtons {
 interface Props extends BoxButtons {
   mirrored?: boolean
   mirrorAnchor?: MirrorAnchor
+  busy?: boolean
   
   box: Rect
   
   sheet: { x: number; y: number; width: number; height: number }
 }
 
-export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, clear, text, mirrored=false, mirrorAnchor }: Props) {
+export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, clear, text, mirrored=false, mirrorAnchor, busy=false }: Props) {
   const row = useRef<HTMLDivElement | null>(null)
   const mirror = useSelectionMirror(row, sheet, mirrored)
   const [size, setSize] = useState<Size | null>(null)
   const [pending, setPending] = useState(false)
+  const running = useRef(false)
+  const blocked = pending || busy
   
   const [full, setFull] = useState<number | null>(null)
   // The short labels only when the full row would not fit across the sheet.
@@ -50,9 +53,10 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
   const place: RowPlace | null = size ? placeRow(box, sheet, size, ROW_GAP, { above: sheet.y, below: sheet.y }) : null
   
   const run = (action: () => void | Promise<void>) => async () => {
-    if (pending) return
+    if (running.current || busy) return
+    running.current = true
     setPending(true)
-    try { await action() } finally { setPending(false) }
+    try { await action() } finally { running.current = false; setPending(false) }
   }
   const off = bringOff !== null
   const mirrorPlace = mirrorAnchor&&size ? mirrorRowPlace(mirrorAnchor,size) : null
@@ -109,7 +113,7 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
 
   return (
     <>
-    {mirror&&createPortal(<BoxActions box={box} sheet={mirror.sheet} erase={erase} bring={bring} picture={picture} copy={copy} bringOff={bringOff} clear={clear} text={text} mirrorAnchor={mirror.anchor} mirrored/>,mirror.target)}
+    {mirror&&createPortal(<BoxActions box={box} sheet={mirror.sheet} erase={run(erase)} bring={run(bring)} picture={run(picture)} copy={run(copy)} bringOff={bringOff} clear={clear} text={text} mirrorAnchor={mirror.anchor} busy={pending} mirrored/>,mirror.target)}
     <div className="box-actions" ref={row} data-tablet="box-actions" data-pen-handover="" data-side={place?.side ?? ""} data-compact={compact ? "1" : "0"}
          role="group"
          aria-label="The box"
@@ -121,15 +125,15 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
          onPointerDown={(event) => { event.stopPropagation(); watch(event.nativeEvent) }}
          onPointerUp={(event) => event.stopPropagation()}
          onContextMenu={(event) => event.preventDefault()}>
-      <button type="button" className="primary" data-box-action="ink" disabled={off || pending}
+      <button type="button" className="primary" data-box-action="ink" disabled={off || blocked}
               title={bringOff ?? "Insert the writing inside the box as an image. The sheet keeps it."}
               onClick={run(bring)}>{compact ? "Writing" : "Bring in writing"}</button>
-      <button type="button" data-box-action="picture" disabled={off || pending}
+      <button type="button" data-box-action="picture" disabled={off || blocked}
               title={bringOff ?? "Bring the boxed part of the sheet into the note as a picture, paper and all. The sheet keeps it."}
               onClick={run(picture)}>Picture</button>
       <span className="sep" aria-hidden />
-      <button type="button" data-box-action="copy" disabled={pending} title="Copy the selected drawing as an image" onClick={run(copy)}>Copy</button>
-      <button type="button" className="danger" data-box-action="erase" disabled={pending}
+      <button type="button" data-box-action="copy" disabled={blocked} title="Copy the selected drawing as an image" onClick={run(copy)}>Copy</button>
+      <button type="button" className="danger" data-box-action="erase" disabled={blocked}
               title="Rub out the strokes wholly inside the box; one crossing its edge stays (one Undo on the sheet brings them back)"
               onClick={run(erase)}>Erase</button>
 

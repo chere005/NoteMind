@@ -104,16 +104,33 @@ async function verifiedLinked(file,identity,hash){let handle;try{
  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('Version publication ownership changed.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);return stat;
  }finally{await handle?.close();}}
 
-async function verifiedObject(root,ref,cache){
+// The publishing process may remove its temporary hard link while another process verifies the object.
+function retiredObjectLink(before,after){
+ return before.nlink===2&&after.nlink===1&&after.isFile()&&['dev','ino','size','mtimeMs'].every(key=>before[key]===after[key]);
+}
+async function verifiedObject(root,ref,cache,expected){
  const file=objectFile(root,ref.hash);let handle;try{
   try{handle=await fs.open(file,raw.constants.O_RDONLY|(raw.constants.O_NOFOLLOW||0));}catch(error){if(error.code==='ENOENT')throw Object.assign(Error('A version asset is missing.'),{code:'SNAPSHOT_OBJECT_MISSING',hash:ref.hash});throw error;}
-  const stat=await handle.stat();if(!stat.isFile()||stat.size!==ref.bytes)throw Error('A version asset is damaged.');if(!sameStat(cache.get(ref.hash),stat)&&await digestHandle(handle,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
-  const named=await fs.lstat(file),current=await handle.stat();if(!named.isFile()||named.isSymbolicLink()||!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return stat;
+  const stat=await handle.stat();if(!stat.isFile()||stat.size!==ref.bytes||expected&&(!sameStat(expected,stat)||stat.nlink!==1))throw Error('A version asset is damaged.');
+  if((expected||!sameStat(cache.get(ref.hash),stat))&&await digestHandle(handle,ref.bytes)!==ref.hash)throw Error('A version asset is damaged.');
+  const named=await fs.lstat(file),current=await handle.stat();
+  if(!named.isFile()||named.isSymbolicLink())throw Error('A version asset is damaged.');
+  if(retiredObjectLink(stat,current)&&(sameStat(stat,named)||sameStat(current,named)))return await verifiedObject(root,ref,cache,current);
+  if(!sameStat(stat,current)||!sameStat(stat,named))throw Error('A version asset is damaged.');
+  await require('./fs-durability.cjs').syncReadOnlyHandle(handle);remember(cache,ref.hash,stat);return stat;
  }finally{await handle?.close();}
+}
+async function confirmObject(root,ref,cache,verified){
+ const file=objectFile(root,ref.hash);
+ await syncHierarchy(root,path.dirname(file));
+ const named=await fs.lstat(file);
+ if(retiredObjectLink(verified,named)){await verifiedObject(root,ref,cache,named);return;}
+ if(!named.isFile()||named.isSymbolicLink()||!sameStat(verified,named))throw Error('Version object ownership changed.');
+ remember(cache,ref.hash,verified);
 }
 async function publishSourceObject(root,object,ref,cache){
  if(!object||object.hash!==ref.hash||object.bytes!==ref.bytes||typeof object.source!=='function')throw Error('Invalid prepared version asset.');
- const file=objectFile(root,ref.hash);try{const stat=await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(file));await assertTemp(file,stat,{stable:true});return;}catch(error){if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;}
+ const file=objectFile(root,ref.hash);try{const stat=await verifiedObject(root,ref,cache);await confirmObject(root,ref,cache,stat);return;}catch(error){if(error.code!=='SNAPSHOT_OBJECT_MISSING')throw error;}
  const temp=file+'.'+randomUUID()+'.tmp';await fs.mkdir(path.dirname(file),{recursive:true});let handle,identity;
  try{
   handle=await fs.open(temp,'wx');identity=await handle.stat();const digest=createHash('sha256');let total=0;
@@ -123,7 +140,7 @@ async function publishSourceObject(root,object,ref,cache){
   if(total!==ref.bytes||digest.digest('hex')!==ref.hash)throw Error('Version source digest changed.');await handle.sync();const written=await handle.stat();await handle.close();handle=null;
   const named=await fs.lstat(temp);if(!named.isFile()||named.isSymbolicLink()||!sameStat(written,named)||written.dev!==identity.dev||written.ino!==identity.ino||written.size!==ref.bytes)throw Error('Version object identity changed.');
   let linked=false;try{await fs.link(temp,file);linked=true;cache.delete(ref.hash);}catch(error){if(error.code!=='EEXIST')throw error;}const verified=linked?await verifiedLinked(file,written,ref.hash):await verifiedObject(root,ref,cache);
-  await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});remember(cache,ref.hash,verified);
+  await confirmObject(root,ref,cache,verified);
  }finally{await handle?.close();await unlinkTemp(temp,identity);}
 }
 async function publishObject(root,object,ref,cache){
@@ -136,7 +153,7 @@ async function publishObject(root,object,ref,cache){
   identity=await writeSynced(temp,object.bytes,created=>identity=created);complete=true;await assertTemp(temp,identity,{stable:true});
   try{await fs.link(temp,file);linked=true;cache.delete(ref.hash);}
   catch(error){if(error.code!=='EEXIST')throw error;}const verified=linked?await verifiedLinked(file,identity,ref.hash):await verifiedObject(root,ref,cache);
-  await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});remember(cache,ref.hash,verified);
+  await confirmObject(root,ref,cache,verified);
  }finally{await unlinkTemp(temp,identity,{stable:complete&&!linked});}
 }
 async function publishSnapshotObjects(root,prepared,cache=new Map()){
@@ -144,7 +161,7 @@ async function publishSnapshotObjects(root,prepared,cache=new Map()){
  for(const object of prepared.objects||[]){if(!validHash(object?.hash)||objects.has(object.hash))throw Error('Invalid prepared version objects.');objects.set(object.hash,object);}
  const refs=new Map(Object.values(manifest.assets).map(ref=>[ref.hash,ref]));
  for(const hash of objects.keys())if(!refs.has(hash))throw Error('Unreferenced prepared version asset.');
- const publish=async ref=>{if(objects.has(ref.hash))await publishObject(root,objects.get(ref.hash),ref,cache);else{const file=objectFile(root,ref.hash),verified=await verifiedObject(root,ref,cache);await syncHierarchy(root,path.dirname(file));await assertTemp(file,verified,{stable:true});}};if([...objects.values()].some(object=>typeof object.source==='function'))for(const ref of refs.values())await publish(ref);else await mapLimit([...refs.values()],8,publish);
+ const publish=async ref=>{if(objects.has(ref.hash))await publishObject(root,objects.get(ref.hash),ref,cache);else await confirmObject(root,ref,cache,await verifiedObject(root,ref,cache));};if([...objects.values()].some(object=>typeof object.source==='function'))for(const ref of refs.values())await publish(ref);else await mapLimit([...refs.values()],8,publish);
 }
 async function publishSnapshot(root,id,prepared,cache=new Map(),{beforePublish}={}){
  const file=manifestFile(root,id),manifestBytes=prepared?.manifestBytes;

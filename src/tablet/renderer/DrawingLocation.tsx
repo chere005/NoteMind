@@ -8,13 +8,13 @@ export function usePadLocation() {
   useEffect(() => {
     const api = window.notemind?.pad
     if (!api) return
-    let live = true
-    api.state().then(value => { if (live) setState(value) }).catch(() => {})
-    const off = api.onState(value => { if (live) setState(value) })
+    let live = true, pushed = false
+    api.state().then(value => { if (live && !pushed) setState(value) }).catch(() => {})
+    const off = api.onState(value => { pushed = true; if (live) setState(value) })
     return () => { live = false; off() }
   }, [])
   const available = !!state?.available
-  const wacom = !!(state?.enabled && available)
+  const wacom = !!(state?.enabled && state.owned && available)
   const toggle = () => { setBusy(true);setError('');void window.notemind.pad.set(!wacom).then(setState).catch(error => setError('Could not switch drawing location: ' + error.message)).finally(() => setBusy(false)) }
   return { available, wacom, busy, error, toggle }
 }

@@ -7,5 +7,19 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
  const after=await js(()=>[...rich.querySelectorAll('img')].map(x=>x.dataset.asset));if(after[0]===after[1]||after[1]!=='assets/a.png')throw Error('Rotation changed the other use');
  await js(()=>NoteMindHistory.step());await wait(100);const undo=await js(()=>[...rich.querySelectorAll('img')].map(x=>x.dataset.asset));if(undo.some(x=>x!=='assets/a.png'))throw Error('Undo did not restore the original picture');
  await js(()=>NoteMindHistory.step(true));await wait(100);const redo=await js(()=>[...rich.querySelectorAll('img')].map(x=>x.dataset.asset));if(redo[0]===redo[1])throw Error('Redo did not restore the edit');
+ await js(()=>NoteMindHistory.step());await wait(100);
+ const sizes=await js(()=>{
+  const [first,second]=rich.querySelectorAll('img'),source=doc.assets[second.dataset.asset];
+  NoteMindPicture.editSize(first);
+  const dialog=document.querySelector('dialog[open]');dialog.querySelector('input').value='225';dialog.querySelector('[data-apply]').click();
+  return {width:first.getBoundingClientRect().width,split:first.dataset.asset!==second.dataset.asset,
+   sameSource:doc.assets[first.dataset.asset]===source&&doc.assets[second.dataset.asset]===source,
+   onlyFirst:doc.meta.imageWidths[first.dataset.asset]===225&&!doc.meta.imageWidths[second.dataset.asset]};
+ });
+ if(sizes.width!==225||!sizes.split||!sizes.sameSource||!sizes.onlyFirst)throw Error('Display sizing did not preserve independent placements: '+JSON.stringify(sizes));
+ await js(()=>{
+  const img=rich.querySelector('img');NoteMindPicture.editSize(img);document.querySelector('dialog[open] [data-default]').click();
+  if(img.hasAttribute('data-image-width'))throw Error('Use Default did not restore the intrinsic display size');
+ });
  console.log('Picture selection: independent edit, undo and redo passed');w.destroy();app.exit(0);
  }catch(e){console.error(e);w.destroy();app.exit(1);}finally{fs.rmSync(root,{recursive:true,force:true});}});});require(path.join(process.env.NOTEMIND_TEST_APP||path.resolve(__dirname,'../src'),'main.cjs'));setTimeout(()=>app.exit(1),30000).unref();

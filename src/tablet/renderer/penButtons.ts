@@ -252,6 +252,15 @@ export function withNative(event: PressLike): PressLike {
   }
 }
 
+// A Wacom driver can deliver pen contact as a mouse event. Use the physical switch positions at contact.
+export function displayMouseContact(event: PressLike): PressLike {
+  const state = nativeState()
+  if (event.pointerType !== "mouse" || !nativeLive() || !state.tip) return event
+  const { pointerId, pressure, ctrlKey, metaKey, altKey, shiftKey } = event
+  return { pointerType: "pen", pointerId, pressure, ctrlKey, metaKey, altKey, shiftKey,
+    button: 0, buttons: BIT.tip | nativeSideMask(state), viaDisplay: true }
+}
+
 /** The DOM `buttons` mask of the pen as the app reads it (withNative): tip 1, lower button 2, upper button 4, eraser end 32. */
 export const pressButtons = (event: PressLike): number => withNative(event).buttons
 

@@ -15,7 +15,7 @@ main{position:relative}
 /* Footer: word count, last save, zoom. */
 footer #wordCount,footer #savedAt{margin-left:14px;white-space:nowrap}
 footer #modeLabel{margin-left:auto}
-footer #zoomBox{background:transparent;color:inherit;border:0;font:inherit;margin-left:auto;cursor:pointer}
+footer #zoomBox,.tablet-footer [data-drawing-zoom]{background:transparent;color:inherit;border:0;font:inherit;margin-left:auto;cursor:pointer}
 
 /* Export as PDF: options beside a preview of the first page. */
 .pdf-dialog{width:min(720px,92vw)}
@@ -51,6 +51,12 @@ footer #zoomBox{background:transparent;color:inherit;border:0;font:inherit;margi
 .picture-selection-tools button{padding:3px 7px;white-space:nowrap}
 .picture-resize-handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;padding:0;border:2px solid #fff;background:#1683ff;cursor:nwse-resize;touch-action:none;pointer-events:auto}
 
-#rich .graphics-pane{display:block;position:relative;margin:12px 0;border:1px solid var(--wm-rule);border-radius:6px;overflow:hidden;background:#fff;line-height:0;contain:layout style}#rich .graphics-pane>img{display:block;width:100%;height:auto;margin:0}#rich .graphics-pane>[data-edit-graphics]{position:absolute;right:6px;top:6px;padding:5px 9px;line-height:1.3;background:var(--wm-chrome);color:var(--wm-text);border:1px solid var(--wm-rule);opacity:0}#rich .graphics-pane:hover>[data-edit-graphics],#rich .graphics-pane:focus-within>[data-edit-graphics]{opacity:1}
+#rich img[data-asset]{max-width:640px;height:auto}
+#rich .attachment-card img[data-asset]{max-width:100%}
+#rich img[data-image-width]{max-width:none}
+#rich .graphics-pane{display:block;width:max-content;position:relative;margin:12px 0;border:1px solid var(--wm-rule);border-radius:6px;overflow:hidden;background:#fff;line-height:0;contain:layout style}#rich .graphics-pane>img{display:block;margin:0}#rich .graphics-pane>[data-edit-graphics]{position:absolute;right:6px;top:6px;padding:5px 9px;line-height:1.3;background:var(--wm-chrome);color:var(--wm-text);border:1px solid var(--wm-rule);opacity:0}#rich .graphics-pane:hover>[data-edit-graphics],#rich .graphics-pane:focus-within>[data-edit-graphics]{opacity:1}
 
 #rich>[data-editor-tail]{min-height:1.5em;margin-bottom:1.5em}
+
+#rich .graphics-pane.floating-graphics{border:0;border-radius:0;background:transparent}
+@media(prefers-color-scheme:dark){#rich .graphics-pane.ink-only.floating-graphics>img{filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #aeb6c4)}}

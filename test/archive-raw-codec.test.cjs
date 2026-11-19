@@ -1,6 +1,18 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{Worker}=require('node:worker_threads'),{randomUUID}=require('node:crypto'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {ArchiveCodec}=require('../src/archive-codec.cjs'),format=require('../src/notepad-format.cjs');
 const owner=randomUUID(),other=randomUUID();
+test('raw asset release waits for existing archive work without raising the queue limit', async t => {
+ const {codec,packets}=fixture(t,{maxPending:1});
+ const descriptor=await upload(codec,Buffer.from('retained photo'));
+ const work=codec.run('stringifyJson',{note:'existing work'});
+ const release=codec.releaseRawAssets(owner,[descriptor.rawAssetToken]);
+ assert.equal(packets.some(packet=>packet.op==='rawRelease'),false);
+ await assert.rejects(codec.run('stringifyJson',{note:'extra work'}),/Archive work is busy/);
+ await work;
+ await release;
+ assert.equal(codec.rawDescriptors.size,0);
+ assert.equal(packets.filter(packet=>packet.op==='rawRelease').length,1);
+});
 function fixture(t,options={}){const packets=[],codec=new ArchiveCodec({idleMs:100000,...options,workerFactory:file=>{const worker=new Worker(file),post=worker.postMessage.bind(worker);worker.postMessage=(packet,transfers)=>{packets.push(packet);post(packet,transfers);};return worker;}});t.after(()=>codec.dispose());return {codec,packets};}
 async function upload(codec,data,who=owner){const started=await codec.beginRawAsset({owner:who,bytes:data.length,chars:4*Math.ceil(data.length/3)});for(let at=0;at<data.length;at+=16384)await codec.appendRawAsset(started.upload,Uint8Array.from(data.subarray(at,at+16384)),{owner:who,epoch:started.epoch,offset:at});return codec.finishRawAsset(started.upload,{owner:who,epoch:started.epoch});}
 const document=asset=>({id:'raw-note',title:'Raw',created:'2026-01-01',text:'![asset](assets/a.bin)',meta:{attachments:{}},assets:{'assets/a.bin':asset}});

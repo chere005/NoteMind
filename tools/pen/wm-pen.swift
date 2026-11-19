@@ -75,8 +75,26 @@ func logicalMax(_ device: IOHIDDevice, page: Int, usage: Int) -> Int {
     return best
 }
 
-let all = devices()
+func usesDisplayDriver(_ name: String, _ product: Int) -> Bool {
+    let label = name.lowercased()
+    return [0x03CE, 0x03CF].contains(product) ||
+        ["pen display", "cintiq", "mobilestudio", "movink", "billboard"].contains { label.contains($0) }
+}
+
+let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.first == "--uses-display-driver", arguments.count == 3, let product = Int(arguments[2]) {
+    say(["k": "display-driver", "value": usesDisplayDriver(arguments[1], product)])
+    exit(0)
+}
+guard arguments.isEmpty else { exit(64) }
+
+let found = devices()
+let all = found.filter { !usesDisplayDriver(text($0, kIOHIDProductKey), number($0, kIOHIDProductIDKey)) }
 guard let pointer = all.first else {
+    if !found.isEmpty {
+        say(["k": "refused", "why": "The Wacom pen display uses its display driver", "penDisplay": true])
+        exit(6)
+    }
     say(["k": "refused", "why": "no Wacom tablet is plugged in"])
     exit(4)
 }

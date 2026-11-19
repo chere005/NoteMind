@@ -2,7 +2,7 @@
 require('./disable-native-pen.cjs');delete process.env.NOTEMIND_TEST_NO_PAD;
 const electron=require('electron'),Module=require('node:module'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const startedAt=Date.now();let stage='startup';const checkpoint=value=>{stage=value;console.log('Pad check: '+value+' ('+(Date.now()-startedAt)+'ms)')};
-const root=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-pad-'));process.env.NOTEMIND_DATA=root;electron.app.disableHardwareAcceleration();if(process.platform==='darwin')electron.app.dock.hide();
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-pad-'));process.env.NOTEMIND_DATA=root;electron.app.setPath('documents',root);electron.app.disableHardwareAcceleration();if(process.platform==='darwin')electron.app.dock.hide();
 process.once('exit',()=>fs.rmSync(root,{recursive:true,force:true}));
 // A lock left behind by a longer previous boot must not keep drawing in the main window.
 fs.writeFileSync(path.join(root,'pad-owner.json'),JSON.stringify({id:'previous-boot',pid:process.pid,stamp:String(process.hrtime.bigint()+86400000000000n)}));
@@ -18,37 +18,32 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await w.webContents.executeJavaScript(`window.__padStateHistory=[];window.notemind.pad.onState(state=>{window.__padStateHistory.push({at:performance.now(),...state});if(window.__padStateHistory.length>100)window.__padStateHistory.shift()});void 0`);
  const watchTablet=window=>window.on('closed',async()=>{if(expectedTabletClose||w.isDestroyed())return;const action={...diagnostics};let state;try{state=await w.webContents.executeJavaScript(`(async()=>({state:await window.notemind.pad.state(),history:window.__padStateHistory}))()`);}catch(error){state={error:error.message};}let setting=null;try{setting=JSON.parse(fs.readFileSync(path.join(root,'pad.json'),'utf8'));}catch{}const report={reason:'unexpected tablet closed event',...action,...state,setting};fs.mkdirSync('test-results',{recursive:true});fs.writeFileSync('test-results/pad-close-diagnostics.json',JSON.stringify(report,null,2));console.error('Unexpected tablet close: '+JSON.stringify(report));});watchTablet(child);
  child.webContents.setBackgroundThrottling(false);
- await child.webContents.executeJavaScript(`(()=>{const button=document.querySelector('[data-tablet=paper]'),r=button.getBoundingClientRect();button.dispatchEvent(new PointerEvent('pointerover',{pointerType:'pen',pointerId:4242,buttons:0,clientX:r.left+r.width/2,clientY:r.top+r.height/2,bubbles:true}));})()`);
- let tooltipVisible=false;for(let i=0;i<25;i++){await wait(100);tooltipVisible=await child.webContents.executeJavaScript(`(()=>{const tip=document.querySelector('[role=tooltip]'),r=tip?.getBoundingClientRect();return !!tip&&tip.textContent===document.querySelector('[data-tablet=paper]').title&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`);if(tooltipVisible)break;}
+ await child.webContents.executeJavaScript(`(()=>{const button=document.querySelector('[data-bar=pane-menu]'),r=button.getBoundingClientRect();button.dispatchEvent(new PointerEvent('pointerover',{pointerType:'pen',pointerId:4242,buttons:0,clientX:r.left+r.width/2,clientY:r.top+r.height/2,bubbles:true}));})()`);
+ let tooltipVisible=false;for(let i=0;i<25;i++){await wait(100);tooltipVisible=await child.webContents.executeJavaScript(`(()=>{const tip=document.querySelector('[role=tooltip]'),r=tip?.getBoundingClientRect();return !!tip&&tip.textContent===document.querySelector('[data-bar=pane-menu]').title&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`);if(tooltipVisible)break;}
  if(!tooltipVisible)throw Error('The Wacom pen did not receive a visible, bounded button tooltip');
- await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=paper]').dispatchEvent(new PointerEvent('pointerout',{pointerType:'pen',relatedTarget:document.body,bubbles:true}));void 0`);
+ await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pane-menu]').dispatchEvent(new PointerEvent('pointerout',{pointerType:'pen',relatedTarget:document.body,bubbles:true}));void 0`);
  if(await child.webContents.executeJavaScript(`!!document.querySelector('[role=tooltip]')`))throw Error('The pen tooltip remained after leaving its button');
  await w.webContents.executeJavaScript(`window.__menuEscape=0;window.addEventListener('keydown',event=>{if(event.key==='Escape')window.__menuEscape++});void 0`);
- await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=paper]').click();void 0`);await wait(100);
+ await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pane-menu]').click();void 0`);await wait(100);
  if(!await child.webContents.executeJavaScript(`(()=>{const menu=document.querySelector('.float-menu'),r=menu?.getBoundingClientRect();return menu?.parentElement===document.body&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()`))throw Error('The display menu did not use its own window');
  if(await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The display menu leaked into the main window');
  await child.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);await wait(50);
  if(await child.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('Display menu Escape did not close the popup');
  if(await w.webContents.executeJavaScript(`window.__menuEscape`))throw Error('Display menu Escape leaked into the editor');
  let mirrored=false;for(let i=0;i<50;i++){await wait(100);mirrored=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-mirror img')`);if(mirrored)break;}if(!mirrored)throw Error('Main window did not receive the display mirror');
- let liveChrome=false;for(let i=0;i<30;i++){liveChrome=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder [data-pane-slot="header"] [data-tablet="paper"]')`);if(liveChrome)break;await wait(100);}if(!liveChrome)throw Error('The sidebar did not receive live controls at normal size');
+ let liveChrome=false;for(let i=0;i<30;i++){liveChrome=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder [data-pane-slot="tabs"] [data-bar="pane-menu"]')`);if(liveChrome)break;await wait(100);}if(!liveChrome)throw Error('The sidebar did not receive live controls at normal size');
  await w.webContents.executeJavaScript(`window.__padMirrorFrames=0;window.notemind.pad.onFrame(()=>window.__padMirrorFrames++);void 0`);
  const settledMirror=async(turns,changed=true)=>{checkpoint('fresh mirror frame for turn '+turns);const start=await w.webContents.executeJavaScript(`window.__padMirrorFrames`);let prior=null,stable=0;for(let i=0;i<40;i++){await wait(100);const state=await w.webContents.executeJavaScript(`(()=>{const viewport=document.querySelector('.pad-mirror-viewport'),image=viewport?.querySelector('img');return {frames:window.__padMirrorFrames,changed:!!image&&image.src!==window.__orientationFrameBefore,loaded:!!image?.complete&&image.naturalWidth>0,viewport:viewport?.dataset.padViewport||null}})()`);stable=state.viewport&&state.viewport===prior?stable+1:0;prior=state.viewport;if(state.frames>=start+2&&(!changed||state.changed)&&state.loaded&&stable>=2&&JSON.parse(state.viewport).turns===turns)return;}throw Error('The mirror did not receive a fresh frame after its rotated viewport settled');};
  const ownerBounds=w.getBounds(),paneWidth=await w.webContents.executeJavaScript(`document.getElementById('pane').style.width`),videoWidth=await w.webContents.executeJavaScript(`document.querySelector('.workspace').style.getPropertyValue('--video-w')`);
  for(const [ownerWidth,pane] of [[900,280],[1440,640]]){
   checkpoint('fixed bars at '+pane+'px');
   w.setBounds({...ownerBounds,width:ownerWidth});await w.webContents.executeJavaScript(`document.getElementById('pane').style.width='${pane}px';document.querySelector('.workspace').style.setProperty('--video-w','${pane}px');window.dispatchEvent(new Event('resize'));void 0`);await wait(200);
-  const bars=await w.webContents.executeJavaScript(`(()=>{const root=document.querySelector('.pad-placeholder'),rect=selector=>{const el=root.querySelector(selector),r=el?.getBoundingClientRect();return r?{width:r.width,height:r.height,top:r.top,bottom:r.bottom,font:parseFloat(getComputedStyle(el).fontSize)}:null};return {tabs:rect('[data-pane-slot="tabs"] .sheet-tabs'),pen:rect('[data-pane-slot="pen"] .pen-bar'),header:rect('[data-pane-slot="header"] [data-camera-head="tablet"]'),button:rect('[data-pane-slot="header"] [data-tablet="paper"]'),swatches:rect('.pen-bar .pen-swatches'),colourMenu:rect('.pen-bar [data-bar="pen-colour-menu"]'),duplicateSurface:!!root.querySelector('[data-tablet="surface"]')}})()`);
-  for(const name of ['tabs','pen','header'])if(!bars[name]||Math.abs(bars[name].height-36)>.5)throw Error('The '+name+' bar scaled or wrapped at sidebar width '+pane+': '+JSON.stringify(bars));
-  if(!bars.button||Math.abs(bars.button.height-28)>.5||bars.button.font<11||bars.duplicateSurface)throw Error('The sidebar controls were scaled, or mounted a second drawing surface');
-  if(bars.swatches?.height){if(bars.swatches.top<bars.pen.top-.5||bars.swatches.bottom>bars.pen.bottom+.5)throw Error('The colour swatches wrapped below the fixed pen bar');}
-  else{
-   if(!bars.colourMenu||Math.abs(bars.colourMenu.height-28)>.5||bars.colourMenu.top<bars.pen.top-.5||bars.colourMenu.bottom>bars.pen.bottom+.5)throw Error('The narrow pen bar did not retain its contained, normal-size colour control');
-   await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar="pen-colour-menu"]').click();void 0`);await wait(50);
-   const colourMenu=await w.webContents.executeJavaScript(`(()=>{const menu=document.querySelector('.float-menu'),blue=menu?.querySelector('[data-bar="pen-colour-blue"]');return {local:menu?.parentElement===document.body,font:blue?parseFloat(getComputedStyle(blue).fontSize):0,present:!!blue}})()`);if(!colourMenu.present||!colourMenu.local||colourMenu.font<12||await child.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The narrow colour menu did not open normally in the main window');
-   await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="pen-colour-blue"]').click();void 0`);await wait(50);
-   if(!await child.webContents.executeJavaScript(`document.querySelector('.pen-swatches [aria-label="Blue"]').getAttribute('aria-pressed')==='true'`))throw Error('The narrow colour menu did not update the shared pen colour');
-  }
+  const bars=await w.webContents.executeJavaScript(`(()=>{const root=document.querySelector('.pad-placeholder'),rect=selector=>{const el=root.querySelector(selector),r=el?.getBoundingClientRect();return r?{width:r.width,height:r.height,top:r.top,bottom:r.bottom,font:parseFloat(getComputedStyle(el).fontSize)}:null};return {tabs:rect('[data-pane-slot="tabs"] .sheet-tabs'),pen:rect('[data-pane-slot="pen"] .pen-bar'),headerEmpty:!root.querySelector('[data-pane-slot="header"]').children.length,sheetActions:!!root.querySelector('[data-pane-slot="pen"] [data-camera-head="tablet"]'),button:rect('[data-pane-slot="tabs"] [data-bar="pane-menu"]'),swatches:rect('.pen-bar .pen-swatches'),duplicateSurface:!!root.querySelector('[data-tablet="surface"]')}})()`);
+  for(const name of ['tabs','pen'])if(!bars[name]||Math.abs(bars[name].height-36)>.5)throw Error('The '+name+' bar scaled or wrapped at sidebar width '+pane+': '+JSON.stringify(bars));
+  if(!bars.button||Math.abs(bars.button.height-28)>.5||bars.button.font<11||bars.duplicateSurface||!bars.headerEmpty||!bars.sheetActions)throw Error('The sidebar controls were scaled, or mounted a second drawing surface');
+  if(!bars.swatches?.height||bars.swatches.top<bars.pen.top-.5||bars.swatches.bottom>bars.pen.bottom+.5)throw Error('The colour swatches are not contained by the pen bar');
+  await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder .pen-swatches [aria-label="Blue"]').click();void 0`);await wait(50);
+  if(!await child.webContents.executeJavaScript(`document.querySelector('.pen-swatches [aria-label="Blue"]').getAttribute('aria-pressed')==='true'`))throw Error('The narrow colour swatch did not update the shared pen colour');
   const crop=await child.webContents.executeJavaScript(`(()=>{const el=[...document.querySelectorAll('[data-pad-content]')].find(el=>el.getBoundingClientRect().width&&el.getBoundingClientRect().height),r=el?.getBoundingClientRect();return r?{x:r.left,y:r.top,width:r.width,height:r.height,displayWidth:innerWidth,displayHeight:innerHeight}:null})()`);
   if(!crop)throw Error('The pad did not mark its active page content');
   const geometryOf=()=>w.webContents.executeJavaScript(`(()=>{const el=document.querySelector('.pad-mirror-viewport'),viewport=el.getBoundingClientRect(),image=document.querySelector('.pad-mirror img').getBoundingClientRect(),stage=document.querySelector('.pad-mirror').getBoundingClientRect();return {x:viewport.left,y:viewport.top,width:viewport.width,height:viewport.height,imageX:image.left,imageY:image.top,imageWidth:image.width,imageHeight:image.height,availableWidth:stage.width,availableHeight:stage.height,metadata:el.dataset.padViewport?JSON.parse(el.dataset.padViewport):null}})()`);
@@ -59,20 +54,23 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  }
  w.setBounds(ownerBounds);await w.webContents.executeJavaScript(`document.getElementById('pane').style.width=${JSON.stringify(paneWidth)};document.querySelector('.workspace').style.setProperty('--video-w',${JSON.stringify(videoWidth)});window.dispatchEvent(new Event('resize'));void 0`);await wait(200);
  checkpoint('shared live menu controls');
- await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-tablet="paper"]').click();void 0`);await wait(80);
+ await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar="pane-menu"]').click();void 0`);await wait(80);
  const mainMenu=await w.webContents.executeJavaScript(`(()=>{const menu=document.querySelector('.float-menu'),r=menu?.getBoundingClientRect(),button=menu?.querySelector('button');return {present:!!menu,inBody:menu?.parentElement===document.body,inside:!!r&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,font:button?parseFloat(getComputedStyle(button).fontSize):0}})()`);
  if(!mainMenu.present||!mainMenu.inBody||!mainMenu.inside||mainMenu.font<12)throw Error('The live sidebar menu did not open at normal size in its own window: '+JSON.stringify(mainMenu));
  if(await child.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The sidebar menu opened on the Wacom display');
- await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="paper-lines"]').click();void 0`);await wait(80);
+ await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="pane-paper"]').click();void 0`);await wait(80);
+ await w.webContents.executeJavaScript(`document.querySelector('.float-menu.sub [data-bar="paper-lines"]').click();void 0`);await wait(80);
  if(await child.webContents.executeJavaScript(`document.querySelector('[data-tablet="surface"]').dataset.paper`)!=='lines')throw Error('A sidebar paper choice did not update the pad');
- const mainPaperTitle=await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-tablet="paper"]').title`),padPaperTitle=await child.webContents.executeJavaScript(`document.querySelector('[data-tablet="paper"]').title`);if(mainPaperTitle!==padPaperTitle)throw Error('The sidebar and pad paper controls disagree');
- await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-tablet="paper"]').click();void 0`);await wait(40);if(await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The live sidebar menu did not close on the second button press');
- await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-tablet="paper"]').click();void 0`);await wait(40);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The live sidebar menu did not reopen immediately');
+ const mainOptionsTitle=await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar="pane-menu"]').title`),padOptionsTitle=await child.webContents.executeJavaScript(`document.querySelector('[data-bar="pane-menu"]').title`);if(mainOptionsTitle!==padOptionsTitle)throw Error('The sidebar and pad drawing options disagree');
+ await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar="pane-menu"]').click();void 0`);await wait(40);if(await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The live sidebar menu did not close on the second button press');
+ await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar="pane-menu"]').click();void 0`);await wait(40);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The live sidebar menu did not reopen immediately');
  await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);await wait(40);if(await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('Escape did not close the live sidebar menu');
  await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder .pen-swatches [aria-label="Blue"]').click();void 0`);await wait(40);
  for(const contents of [w.webContents,child.webContents])if(!await contents.executeJavaScript(`document.querySelector('.pen-swatches [aria-label="Blue"]').getAttribute('aria-pressed')==='true'`))throw Error('The sidebar colour choice was not synchronized');
- await w.webContents.executeJavaScript(`(()=>{const select=document.querySelector('.pad-placeholder .pen-width-select'),choice=[...select.options].find(option=>option.value==='4')||select.options[1];select.value=choice.value;select.dispatchEvent(new Event('change',{bubbles:true}));window.__mirrorWidth=choice.value})()`);await wait(40);
+ await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar=pen-kinds]').click();void 0`);await wait(40);
+ await w.webContents.executeJavaScript(`(()=>{const widths=[...document.querySelectorAll('.float-menu [data-pen-width]')],choice=widths.find(button=>button.dataset.penWidth==='4')||widths[1];window.__mirrorWidth=choice.dataset.penWidth;choice.click()})()`);await wait(40);
  if(await child.webContents.executeJavaScript(`document.querySelector('.pen-width-select').value`)!==await w.webContents.executeJavaScript(`window.__mirrorWidth`))throw Error('The sidebar pen-width choice did not update the pad');
+ await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
  await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder .sheet-add').click();void 0`);await wait(80);
  const mainTabs=await w.webContents.executeJavaScript(`[...document.querySelectorAll('.pad-placeholder .sheet-scroll>.sheet-tab')].map(el=>({name:el.querySelector('.name')?.textContent||el.textContent,on:el.getAttribute('aria-selected')}))`),padTabs=await child.webContents.executeJavaScript(`[...document.querySelectorAll('.sheet-scroll>.sheet-tab')].map(el=>({name:el.querySelector('.name')?.textContent||el.textContent,on:el.getAttribute('aria-selected')}))`);
  if(mainTabs.length!==2||JSON.stringify(mainTabs)!==JSON.stringify(padTabs))throw Error('Adding a sheet in the sidebar did not synchronize the pad tabs');
@@ -102,24 +100,43 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  const hitAt=point=>w.webContents.executeJavaScript(`(()=>{const el=document.elementFromPoint(${point.x},${point.y}),button=el?.closest('button');return {tag:el?.tagName,button:button?.getAttribute('aria-label'),bar:button?.getAttribute('data-bar'),tablet:button?.getAttribute('data-tablet')}})()`);
  const mouseClick=async selector=>{stage='mouse click '+selector;const point=await w.webContents.executeJavaScript(`(()=>{const target=document.querySelector('.pad-placeholder')?.querySelector(${JSON.stringify(selector)}),r=target?.getBoundingClientRect();return r&&r.width&&r.height?{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}:null})()`);if(!point)throw Error('Missing live sidebar control: '+selector);diagnostics.lastAction={kind:'click',selector,point,hit:await hitAt(point)};await mouse('mouseMove',point);await mouse('mouseDown',point,true);await mouse('mouseUp',point);await wait(60)};
  const mouseDrag=async(from,to,button='left')=>{stage=button+' mouse drag';diagnostics.lastAction={kind:'drag',from,to,button,hit:await hitAt(from)};await mouse('mouseMove',from,false,button);await mouse('mouseDown',from,true,button);await mouse('mouseMove',to,true,button);await mouse('mouseUp',to,false,button);await wait(650)};
- const strokes=()=>JSON.parse(fs.readFileSync(path.join(root,'sheets.json')))[0].strokes;
- const shownStrokes=async()=>{const view=await child.webContents.executeJavaScript(`JSON.parse(document.querySelector('[data-tablet=surface]').dataset.sheetViewport)`);return strokes().map(stroke=>({...stroke,points:stroke.points.map(point=>({x:(point.x-view.x)/view.width,y:(point.y-view.y)/view.height}))}))};
- const flushDrawing=()=>new Promise((resolve,reject)=>{const finish=(event,error)=>{if(event.sender!==w.webContents)return;clearTimeout(timer);electron.ipcMain.removeListener('sheets:flush-done',finish);error?reject(Error(error)):resolve();},timer=setTimeout(()=>{electron.ipcMain.removeListener('sheets:flush-done',finish);reject(Error('Drawing flush timed out'))},5000);electron.ipcMain.on('sheets:flush-done',finish);w.webContents.send('sheets:flush-request')});
+ const sheets=()=>w.webContents.executeJavaScript('window.notemind.loadSheets()');
+ const strokes=async()=>(await sheets())[0].strokes;
+ const shownStrokes=async()=>{const view=await child.webContents.executeJavaScript(`JSON.parse(document.querySelector('[data-tablet=surface]').dataset.sheetViewport)`);return (await strokes()).map(stroke=>({...stroke,points:stroke.points.map(point=>({x:(point.x-view.x)/view.width,y:(point.y-view.y)/view.height}))}))};
+ const flushDrawing=()=>new Promise((resolve,reject)=>{
+  const requestId=require('node:crypto').randomUUID();
+  const finish=(event,reply)=>{
+   if(event.sender!==w.webContents||reply?.requestId!==requestId)return;
+   clearTimeout(timer);
+   electron.ipcMain.removeListener('sheets:flush-done',finish);
+   reply.error?reject(Error(reply.error)):resolve();
+  };
+  const timer=setTimeout(()=>{
+   electron.ipcMain.removeListener('sheets:flush-done',finish);
+   reject(Error('Drawing flush timed out'));
+  },5000);
+  electron.ipcMain.on('sheets:flush-done',finish);
+  w.webContents.send('sheets:flush-request',{requestId});
+ });
  checkpoint('full-stage margin ink persists and exports');
- await flushDrawing();const marginBefore=strokes().length;
+ await flushDrawing();const marginBefore=(await strokes()).length;
  // Native capture is already live: raw DOM pen probes would correctly be swallowed by its duplicate-input gate.
  const marginPoints=await child.webContents.executeJavaScript(`(()=>{const r=document.querySelector('[data-tablet=surface]').getBoundingClientRect();return [{x:.04,y:.005},{x:.08,y:.01},{x:.12,y:.015}].map(p=>({x:(r.left+r.width*p.x)/innerWidth,y:1-(r.top+r.height*p.y)/innerHeight}))})()`);
  w.webContents.send('pad:pen-samples',marginPoints.map((point,index)=>sample(point,index<2,hoverTime++)));
- await flushDrawing();const marginSheet=JSON.parse(fs.readFileSync(path.join(root,'sheets.json')))[0],marginInk=marginSheet.strokes.at(-1);
+ await flushDrawing();const marginSheet=(await sheets())[0],marginInk=marginSheet.strokes.at(-1);
  if(marginSheet.strokes.length!==marginBefore+1||!marginInk?.points.some(point=>point.x<0||point.y<0||point.x>1||point.y>1)||!marginSheet.extent)throw Error('New tablet margins did not persist real editable ink: '+JSON.stringify({marginBefore,count:marginSheet.strokes.length,aspect:marginSheet.aspect,extent:marginSheet.extent,marginPoints,marginInk}));
- const marginExport=await w.webContents.executeJavaScript(`(()=>{window.__marginDrawing=null;window.addEventListener('tablet-insert',event=>{window.__marginDrawing=event.detail;event.stopImmediatePropagation()},{capture:true,once:true});document.querySelector('.pad-placeholder [data-capture=ink]').click();const detail=window.__marginDrawing;if(!detail)return null;const viewBox=atob(detail.data).match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);return {aspect:detail.sheet.aspect,svgAspect:viewBox[2]/viewBox[3],point:detail.sheet.strokes.at(-1).points[0]}})()`);
- if(!marginExport||Math.abs(marginExport.aspect-marginExport.svgAspect)>1e-8||Math.abs(marginExport.point.x-.04)>.002||Math.abs(marginExport.point.y-.005)>.002)throw Error('The full-paper export or editable sidecar clipped or displaced margin ink: '+JSON.stringify(marginExport));
- await mouseClick('[data-tablet=clear]');await mouseClick('[data-bar=pen]');
+ const marginExport=await w.webContents.executeJavaScript(`(()=>{window.__marginDrawing=null;window.addEventListener('tablet-insert',event=>{window.__marginDrawing=event.detail;event.stopImmediatePropagation()},{capture:true,once:true});document.querySelector('.pad-placeholder [data-capture=ink]').click();const detail=window.__marginDrawing;if(!detail)return null;const viewBox=atob(detail.data).match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);return {aspect:detail.sheet.aspect,svgAspect:viewBox[2]/viewBox[3],viewBox,point:detail.sheet.strokes.at(-1).points[0]}})()`);
+ if(!marginExport)throw Error('The writing in the sheet margin was omitted from the export');
+ const {viewBox,point}=marginExport,source=marginInk.points[0],sheetHeight=1000/marginSheet.aspect;
+ const recovered={x:(viewBox[0]+point.x*viewBox[2])/1000,y:(viewBox[1]+point.y*viewBox[3])/sheetHeight};
+ if(Math.abs(marginExport.aspect-marginExport.svgAspect)>1e-8||Math.abs(recovered.x-source.x)>1e-8||Math.abs(recovered.y-source.y)>1e-8)throw Error('The writing export or editable sidecar displaced margin ink: '+JSON.stringify({marginExport,recovered,source}));
+ const clearSheet=async()=>{await mouseClick('[data-bar=pane-menu]');await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=clear]').click();void 0`);await wait(60);};
+ await clearSheet();await mouseClick('[data-bar=pen]');
  await mouseDrag(await mirrorPoint('[data-tablet=surface]',.2,.3),await mirrorPoint('[data-tablet=surface]',.3,.4));
  const firstMouseInk=await shownStrokes();if(firstMouseInk.length!==1||firstMouseInk[0].points.length<2||Math.abs(firstMouseInk[0].points[0].x-.2)>.01||Math.abs(firstMouseInk[0].points[0].y-.3)>.01)throw Error('Real mouse drawing in the sidebar mirror did not reach the pad at the same position');
  await mouseDrag(await mirrorPoint('[data-tablet=surface]',.1,.2),await mirrorPoint('[data-tablet=surface]',.4,.5),'right');
  if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-tablet=box]')`))throw Error('Right mouse drag in the sidebar did not select drawing content');
- if(strokes().length!==1||!await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pen]').getAttribute('aria-pressed')==='true'`))throw Error('Right mouse selection drew a stroke or changed the active Pen tool');
+ if((await strokes()).length!==1||!await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pen]').getAttribute('aria-pressed')==='true'`))throw Error('Right mouse selection drew a stroke or changed the active Pen tool');
  await mouseDrag(await mirrorPoint('[data-tablet=surface]',.25,.35),await mirrorPoint('[data-tablet=surface]',.4,.35),'right');
  const movedMouseInk=await shownStrokes();if(Math.abs(movedMouseInk[0].points[0].x-.35)>.015||Math.abs(movedMouseInk[0].points[0].y-.3)>.015)throw Error('Dragging a sidebar selection did not move its ink');
  const selectedWidth=await child.webContents.executeJavaScript(`parseFloat(document.querySelector('[data-tablet=box]').style.width)`);
@@ -127,19 +144,19 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(await child.webContents.executeJavaScript(`parseFloat(document.querySelector('[data-tablet=box]').style.width)`)<=selectedWidth+10)throw Error('The sidebar mouse could not resize selected ink');
  const inkBeforeErase=await child.webContents.executeJavaScript(`document.querySelector('[data-tablet="surface"] canvas.ink').toDataURL()`);
  await mouseClick('[data-bar=eraser]');await mouseDrag(await mirrorPoint('[data-tablet=surface]',.4,.35),await mirrorPoint('[data-tablet=surface]',.55,.5));
- if(strokes().length)throw Error('The sidebar mouse could not erase the selected drawing');
+ if((await strokes()).length)throw Error('The sidebar mouse could not erase the selected drawing');
  const undoEnabled=await w.webContents.executeJavaScript(`!document.querySelector('.pad-placeholder [data-tablet="undo"]').disabled`);if(!undoEnabled)throw Error('The mirrored Undo control was disabled after erasing ink');
  await mouseClick('[data-tablet=undo]');let restoredInk=false;for(let i=0;i<30;i++){restoredInk=await child.webContents.executeJavaScript(`document.querySelector('[data-tablet="surface"] canvas.ink').toDataURL()===${JSON.stringify(inkBeforeErase)}`);if(restoredInk)break;await wait(50);}if(!restoredInk)throw Error('The mirrored Undo handler did not restore the original ink canvas');
- let undoSaved=false;for(let i=0;i<30;i++){undoSaved=strokes().length===1;if(undoSaved)break;await wait(100);}if(!undoSaved)throw Error('The mirrored Undo restored the canvas but did not persist its stroke');
+ let undoSaved=false;for(let i=0;i<30;i++){undoSaved=(await strokes()).length===1;if(undoSaved)break;await wait(100);}if(!undoSaved)throw Error('The mirrored Undo restored the canvas but did not persist its stroke');
  checkpoint('physical buttons through startup IPC and delayed HID contact');
  await mouseClick('[data-bar=pen]');
  w.webContents.send('pad:pen-status',{state:'raw-capture-blocked',reason:'The driver keeps coordinates; the physical button feed stays available.'});await wait(60);
  const physicalState=patch=>({present:true,range:true,tip:false,lower:false,upper:false,...patch});
  const physicalButtons=async patch=>{w.webContents.send('pen:buttons-push',physicalState(patch));await wait(40)};
- const physicalPoint=(await shownStrokes())[0].points[0],physicalInk=JSON.stringify(strokes());
+ const physicalPoint=(await shownStrokes())[0].points[0],physicalInk=JSON.stringify((await strokes()));
  await child.webContents.executeJavaScript(`window.__physicalDowns=0;window.__physicalDownListener=event=>{if(event.pointerId===9091)window.__physicalDowns++};document.querySelector('[data-tablet=surface]').addEventListener('pointerdown',window.__physicalDownListener);void 0`);
- const physicalPointer=async(type,point,{button=0,buttons=0,pressure=0}={})=>{await child.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet=surface]'),r=surface.getBoundingClientRect();surface.dispatchEvent(new PointerEvent(${JSON.stringify(type)},{pointerType:'pen',pointerId:9091,isPrimary:true,button:${button},buttons:${buttons},pressure:${pressure},clientX:r.left+r.width*${point.x},clientY:r.top+r.height*${point.y},bubbles:true,cancelable:true}))})()`);await wait(30)};
- const savedStrokeCount=async(count,label)=>{for(let n=0;n<40;n++){if(strokes().length===count)return;await wait(50)}throw Error(label)};
+ const physicalPointer=async(type,point,{button=0,buttons=0,pressure=0,pointerType='pen'}={})=>{await child.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet=surface]'),r=surface.getBoundingClientRect();surface.dispatchEvent(new PointerEvent(${JSON.stringify(type)},{pointerType:${JSON.stringify(pointerType)},pointerId:9091,isPrimary:true,button:${button},buttons:${buttons},pressure:${pressure},clientX:r.left+r.width*${point.x},clientY:r.top+r.height*${point.y},bubbles:true,cancelable:true}))})()`);await wait(30)};
+ const savedStrokeCount=async(count,label)=>{for(let n=0;n<40;n++){if((await strokes()).length===count)return;await wait(50)}throw Error(label)};
  const airDouble=async side=>{for(let n=0;n<2;n++){await physicalButtons({[side]:true});await physicalButtons({});}};
  // DOM contact can arrive before the HID tip report; both inputs keep the physical button slot.
  await physicalButtons({lower:true});await physicalPointer('pointerdown',physicalPoint,{buttons:3,pressure:.7});
@@ -148,21 +165,35 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await savedStrokeCount(0,'Near physical button did not erase through the real startup IPC subscription before HID tip caught up');
  if(await child.webContents.executeJavaScript('window.__physicalDowns')!==1)throw Error('The delayed HID report started a duplicate near-button gesture');
  await airDouble('lower');await savedStrokeCount(1,'Near physical button double tap did not Undo through the real IPC feed');
- if(JSON.stringify(strokes())!==physicalInk)throw Error('Physical Undo did not restore every drawing point');
+ if(JSON.stringify((await strokes()))!==physicalInk)throw Error('Physical Undo did not restore every drawing point');
  await airDouble('upper');await savedStrokeCount(0,'Far physical button double tap did not Redo through the real IPC feed');
  await airDouble('lower');await savedStrokeCount(1,'Near physical button could not Undo again after Redo');
  await physicalButtons({upper:true});await physicalPointer('pointerdown',{x:.05,y:.05},{buttons:5,pressure:.7});
  await physicalButtons({upper:true,tip:true});await physicalPointer('pointerdown',{x:.05,y:.05},{button:1,buttons:5,pressure:.7});
  await physicalPointer('pointermove',{x:.9,y:.9},{button:-1,buttons:5,pressure:.7});await physicalButtons({upper:true});await physicalPointer('pointerup',{x:.9,y:.9});await physicalButtons({});
- if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-tablet=box]')`)||JSON.stringify(strokes())!==physicalInk)throw Error('Far physical button did not select through the IPC feed without changing ink');
+ if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-tablet=box]')`)||JSON.stringify((await strokes()))!==physicalInk)throw Error('Far physical button did not select through the IPC feed without changing ink');
  if(await child.webContents.executeJavaScript('window.__physicalDowns')!==2)throw Error('The delayed HID report started a duplicate far-button gesture');
  if(!await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pen]').getAttribute('aria-pressed')==='true'`))throw Error('A physical button hold changed the active Pen tool');
  await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=surface]').removeEventListener('pointerdown',window.__physicalDownListener);window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
+ await physicalButtons({lower:true,tip:true});
+ await physicalPointer('pointerdown',physicalPoint,{pointerType:'mouse',button:2,buttons:2});
+ await physicalPointer('pointermove',physicalPoint,{pointerType:'mouse',button:-1,buttons:2});
+ await physicalButtons({lower:true});
+ await physicalPointer('pointerup',physicalPoint,{pointerType:'mouse',button:2});
+ await physicalButtons({});
+ await savedStrokeCount(0,'Mouse-form Wacom contact ignored the physical Erase button');
+ await airDouble('lower');await savedStrokeCount(1,'Physical Undo did not restore ink after the driver fallback gesture');
  await physicalButtons({range:false});await wait(350);
  checkpoint('rotated page controls and pen/mouse coordinates');
- const openOrientation=async()=>{await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-tablet="orientation-menu"]').click();void 0`);await wait(60)};
- const chooseOrientation=async value=>{await openOrientation();await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="orientation-${value}"]').click();void 0`);await wait(120)};
- const rotateBars=async value=>{await openOrientation();const checked=await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="orientation-rotate-bars"]').getAttribute('aria-checked')==='true'`);if(checked!==value){await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="orientation-rotate-bars"]').click();void 0`);await wait(80);}await openOrientation();};
+ const openOrientation=async()=>{
+  if(await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu.sub [data-bar=orientation-0]')`))return;
+  if(!await w.webContents.executeJavaScript(`!!document.querySelector('.float-menu [data-bar=pane-orientation]')`)){
+   await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-bar=pane-menu]').click();void 0`);await wait(60);
+  }
+  await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=pane-orientation]').click();void 0`);await wait(60);
+ };
+ const chooseOrientation=async value=>{await openOrientation();await w.webContents.executeJavaScript(`document.querySelector('.float-menu.sub [data-bar="orientation-${value}"]').click();void 0`);await wait(120)};
+ const rotateBars=async value=>{await openOrientation();const checked=await w.webContents.executeJavaScript(`document.querySelector('.float-menu.sub [data-bar="orientation-rotate-bars"]').getAttribute('aria-checked')==='true'`);if(checked!==value){await w.webContents.executeJavaScript(`document.querySelector('.float-menu.sub [data-bar="orientation-rotate-bars"]').click();void 0`);await wait(80);}await openOrientation();};
  if(await w.webContents.executeJavaScript(`localStorage.getItem('notemind.padChromeOrientation')==='true'`))throw Error('Menu-bar rotation should start disabled');
  await chooseOrientation(1);await rotateBars(true);
  if(await child.webContents.executeJavaScript(`document.getElementById('notemind-pad-root').dataset.padTurns`)!=='0')throw Error('Portrait bars were rotated twice on an OS-rotated portrait display');
@@ -170,11 +201,11 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await w.webContents.executeJavaScript(`window.__orientationFrameBefore=document.querySelector('.pad-mirror img').src;void 0`);await chooseOrientation(0);
  const rotated=await child.webContents.executeJavaScript(`(()=>{const root=document.getElementById('notemind-pad-root'),surface=document.querySelector('[data-tablet="surface"]');return {turns:root.dataset.padTurns,width:root.clientWidth,height:root.clientHeight,displayWidth:innerWidth,displayHeight:innerHeight,aspect:surface.clientWidth/surface.clientHeight,stageAspect:surface.parentElement.clientWidth/surface.parentElement.clientHeight}})()`);
  if(rotated.turns!=='3'||Math.abs(rotated.width-rotated.displayHeight)>1||Math.abs(rotated.height-rotated.displayWidth)>1||Math.abs(rotated.aspect-rotated.stageAspect)>.005)throw Error('Rotating bars did not fill the logical tablet stage: '+JSON.stringify(rotated));
- const rotatedMain=await w.webContents.executeJavaScript(`(()=>{const root=document.querySelector('.pad-placeholder'),button=root.querySelector('[data-tablet="paper"]').getBoundingClientRect(),header=root.querySelector('[data-camera-head="tablet"]').getBoundingClientRect(),v=document.querySelector('.pad-mirror-viewport');return {button:button.height,header:header.height,turns:JSON.parse(v.dataset.padViewport).turns}})()`);
- if(Math.abs(rotatedMain.button-28)>.5||Math.abs(rotatedMain.header-36)>.5||rotatedMain.turns!==3)throw Error('Rotating the physical menu bars also scaled or turned the main controls');
+ const rotatedMain=await w.webContents.executeJavaScript(`(()=>{const root=document.querySelector('.pad-placeholder'),button=root.querySelector('[data-bar="pane-menu"]').getBoundingClientRect(),header=root.querySelector('[data-pane-slot="header"]').getBoundingClientRect(),v=document.querySelector('.pad-mirror-viewport');return {button:button.height,header:header.height,turns:JSON.parse(v.dataset.padViewport).turns}})()`);
+ if(Math.abs(rotatedMain.button-28)>.5||rotatedMain.header!==0||rotatedMain.turns!==3)throw Error('Rotating the physical menu bars also scaled or turned the main controls');
  await settledMirror(3);await snapshot('pad-main-rotated-page',w.webContents);await snapshot('pad-rotated-menu-bars',child.webContents);
  const savedRotation=await w.webContents.executeJavaScript(`(async()=>({local:localStorage.getItem('notemind.padChromeOrientation'),profile:await window.notemind.preferenceGet('padChromeOrientation')}))()`);if(savedRotation.local!=='true'||savedRotation.profile!==true)throw Error('The menu-bar rotation checkbox was not persisted');
- await mouseClick('[data-tablet=clear]');await mouseClick('[data-bar=pen]');
+ await clearSheet();await mouseClick('[data-bar=pen]');
  const rotatedNative=await child.webContents.executeJavaScript(`(()=>{const r=document.querySelector('[data-tablet="surface"]').getBoundingClientRect();return [{x:.2,y:.3},{x:.3,y:.4}].map(p=>({x:(r.left+r.width*p.y)/innerWidth,y:1-(r.top+r.height*(1-p.x))/innerHeight}))})()`);
  w.webContents.send('pad:pen-samples',[sample(rotatedNative[0],true,hoverTime++),sample(rotatedNative[1],true,hoverTime++),sample(rotatedNative[1],false,hoverTime++)]);await wait(650);
  const nativeInk=await shownStrokes();if(nativeInk.length!==1||Math.abs(nativeInk[0].points[0].x-.2)>.015||Math.abs(nativeInk[0].points[0].y-.3)>.015)throw Error('Native pen coordinates did not follow the rotated page');
@@ -183,27 +214,38 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await rotateBars(false);await wait(100);
  w.webContents.send('pad:pen-status',{state:'needs-input-monitoring',reason:'Enable Input Monitoring'});await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-status')||document.querySelector('.pad-placeholder').textContent.includes('Enable Input Monitoring')||[...document.querySelectorAll('.pad-placeholder button')].some(button=>/Open System Settings|Retry pen input/.test(button.textContent))`))throw Error('Pen permission details or actions appeared in the drawing pane');
 
- await rotateBars(true);await w.webContents.executeJavaScript('window.notemind.pad.set(true)');const inkBeforeClose=JSON.stringify(strokes());expectedTabletClose=true;
+ await rotateBars(true);await w.webContents.executeJavaScript('window.notemind.pad.set(true)');const inkBeforeClose=JSON.stringify((await strokes()));expectedTabletClose=true;
  checkpoint('tablet close and remembered settings');
  await child.webContents.executeJavaScript(`(()=>{const button=document.querySelector('button[aria-label="Close tablet window"]');if(!button)throw Error('The tablet close button is missing');button.click()})();void 0`);for(let i=0;i<30;i++){await wait(100);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
  if(JSON.parse(fs.readFileSync(path.join(root,'pad.json'),'utf8')).enabled!==true)throw Error('Closing the tablet changed its remembered drawing location');
- if(!child.isDestroyed()||JSON.stringify(strokes())!==inkBeforeClose||await w.webContents.executeJavaScript(`document.getElementById('pane').hidden`))throw Error('Closing the tablet hid the capture pane or changed its drawing instead of only closing the tablet window');
+ if(!child.isDestroyed()||JSON.stringify((await strokes()))!==inkBeforeClose||await w.webContents.executeJavaScript(`document.getElementById('pane').hidden`))throw Error('Closing the tablet hid the capture pane or changed its drawing instead of only closing the tablet window');
  expectedTabletClose=false;
  if(!await w.webContents.executeJavaScript(`!!document.querySelector('#tablet-root .tablet-pane')`))throw Error('Drawing did not return to the main window');
- const toggle=await w.webContents.executeJavaScript(`(()=>{const button=document.querySelector('#pen-control button[data-drawing-location=window]');return !!button?.querySelector('svg')&&button.getAttribute('aria-pressed')==='false'&&!document.querySelector('select.drawing-location')})()`);if(!toggle)throw Error('The window location is not an icon toggle');
- await wait(650);const inkBefore=JSON.stringify(JSON.parse(fs.readFileSync(path.join(root,'sheets.json')))[0].strokes);
- await w.webContents.executeJavaScript(`document.querySelector('#pen-control button[data-drawing-location=window]').click();void 0`);for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder button[data-drawing-location=wacom]')`))break;}
- if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder button[data-drawing-location=wacom]')`))throw Error('The icon toggle did not return drawing to the Wacom screen');
- if(JSON.stringify(JSON.parse(fs.readFileSync(path.join(root,'sheets.json')))[0].strokes)!==inkBefore)throw Error('Switching drawing location changed the ink');
+ const openDrawingOptions=async()=>{
+  for(let i=0;i<30;i++){
+   if(await w.webContents.executeJavaScript(`(()=>{if(document.querySelector('.float-menu [data-bar=pane-wacom]'))return true;const menu=document.querySelector('.sheet-tabs [data-bar=pane-menu]');if(menu&&menu.getAttribute('aria-expanded')!=='true')menu.click();return false})()`))return;
+   await wait(100);
+  }
+  throw Error('Drawing options did not open with Use Wacom Screen');
+ };
+ const toggleWacom=async()=>{await openDrawingOptions();await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=pane-wacom]').click();void 0`);};
+ await openDrawingOptions();
+ const toggle=await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar=pane-wacom]')?.getAttribute('aria-checked')==='false'`);
+ if(!toggle)throw Error('Drawing options did not offer Use Wacom Screen');
+ await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
+ await wait(650);const inkBefore=JSON.stringify((await sheets())[0].strokes);
+ await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
+ if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))throw Error('Use Wacom Screen did not return drawing to the Wacom screen');
+ if(JSON.stringify((await sheets())[0].strokes)!==inkBefore)throw Error('Switching drawing location changed the ink');
  let display=electron.BrowserWindow.getAllWindows().find(x=>x!==w);display.webContents.setBackgroundThrottling(false);watchTablet(display);
  if(await display.webContents.executeJavaScript(`document.getElementById('notemind-pad-root').dataset.padTurns`)!=='3')throw Error('The remembered menu-bar rotation was lost when the tablet window reopened');
- await openOrientation();if(!await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="orientation-rotate-bars"]').getAttribute('aria-checked')==='true'`))throw Error('The reopened tablet did not retain its checked menu-bar option');await openOrientation();await rotateBars(false);await wait(100);
- expectedTabletClose=true;await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder button[data-drawing-location="wacom"]').click();void 0`);for(let i=0;i<30;i++){await wait(100);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
+ await openOrientation();if(!await w.webContents.executeJavaScript(`document.querySelector('.float-menu.sub [data-bar="orientation-rotate-bars"]').getAttribute('aria-checked')==='true'`))throw Error('The reopened tablet did not retain its checked menu-bar option');await openOrientation();await rotateBars(false);await wait(100);
+ expectedTabletClose=true;await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(!await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
  if(JSON.parse(fs.readFileSync(path.join(root,'pad.json'),'utf8')).enabled!==false)throw Error('The drawing-location toggle did not remember the window location');
  if(!display.isDestroyed()||!await w.webContents.executeJavaScript(`!!document.querySelector('#tablet-root [data-tablet="surface"]')`))throw Error('The drawing-location toggle did not return the same page to the main window');
  expectedTabletClose=false;
- await w.webContents.executeJavaScript(`document.querySelector('#pen-control button[data-drawing-location="window"]').click();void 0`);for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder button[data-drawing-location="wacom"]')`))break;}
- display=electron.BrowserWindow.getAllWindows().find(x=>x!==w);if(!display)throw Error('The drawing-location toggle did not recreate the tablet window');display.webContents.setBackgroundThrottling(false);watchTablet(display);if(JSON.stringify(strokes())!==inkBefore)throw Error('The drawing-location off/on cycle changed existing ink');
+ await toggleWacom();for(let i=0;i<30;i++){await wait(100);if(await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder')`))break;}
+ display=electron.BrowserWindow.getAllWindows().find(x=>x!==w);if(!display)throw Error('The drawing-location toggle did not recreate the tablet window');display.webContents.setBackgroundThrottling(false);watchTablet(display);if(JSON.stringify((await strokes()))!==inkBefore)throw Error('The drawing-location off/on cycle changed existing ink');
  for(const aspect of [1/3,3,.125,8,.1,10]){
   stage='imported aspect '+aspect;
   const raw=aspect===1/3||aspect===3;
@@ -220,25 +262,26 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  checkpoint('shared document and local Find focus');
  await io.exportFile({text:'# Shared page\n\nFind this sentence from either pane.',assets:{}},pdf);
  await w.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('notemind-preview',{detail:{path:${JSON.stringify(pdf)},name:'Shared page.pdf'}}));void 0`);
- let docReady=false;for(let i=0;i<40;i++){docReady=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder [data-camera-head="document"] [data-doc-view="menu"]')`)&&await display.webContents.executeJavaScript(`!!document.querySelector('.document-workspace:not([hidden]) canvas')`);if(docReady)break;await wait(100);}if(!docReady)throw Error('Document controls did not appear in the live sidebar');
- await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-doc-view="menu"]').click();void 0`);await wait(60);
+ let docReady=false;for(let i=0;i<40;i++){docReady=await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder [data-camera-head="document"] [aria-label="PDF actions"]')`)&&await display.webContents.executeJavaScript(`!!document.querySelector('.document-workspace:not([hidden]) canvas')`);if(docReady)break;await wait(100);}if(!docReady)throw Error('Document controls did not appear in the live sidebar');
+ await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [aria-label="PDF actions"]').click();void 0`);await wait(60);
  if(await display.webContents.executeJavaScript(`!!document.querySelector('.float-menu')`))throw Error('The sidebar document View menu leaked into the pad');
- await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-bar="view-find"]').click();void 0`);await wait(80);
+ await w.webContents.executeJavaScript(`document.querySelector('.float-menu [data-menu-label="Find in PDF…"]').click();void 0`);await wait(80);
  const findFocus=await w.webContents.executeJavaScript(`(()=>{const input=document.querySelector('.pad-placeholder [data-doc-find="input"]');return {present:!!input,focused:document.activeElement===input,height:input?.closest('.doc-find')?.getBoundingClientRect().height}})()`);
  if(!findFocus.present||!findFocus.focused||Math.abs(findFocus.height-36)>.5)throw Error('Find did not focus its normal-size input in the triggering sidebar: '+JSON.stringify(findFocus));
  if(await display.webContents.executeJavaScript(`document.activeElement===document.querySelector('[data-doc-find="input"]')`))throw Error('The duplicate pad Find input took focus away from the sidebar');
  await w.webContents.executeJavaScript(`document.querySelector('.pad-placeholder [data-doc-find="close"]').click();void 0`);await wait(60);
  if(await display.webContents.executeJavaScript(`!!document.querySelector('[data-doc-find="input"]')`))throw Error('Closing sidebar Find did not synchronize the pad');
  checkpoint('reloaded imported page shape and ink');
- let savedImports=null;for(let i=0;i<30;i++){const saved=JSON.parse(fs.readFileSync(path.join(root,'sheets.json'),'utf8')),imported=saved.slice(1);if(imported.length===6&&imported.every(sheet=>sheet.fixedAspect===true)&&imported.at(-1).aspect===10&&imported.at(-1).strokes.length===1){savedImports=imported.map(({aspect,strokes,fixedAspect})=>({aspect,strokes,fixedAspect}));break;}await wait(100);}if(!savedImports)throw Error('Imported page shapes were not marked fixed and persisted before reload');
+ let savedImports=null;for(let i=0;i<30;i++){const imported=(await sheets()).slice(1);if(imported.length===6&&imported.every(sheet=>sheet.fixedAspect===true)&&imported.at(-1).aspect===10&&imported.at(-1).strokes.length===1){savedImports=imported.map(({aspect,strokes,fixedAspect})=>({aspect,strokes,fixedAspect}));break;}await wait(100);}if(!savedImports)throw Error('Imported page shapes were not marked fixed and persisted before reload');
  expectedTabletClose=true;await w.webContents.executeJavaScript(`window.notemind.pad.set(false)`);for(let i=0;i<30&&!display.isDestroyed();i++)await wait(100);if(!display.isDestroyed())throw Error('The tablet window did not close before renderer reload');
  // Model a written sheet saved before imported page shapes were explicitly marked fixed.
- const legacySheets=JSON.parse(fs.readFileSync(path.join(root,'sheets.json'),'utf8'));if(legacySheets.at(-1).aspect!==10||legacySheets.at(-1).strokes.length!==1)throw Error('The legacy reload fixture lost its imported page or pressure stroke');delete legacySheets.at(-1).fixedAspect;fs.writeFileSync(path.join(root,'sheets.json'),JSON.stringify(legacySheets));
+ const legacySheets=await sheets();if(legacySheets.at(-1).aspect!==10||legacySheets.at(-1).strokes.length!==1)throw Error('The legacy reload fixture lost its imported page or pressure stroke');delete legacySheets.at(-1).fixedAspect;await w.webContents.executeJavaScript('window.notemind.saveSheets('+JSON.stringify(legacySheets)+')');
+ if((await sheets()).at(-1).fixedAspect!==undefined)throw Error('The legacy reload fixture still had an explicit page shape flag');
  const reloaded=new Promise(resolve=>w.webContents.once('did-finish-load',resolve));w.webContents.reload();await reloaded;
  let restoredMain=false;for(let i=0;i<60;i++){restoredMain=await w.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('#tablet-root [data-tablet="surface"]');return !!surface&&Math.abs(surface.clientWidth-surface.parentElement.clientWidth)<1&&Math.abs(surface.clientHeight-surface.parentElement.clientHeight)<1})()`);if(restoredMain)break;await wait(100);}if(!restoredMain)throw Error('Renderer reload did not fill the main drawing stage');
  await w.webContents.executeJavaScript(`window.notemind.pad.set(true)`);let reopened=null,reopenedReady=false;for(let i=0;i<60;i++){reopened=electron.BrowserWindow.getAllWindows().find(window=>window!==w&&!window.isDestroyed()&&window.webContents.getURL()==='about:blank');if(reopened)reopened.webContents.setBackgroundThrottling(false);reopenedReady=!!reopened&&await reopened.webContents.executeJavaScript(`(()=>{const surface=document.querySelector('[data-tablet="surface"]');return !!surface&&Math.abs(surface.clientWidth-surface.parentElement.clientWidth)<1&&Math.abs(surface.clientHeight-surface.parentElement.clientHeight)<1})()`).catch(()=>false);if(reopenedReady&&await w.webContents.executeJavaScript(`!!document.querySelector('.pad-placeholder [data-camera-head="tablet"]')`))break;await wait(100);}if(!reopenedReady||!reopened)throw Error('Reopening the tablet did not fill both tablet-stage dimensions');
  expectedTabletClose=false;watchTablet(reopened);await wait(700);
- const restoredImports=JSON.parse(fs.readFileSync(path.join(root,'sheets.json'),'utf8')).slice(1).map(({aspect,strokes,fixedAspect})=>({aspect,strokes,fixedAspect}));if(JSON.stringify(restoredImports)!==JSON.stringify(savedImports))throw Error('Reloading reshaped imported pages, lost the legacy fixed-aspect migration, or changed editable stroke data');
+ const restoredImports=(await sheets()).slice(1).map(({aspect,strokes,fixedAspect})=>({aspect,strokes,fixedAspect}));if(JSON.stringify(restoredImports)!==JSON.stringify(savedImports))throw Error('Reloading reshaped imported pages, lost the legacy fixed-aspect migration, or changed editable stroke data');
  if(!await w.webContents.executeJavaScript(`localStorage.getItem('notemind.inputSource')==='tablet'`)||await reopened.webContents.executeJavaScript(`!!document.querySelector('.document-workspace:not([hidden])')`))throw Error('The reloaded capture pane did not return to its saved tablet source');
  console.log('Pen display: fixed-size live sidebar bars and local menus share the same page; mouse editing survives pen hover; display switching, picture fitting, document Find and imported-page reload pass');expectedTabletClose=true;w.destroy();electron.app.exit(0);
  }catch(e){console.error(e);expectedTabletClose=true;w.destroy();electron.app.exit(1);}});});

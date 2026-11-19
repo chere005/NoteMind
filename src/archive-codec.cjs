@@ -95,7 +95,25 @@ class ArchiveCodec{
  // Pinning is explicit new admission; it must not borrow the released caller scope.
  async preflightRawAssets(descriptors=[],{owner}={}){for(const descriptor of descriptors||[])if(this.rawBrands.get(descriptor)!==owner)throw Error('Raw archive asset was not issued to this owner.');const result=await this.rawScope.run(undefined,()=>this.run('rawPin',{descriptors,owner}));if(result.missing.length){const missing=new Set(result.missing);for(const descriptor of descriptors)if(missing.has(descriptor.rawAssetToken))this.rawDescriptors.delete(descriptor.rawAssetToken);this.retireIfReady();return result;}const context={owner,epoch:result.epoch,lease:result.lease,tokens:new Set(descriptors.map(value=>value.rawAssetToken)),entered:false,released:false,lost:false};this.rawLeases.set(context.lease,context);const release=()=>{if(context.releasePromise)return context.releasePromise;context.released=true;context.releasePromise=(async()=>{try{if(!context.lost&&context.epoch===this.epoch&&this.worker)await this.run('rawLeaseRelease',{owner,epoch:context.epoch,lease:context.lease});else await this.stopping;}catch(error){if(this.worker&&context.epoch===this.epoch)this.workerFailed(this.worker,error);await this.stopping;throw error;}finally{this.rawLeases.delete(context.lease);this.retireIfReady();}})();return context.releasePromise;};return {missing:[],epoch:context.epoch,run:fn=>{this.checkRawContext(context);context.entered=true;return this.rawScope.run(context,fn);},release};}
  async retainRawAssets(owner,tokens){const result=this.worker?await this.run('rawRetain',{owner,tokens}):true,keep=new Set(tokens);for(const [token,entry]of this.rawDescriptors)if(entry.owner===owner&&!keep.has(token))this.rawDescriptors.delete(token);return result;}
- async releaseRawAssets(owner,tokens){const result=this.worker?await this.run('rawRelease',{owner,tokens}):true,selected=tokens&&new Set(tokens);for(const [token,entry]of this.rawDescriptors)if(entry.owner===owner&&(!selected||selected.has(token)))this.rawDescriptors.delete(token);if(!selected)for(const [upload,entry]of this.rawUploads)if(entry.owner===owner)this.rawUploads.delete(upload);this.retireIfReady();return result;}
+ async releaseRawAssets(owner,tokens){
+  const worker=this.worker,epoch=this.epoch,selected=tokens&&new Set(tokens);
+  const args={owner,tokens:Array.isArray(tokens)?[...tokens]:tokens};
+  const bytes=inputBytes('rawRelease',[args],this.maxBytes);
+  let result=true;
+  while(worker&&this.worker===worker){
+   if(bytes>this.maxBytes)throw busy();
+   if(this.queue.length+(this.active?1:0)<this.maxPending&&this.bytes+bytes<=this.maxBytes){
+    result=await this.run('rawRelease',args);
+    break;
+   }
+   const active=this.active;
+   if(!active)throw busy();
+   await (active.settled ||= new Promise(resolve=>{active.signalSettled=resolve;}));
+  }
+  for(const [token,entry]of this.rawDescriptors)if(entry.owner===owner&&entry.descriptor.epoch===epoch&&(!selected||selected.has(token)))this.rawDescriptors.delete(token);
+  if(!selected)for(const [upload,entry]of this.rawUploads)if(entry.owner===owner&&entry.epoch===epoch)this.rawUploads.delete(upload);
+  this.retireIfReady();return result;
+ }
  rawAssetInfo(descriptor){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);return this.run('rawInfo',{descriptor});}
  readRawAsset(descriptor,{owner,offset=0,length=512*1024}={}){const context=this.rawScope.getStore();this.checkRawDescriptor(descriptor,context);if(owner!==undefined&&owner!==context.owner)return Promise.reject(Error('Raw archive read belongs to another owner.'));return this.run('rawRead',{descriptor,offset,length});}
  // The caller exclusively owns this transferred chunk and may retire its
@@ -225,7 +243,7 @@ class ArchiveCodec{
  assetStats(){const held=this.externalWorkingSnapshot(),current=held.bytes-held.debtBytes,raw=this.workerRawStats?{...this.workerRawStats,working:this.workerRawStats.working-(this.workerRawStats.externalWorkingBytes||0)+current,workClaims:this.workerRawStats.workClaims-(this.workerRawStats.externalWorkingCount||0)+held.ids.length,externalWorkingBytes:current,externalWorkingCount:held.ids.length,externalDebtBytes:held.debtBytes}:null;return {...this.assets.stats(),uploads:this.assets.uploads,worker:this.workerAssetStats,epoch:this.epoch,rollovers:this.rollovers,raw,externalWorking:{bytes:held.bytes,owners:this.externalRawWorking.size,orphanBytes:held.debtBytes},validation:this.workerValidationStats,discardedReadBytes:this.discardedReadBytes||0,cleanupFailures:this.cleanupFailures};}
  retireJobInput(job){for(const buffer of job.transfers||[])if(buffer.byteLength)buffer.transfer(0);job.transfers=null;}
  finish(job,error,value){
-  if(!job||this.active!==job)return;if(error&&job.op==='rawAcquireWorking'){const held=this.externalRawWorking.get(job.args?.[0]?.workingId);if(held?.pending)this.forgetExternalWorking(held.id);}clearTimeout(job.timer);this.retireJobInput(job);this.active=null;this.bytes-=job.bytes;job.args=null;job.assetPacket=null;error?job.reject(error):job.resolve(value);this.pump();
+  if(!job||this.active!==job)return;if(error&&job.op==='rawAcquireWorking'){const held=this.externalRawWorking.get(job.args?.[0]?.workingId);if(held?.pending)this.forgetExternalWorking(held.id);}clearTimeout(job.timer);this.retireJobInput(job);this.active=null;this.bytes-=job.bytes;job.args=null;job.assetPacket=null;error?job.reject(error):job.resolve(value);job.signalSettled?.();this.pump();
  }
  workerFailed(worker,error,exited=false){
   if(worker!==this.worker)return;if(this.active?.inspectionCancel){this.quarantineInspectionWorker(worker,this.active,error,exited);return;}this.stopWorker(true,exited);const job=this.active;if(job)this.finish(job,error);else this.pump();

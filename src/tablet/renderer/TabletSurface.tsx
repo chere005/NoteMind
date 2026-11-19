@@ -17,7 +17,8 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 import { isBoxDrag, type Point, type Rect, type Size } from "@notemind/core"
-import { holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, withNative } from "./penButtons"
+import { displayMouseContact, holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, withNative } from "./penButtons"
+import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
 import {
@@ -56,7 +57,9 @@ export interface SurfaceHandle {
   /** Fit the complete canonical page without changing ink or history. */
   fitView(): void
   selectedStrokes(): InkStroke[]
+  magnifyView(zoom: number): void
   selectedInk(): number
+  captureRegion(): Rect | null
   deleteSelectedInk(): boolean
   clearInkSelection(): boolean
   /** Commit the current pen/selection gesture before taking an owned export snapshot. */
@@ -87,6 +90,8 @@ interface Props {
   buttons?: BoxButtons | null
   /** A fixed reference page keeps its own visible paper independently of drawing preferences. */
   paperOverride?: Paper
+  showPrecisionControls?: boolean
+  onDrawingZoom?(zoom: number | null): void
 }
 
 /** How near a stroke the eraser has to be, in points. */
@@ -122,7 +127,8 @@ const CURSORS: Record<Exclude<BoxHit, null>, string> = {
 }
 
 export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSurface(
-  { page, colour, width, box, onBox, onEdited, frame: regionBox = null, buttons = null, paperOverride }, handle) {
+  { page, colour, width, box, onBox, onEdited, frame: regionBox = null, buttons = null, paperOverride,
+    showPrecisionControls = true, onDrawingZoom }, handle) {
   const host = useRef<HTMLDivElement | null>(null)
   const wrap = useRef<HTMLDivElement | null>(null)
   const [fit, setFit] = useState({ x: 0, y: 0, width: 0, height: 0, viewport: { ...UNIT_SHEET } })
@@ -363,7 +369,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
 
   const inkSelectionRef=useRef(inkSelect);inkSelectionRef.current=inkSelect
-  const precision=usePrecisionView({page,focusRoot:()=>wrap.current,beforeChange:()=>finishGesture.current(),onError:reportError,onViewport:view=>{viewport.current=view;setFit({x:0,y:0,width:size.current.width,height:size.current.height,viewport:view});schedule(true)}})
+  const precision=usePrecisionView({page,onDrawingZoom,focusRoot:()=>wrap.current,beforeChange:()=>finishGesture.current(),onError:reportError,onViewport:view=>{viewport.current=view;setFit({x:0,y:0,width:size.current.width,height:size.current.height,viewport:view});schedule(true)}})
 
   useEffect(() => {
     const element = host.current
@@ -388,7 +394,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
       }
       // All available paper is writable. Only the viewport expands: canonical ink and its history never stretch.
       const baseView = latest.current.page.fitViewport(rect)
-      const sheetView = rect.width>0&&rect.height>0?precision.configure(baseView,rect,latest.current.page.aspect):baseView
+      const sheetView = rect.width>0&&rect.height>0?precision.configure(onDrawingZoom?latest.current.page.extent:baseView,rect,latest.current.page.aspect):baseView
       viewport.current = sheetView
       const box = { x: 0, y: 0, width: rect.width, height: rect.height, viewport: sheetView }
       size.current = { width: box.width, height: box.height }
@@ -538,9 +544,11 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     repaint: () => schedule(true),
     fitView:()=>precision.fit(),
     selectedStrokes:()=>{const selection=inkSelectionRef.current.controller;selection.observe();return [...selection.bits.indexes()].map(index=>latest.current.page.strokes[index])},
+    magnifyView:zoom=>precision.magnify(zoom),
     selectedInk:()=>inkSelectionRef.current.controller.count,
+    captureRegion:()=>inkSelectionRef.current.area,
     deleteSelectedInk:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;void selection.run({type:'delete'});return true},
-    clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;selection.clear();return true},
+    clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count&&!selection.area)return false;selection.clear();return true},
     flush: () => {finishGesture.current();return flushInkMutations(latest.current.page)||undefined},
     size: () => size.current,
     view: () => ({...viewport.current}),
@@ -627,17 +635,21 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
 
   /** The pen touched the sheet at its last event: a hold begins only where a touch begins (penButtons.holdBegins). */
   const touching = useRef(false)
+  const driverPointer = useRef<number | null>(null)
+  const drawingPress = (event: PointerEvent) => event.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(event)
+    ? event : displayMouseContact(event)
 
   const down = (event: PointerEvent) => {
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
-    const pen = event.pointerType === "pen"
-    if (pen) touching.current = inContact(event)
+    const input = drawingPress(event), pen = input.pointerType === "pen"
+    if (pen) touching.current = inContact(input)
     if (precision.pendingGesture()||inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return
     event.preventDefault()
-    const press=resolvePress(event,sheetPressSettings());let action=press.kind;if(precision.panArmed&&!slotOf(withNative(event))&&!event.ctrlKey&&!event.metaKey)action='pan'
+    const press=resolvePress(input,sheetPressSettings());let action=press.kind;if(precision.panArmed&&!slotOf(withNative(input))&&!event.ctrlKey&&!event.metaKey)action='pan'
     // Nothing to do here: a side button pressed in the air (its double tap is the runtime's, penActions.ts), or Pan.
     if (action === "ignore") return
+    if (input !== event) driverPointer.current = event.pointerId
     wrap.current?.focus({ preventScroll: true })
     // Keep the gesture when the pointer strays past the edge (a synthetic event has no pointer to capture: the feed keeps the target itself).
     try { wrap.current?.setPointerCapture(event.pointerId) } catch { /* not an active pointer */ }
@@ -646,8 +658,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if(action==='pan'){precision.beginPan(event,px);return}
     // A bound sheet: the shaded margin round the region takes no stroke.
     if (action === "draw" && !inside) return
-    if(action==='select'&&!latest.current.box&&!(event.pointerType==='mouse'&&(event.button===2||(event.buttons&2)!==0))){if(inkSelect.begin(event,{point:latest.current.regionBox?raw:point,px},press)){latest.current.onBox(null);return}}
-    if(action==='select'&&event.pointerType==='mouse'&&(event.button===2||(event.buttons&2)!==0))inkSelect.clear()
+    const mouseSelection=input.pointerType==='mouse'&&(input.button===2||(input.buttons&2)!==0)
+    if(action==='select'&&!latest.current.box&&!mouseSelection){if(inkSelect.begin(event,{point:latest.current.regionBox?raw:point,px},press)){latest.current.onBox(null);return}}
+    if(action==='select'&&mouseSelection)inkSelect.clear()
     if((action==='erase'||action==='select')&&(action==='erase'&&denseInk(latest.current.page.strokes)||hasPendingInkMutations(latest.current.page)||deferredInputs.current.length)){
       if(deferredInputs.current.length>=8){reportError(Error('Several pen gestures are still finishing. Please try again shortly.'));return}
       let resolve!:()=>void,reject!:(error:any)=>void,rejectProject!:(error:any)=>void,project!:(map:any)=>void;const done=new Promise<void>((a,b)=>{resolve=a;reject=b}),ready=new Promise<any>((a,b)=>{project=a;rejectProject=b});ready.catch(()=>{});done.catch(()=>{});const barrier=flushInkMutations(latest.current.page)||Promise.resolve();registerInkProjection(latest.current.page,ready,done,{capture:()=>{const cutoff=input.erased.length;return ready.then(projection=>action==='erase'?{eraseOccurrences:projection.eraseOccurrences.slice(cutoff)}:projection)}});
@@ -684,20 +697,22 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const move = (event: PointerEvent) => {
+    const input = drawingPress(event)
+    if (driverPointer.current === event.pointerId && input === event) { up(event); return }
     if(precision.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}precision.movePan(event,at(event).px);return}
     if(inkSelect.active(event.pointerId)){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}const all=event.getCoalescedEvents?.()||[];for(const sampleEvent of all.length?all:[event]){const sample=at(sampleEvent);inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px})}return}
     const deferred=pendingInput(event);if(deferred){if(event.pointerType==='pen'&&penLifted(event)){up(event);return}rememberInput(deferred,event);return}
     const g = gesture.current
     const was = touching.current
-    if (event.pointerType === "pen") touching.current = inContact(event)
+    if (input.pointerType === "pen") touching.current = inContact(input)
     // The pen may keep hovering while the mouse works through the sidebar mirror.
     // Only the pointer that began a gesture may move or finish it.
     if (g && g.pointerId !== event.pointerId) return
-    if (event.pointerType === "pen") {
+    if (input.pointerType === "pen") {
       // A side button held in the air, then the pen touches: its hold begins here (this touch is a pointermove).
-      if (!g && holdBegins(was, event)) { down(event); return }
+      if (!g && (holdBegins(was, input) || input !== event && !was)) { down(event); return }
       // A pen gesture lasts while the pen touches: lifting it with a side button still held ends it.
-      if (g && penLifted(event)) { up(event); return }
+      if (g && penLifted(input)) { up(event); return }
     }
     if (!g) {
       // The mouse over the box says what a drag would do.
@@ -759,6 +774,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   }
 
   const up = (event: PointerEvent) => {
+    if (driverPointer.current === event.pointerId) { driverPointer.current = null; touching.current = false }
     if(precision.active(event.pointerId)){if(event.type!=='pointercancel')precision.movePan(event,at(event).px);precision.endPan();touching.current=false;try{wrap.current?.releasePointerCapture(event.pointerId)}catch{};return}
     if(inkSelect.active(event.pointerId)){const sample=at(event);if(event.type!=='pointercancel')inkSelect.move(event,{point:latest.current.regionBox?sample.raw:sample.unit,px:sample.px});inkSelect.end(event.type==='pointercancel');touching.current=false;try{wrap.current?.releasePointerCapture(event.pointerId)}catch{};return}
     const deferred=pendingInput(event);if(deferred){if(event.type!=='pointercancel'){const here=at(event),point=latest.current.regionBox?here.raw:here.unit;if(!deferred.lastSample||deferred.lastSample.x!==point.x||deferred.lastSample.y!==point.y)rememberInput(deferred,event)}deferred.ended=true;deferred.cancelled ||= event.type==='pointercancel';if(deferred.cancelled)deferred.controller.abort();touching.current=false;void drainInputs();return}
@@ -863,8 +879,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const erasing = tools.eraser
   const selectedMembership=inkSelect.controller.bits,selectionWidthScale=unit()
   const selectedAction=(action:any)=>{if(inkSelect.controller.bits===selectedMembership)void inkSelect.run(action)}
-  const selectedInk=inkSelect.bounds?rectOnView(inkSelect.bounds,fit.viewport):null
-  const lassoPoints=inkSelect.lasso.map(point=>pointOnView(point,fit.viewport)).map(point=>`${point.x*1000},${point.y*1000}`).join(' ')
+  const selectedRegion=inkSelect.marquee||inkSelect.area||inkSelect.bounds
+  const selectedInk=selectedRegion?rectOnView(selectedRegion,fit.viewport):null
+  const capture=inkSelect.area&&buttons?{bringOff:buttons.bringOff,bring:()=>leaveFor(buttons.bring),picture:()=>leaveFor(buttons.picture),copy:buttons.copy}:undefined
   const shownBox = box ? rectOnView(box, fit.viewport) : null
   const shownRegion = regionBox ? rectOnView(regionBox, fit.viewport) : null
   return (
@@ -886,7 +903,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         <canvas ref={canvas} className="ink" data-layer="ink" style={{ width: "100%", height: "100%" }} />
         <canvas ref={backdrop} className="paper" data-layer="paper" style={{ width: "100%", height: "100%" }} />
         <canvas ref={bindLineCanvas} className="line-preview" data-layer="line-preview" style={{width:"100%",height:"100%"}}/>
-        {(selectedInk&&inkSelect.count>0||lassoPoints)&&<svg className="ink-selection-outline" data-ink-selection="outline" viewBox="0 0 1000 1000" preserveAspectRatio="none">{selectedInk&&inkSelect.count>0&&<rect x={selectedInk.x*1000} y={selectedInk.y*1000} width={Math.max(selectedInk.width*1000,1)} height={Math.max(selectedInk.height*1000,1)}/>} {lassoPoints&&<path d={'M'+lassoPoints.replaceAll(' ',' L')+' Z'}/>}</svg>}
+        {selectedInk&&<svg className="ink-selection-outline" data-ink-selection="outline" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+          <rect data-ink-selection={inkSelect.marquee?'marquee':undefined} x={selectedInk.x*1000} y={selectedInk.y*1000} width={Math.max(selectedInk.width*1000,1)} height={Math.max(selectedInk.height*1000,1)}/>
+        </svg>}
         {shownRegion && (
           <div className="box-clip">
             <div className="region-frame" data-tablet="region-frame" style={{
@@ -905,8 +924,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
           </div>
         )}
       </div>
-      <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>
-      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
+      {showPrecisionControls && <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>}
+      {selectedInk&&(inkSelect.count>0||capture)&&!inkSelect.marquee&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear} capture={capture}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
         <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}

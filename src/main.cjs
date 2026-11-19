@@ -34,9 +34,9 @@ let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceServ
 let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
 const sheetLoads=require('./sheet-load-transport.cjs').shared;
 const sheetReads=new(require('./sheet-read-requests.cjs').SheetReadRequests)({loads:sheetLoads});
-let coreQuitReady=false,coreQuitWaiting=null,coreQuitRetry=null;
+let coreQuitReady=false,coreQuitWaiting=null,coreQuitRetry=null,coreQuitRequestedAgain=false;
 app.on('will-quit',event=>{
- if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRetry?.();return;}
+ if(coreQuitReady)return;event?.preventDefault?.();if(coreQuitWaiting){coreQuitRequestedAgain=true;coreQuitRetry?.();return;}
  const invoke=run=>Promise.resolve().then(run),settle=async runs=>{const results=await Promise.allSettled(runs.map(invoke)),errors=results.filter(result=>result.status==='rejected').map(result=>result.reason);if(errors.length)throw new AggregateError(errors,'Core cleanup could not finish.');},retry=runs=>{void Promise.allSettled(runs.map(invoke));};
  coreQuitWaiting=Promise.resolve().then(async()=>{
   const producers=[()=>fileOperationRequests.dispose(),()=>features.dispose(),()=>notesIPC.stop(),()=>sheetReads.dispose(),()=>sheetLoads.dispose(),()=>imagePickerIPC.dispose(),()=>sheetUploads.dispose(),()=>cameraUploads.dispose(),()=>documentIO.dispose(),()=>pdfReferences.dispose()];coreQuitRetry=()=>retry(producers);await settle(producers);
@@ -46,13 +46,24 @@ app.on('will-quit',event=>{
   const persistence=[()=>sheetPersistenceService?.dispose(),()=>cameraPersistenceService?.dispose()];coreQuitRetry=()=>retry(persistence);await settle(persistence);
   const archive=[()=>require('./archive-codec.cjs').dispose()];coreQuitRetry=()=>retry(archive);await settle(archive);
   coreQuitRetry=null;coreQuitReady=true;app.quit();
- }).catch(error=>{coreQuitWaiting=null;coreQuitRetry=null;console.error('Core cleanup could not finish:',error);});
+ }).catch(error=>{
+  const retryRequested=coreQuitRequestedAgain;coreQuitRequestedAgain=false;
+  coreQuitWaiting=null;coreQuitRetry=null;console.error('Core cleanup could not finish:',error);
+  if(retryRequested)app.quit();
+ });
 });
 
 let cameraWrite = Promise.resolve();
 
 const closeFlush=new(require('./close-flush-watchdog.cjs').CloseFlushWatchdog)({onTimeout:()=>sheetSaveFailed('The save request timed out.'),onCancel:({owner,requestId})=>{if(!owner.isDestroyed())owner.send('sheets:flush-cancel',{requestId});}});
 app.on('will-quit',()=>closeFlush.dispose());
+// Command-Q asks Electron to close every window, including document workers.
+// Start with the workspace so its save can still use those workers.
+app.on('before-quit',event=>{
+ if(!win||win.isDestroyed()||win.confirmedClose)return;
+ event.preventDefault();
+ if(!closeFlush.pending)win.close();
+});
 
 function sheetSaveFailed(reason) { closeFlush.cancel(); const choice = dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Keep editing', 'Close without saving sheets'], defaultId: 0, cancelId: 0, message: 'The drawing sheets could not be saved.', detail: `${reason}\nClosing without saving can lose recent ink.` }); if (choice === 1) { win.confirmedClose = true; win.close(); } }
 
@@ -101,6 +112,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
 
   const recentFiles=[],recentProjects=[];
   const recentMenu=(list,open)=>list.length?[...list.map(file=>({label:path.basename(file),sublabel:path.dirname(file),click:()=>open(file)})),{type:'separator'},{label:'Clear Menu',click:()=>projectService.recents.clear()}]:[{label:'No Recent Items',enabled:false}];
+  const commands=(items,prefix='')=>items.map(([id,label])=>({label,click:command(prefix+id)}));
   const buildMenu=()=>Menu.setApplicationMenu(Menu.buildFromTemplate([
 
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
@@ -118,29 +130,55 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
       {label:'Import',submenu:[{label:'Markdown as Notepad…',click:command('importMarkdown')},{label:'Word or PDF…',click:command('importDocument')},{label:'Read Text from Image…',click:command('readImage')}]},
       {label:'Export',submenu:[{label:'Export as PDF…',accelerator:'CmdOrCtrl+Shift+E',click:command('exportPDF')},{label:'Word…',click:command('exportWord')},{label:'Drawing…',click:command('exportDrawing')}]},
       {type:'separator'},
-      {label:'Welcome',click:command('welcome')},
       {label:'Close Tab',accelerator:'CmdOrCtrl+W',click:command('closeTab')},
       {label:'Close Window',click:()=>win.close()},
     ]},
 
-    {label:'Projects',submenu:[{label:'New Project…',accelerator:'CmdOrCtrl+Shift+N',click:command('projectNew')},{label:'Open Project…',click:command('projectOpen')},{label:'Open Recent',submenu:recentMenu(recentProjects,file=>projectService.open(file).then(project=>win?.webContents.send('workspace:open',project)).catch(error=>dialog.showErrorBox('Open Project',error.message)))},{label:'Open Default Workspace',click:command('projectDefault')},{type:'separator'},{label:'Save Project As…',click:command('projectSaveAs')},{label:'Rename Project…',click:command('projectRename')},{label:'Project Menu…',click:command('projectMenu')},{label:'Open Project in New Window',click:command('workspaceWindow')},{type:'separator'},{label:'Add Folder…',accelerator:'CmdOrCtrl+Shift+A',click:command('chooseFolder')},{label:'Add Files…',click:command('projectAddFiles')}]},
+    {label:'Projects',submenu:[{label:'New Project…',accelerator:'CmdOrCtrl+Shift+N',click:command('projectNew')},{label:'Open Project…',click:command('projectOpen')},{label:'Open Recent',submenu:recentMenu(recentProjects,file=>projectService.open(file).then(project=>win?.webContents.send('workspace:open',project)).catch(error=>dialog.showErrorBox('Open Project',error.message)))},{label:'Open Default Workspace',click:command('projectDefault')},{type:'separator'},{label:'Save Project As…',click:command('projectSaveAs')},{label:'Rename Project…',click:command('projectRename')},{label:'Open Project in New Window',click:command('workspaceWindow')},{type:'separator'},{label:'Add Folder…',accelerator:'CmdOrCtrl+Shift+A',click:command('chooseFolder')},{label:'Add Files…',click:command('projectAddFiles')}]},
 
     { label: 'Edit', submenu: [{label:'Undo',accelerator:'CmdOrCtrl+Z',click:command('undoText')}, {label:'Redo',accelerator:process.platform==='darwin'?'CmdOrCtrl+Shift+Z':'Ctrl+Y',click:command('redoText')},{label:'Undo File Action',click:command('undoFile')},{label:'Redo File Action',click:command('redoFile')}, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },{type:'separator'},{label:'Find in Notepad',accelerator:'CmdOrCtrl+F',click:command('findNote')},{label:'Find and Replace…',accelerator:process.platform==='darwin'?'Alt+Cmd+F':'Ctrl+H',click:command('findReplace')},{label:'Find Next',accelerator:'F3',click:command('findNext')},{label:'Find Previous',accelerator:'Shift+F3',click:command('findPrevious')},{label:'Use Selection for Find',accelerator:'CmdOrCtrl+E',click:command('findSelection')},{label:'Search Notepads',accelerator:'CmdOrCtrl+Shift+F',click:command('searchNotepads')}] },
 
     { label: 'Format', submenu: formatMenu },
     { label: 'View', submenu: [{ label: 'Toggle Notepads Sidebar', click: command('sidebarToggle') }, { label: 'Rendered Page', click: command('visual') }, { label: 'Markdown Source', click: command('markdown') }, { label: 'Toggle Capture Pane', accelerator:'CmdOrCtrl+Shift+Y',click: command('paneToggle') }, { type: 'separator' }, { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: command('zoomReset') }, { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: command('zoomIn') }, { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: command('zoomOut') }, { label:'Toggle Editor Pane',click:command('toggleEditor') }] },
 
-    {label:'Drawing',submenu:[['undo','Undo Drawing'],['redo','Redo Drawing'],['toggleErase','Erase Tool'],['toggleSelect','Select Tool'],['togglePenDraws','Pen Always Draws'],['nextColour','Next Colour'],['prevColour','Previous Colour'],['wider','Wider Line'],['thinner','Thinner Line'],['deleteSelection','Delete Selection'],['clearSelection','Clear Selection'],['sendWriting','Send Drawing'],['sendPage','Send Picture'],['clearSheet','Clear Sheet'],['nextSheet','Next Sheet'],['prevSheet','Previous Sheet']].map(([id,label])=>({label,click:command('pen:'+id)}))},
+    {label:'Drawing',submenu:[
+      ...commands([['undo','Undo Drawing'],['redo','Redo Drawing']],'pen:'),
+      {type:'separator'},
+      {label:'Tools',submenu:[
+        ...commands([['toggleErase','Erase Tool'],['toggleSelect','Select Tool'],['togglePenDraws','Pen Always Draws']],'pen:'),
+        {type:'separator'},
+        ...commands([['nextColour','Next Colour'],['prevColour','Previous Colour'],['wider','Wider Line'],['thinner','Thinner Line']],'pen:'),
+        {type:'separator'},
+        ...commands([['deleteSelection','Delete Selection'],['clearSelection','Clear Selection']],'pen:'),
+      ]},
+      {label:'Sheets',submenu:[
+        ...commands([['nextSheet','Next Sheet'],['prevSheet','Previous Sheet']],'pen:'),
+        {type:'separator'},
+        {label:'Clear Page',click:command('pen:clearSheet')},
+      ]},
+      {label:'Insert',submenu:commands([['sendWriting','Writing'],['sendPage','Picture']],'pen:')},
+      {type:'separator'},
+      {label:'Tablet Settings…',click:command('penSettings')},
+    ]},
 
-    {label:'Capture',submenu:[{label:'Switch Wacom Screen / Window',click:command('padToggle')},{type:'separator'},{label:'Drawing',click:command('source:tablet')},{label:'Camera',click:command('source:camera')},{label:'Turn Input Off',click:command('inputOff')},{label:'Tablet Settings…',click:command('penSettings')},{label:'Refresh Device List',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},{label:'Aspect Ratio',submenu:[['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']].map(([value,label])=>({label,click:command('cameraAspect:'+value)}))}]},
+    {label:'Capture',submenu:[
+      ...commands([['source:tablet','Drawing'],['source:camera','Camera'],['inputOff','Turn Input Off']]),
+      {type:'separator'},
+      {label:'Refresh Cameras',accelerator:'CmdOrCtrl+Alt+R',click:command('cameraRefresh')},
+      {label:'Camera Aspect Ratio',submenu:commands([['free','Free'],['1.3333333333333333','4:3'],['1.7777777777777777','16:9'],['1','Square']],'cameraAspect:')},
+    ]},
 
-    {label:'Notepad',submenu:[['writingTools','Formatting Options…'],['noteInfo','Tags and Pin…'],['attachments','Attachments…'],['attachFiles','Attach Files…'],['scanPages','Multipage Scan…'],['insertNoteLink','Link to Notepad…'],['indexImages','Read Images for Search'],['library','All Notepads…'],['smartFolders','Smart Folders…'],['versions','Version History…'],['recentlyDeleted','Recently Deleted…']].map(([id,label])=>({label,click:command(id)}))},
+    {label:'Notepad',submenu:[
+      ...commands([['noteInfo','Tags and Pin…'],['attachments','Attachments…'],['attachFiles','Attach Files…'],['scanPages','Multipage Scan…'],['insertNoteLink','Link to Notepad…'],['indexImages','Read Images for Search'],['versions','Version History…']]),
+      {type:'separator'},
+      {label:'Library',submenu:commands([['library','All Notepads…'],['smartFolders','Smart Folders…'],['recentlyDeleted','Recently Deleted…']])},
+    ]},
 
     { label: 'Tools', submenu: [{ label: 'Run Python', accelerator: 'F5', click: command('run') },{label:'Stop Python',click:()=>stopPython()},{label:'Python Interpreter…',click:command('pythonSetup')},{type:'separator'},{label:'Clean Up Unused Images…',click:command('cleanAssets')}] },
 
-    {label:'Help',submenu:[{label:'Welcome to NoteMind',click:command('welcomeNote')},{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
+    {label:'Help',submenu:[{label:'Welcome to NoteMind',click:command('welcomeNote')},{label:'Welcome Screen',click:command('welcome')},{label:'Quick Reference',click:command('quickReference')},{label:'Keyboard Shortcuts',accelerator:'F1',click:command('shortcuts')},{label:'About NoteMind',click:()=>dialog.showMessageBox(win,{message:'NoteMind',detail:'A private Markdown and drawing workspace. Version '+app.getVersion()})}]},
 
-    {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')},{label:'Close Window',click:()=>win.close()}]},
+    {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom Window',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')}]},
 
   ]));
   buildMenu();

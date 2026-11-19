@@ -21,7 +21,23 @@ class DocumentAssetSessions{
  operation(owner,run){if(this.closed||this.admissionClosed||this.closedOwners.has(owner)||owner?.isDestroyed?.())return Promise.reject(Error('The document window is closed.'));let promise;try{promise=Promise.resolve(run())}catch(error){return Promise.reject(error)}const task={owner,promise};this.tasks.add(task);void promise.finally(()=>this.tasks.delete(task)).catch(()=>{});return promise}
  cleanup(owner,run){const record={owner,run,promise:null,error:null};this.cleanups.add(record);return this.startCleanup(record)}
  startCleanup(record){record.error=null;record.promise=Promise.resolve().then(record.run).then(value=>{this.cleanups.delete(record);for(const state of this.states)if(state.owner===record.owner)this.collect(state);return value},error=>{record.error=error;throw error});void record.promise.catch(()=>{});return record.promise}
- drop(state,entry){if(!entry.charged||entry.pins||entry.releasing)return;const finish=()=>{entry.charged=false;state.bytes-=size(entry.data);this.collect(state);this.notify()};if(raw(entry.data))entry.releasing=this.cleanup(state.owner,async()=>{await this.raw?.releaseRawAssets?.(state.rawOwner,[entry.data.rawAssetToken]);finish()});else finish()}
+ drop(state,entry){
+  if(!entry.charged||entry.pins||entry.releasing)return;
+  const finish=()=>{entry.charged=false;state.bytes-=size(entry.data);this.collect(state);this.notify()};
+  if(!raw(entry.data)){finish();return;}
+  entry.releasing=true;
+  let batch=state.rawReleaseBatch;
+  if(!batch){
+   batch=state.rawReleaseBatch={tokens:new Set(),finished:[]};
+   this.cleanup(state.owner,async()=>{
+    if(state.rawReleaseBatch===batch)state.rawReleaseBatch=null;
+    await this.raw?.releaseRawAssets?.(state.rawOwner,[...batch.tokens]);
+    for(const acknowledge of batch.finished)acknowledge();
+   });
+  }
+  batch.tokens.add(entry.data.rawAssetToken);
+  batch.finished.push(finish);
+ }
  remove(state,token){const entry=state.entries.get(token);if(!entry)return;state.entries.delete(token);entry.removed=true;if(typeof entry.data==='string'&&entry.data.length<LARGE&&state.byData.get(entry.data)===token)state.byData.delete(entry.data);if(raw(entry.data)&&state.byRaw.get(entry.data.rawAssetToken)===token)state.byRaw.delete(entry.data.rawAssetToken);this.drop(state,entry)}
  collect(state){if(state.closed&&!state.requests&&!state.stagedBytes&&!state.uploads.size&&!state.readers.size&&!state.entries.size&&!state.bytes&&!state.retiring&&![...this.cleanups].some(record=>record.owner===state.owner)&&this.states.has(state)){state.retiring=this.cleanup(state.owner,async()=>{await this.raw?.releaseRawAssets?.(state.rawOwner);this.states.delete(state)});}}
  trim(state,protectedTokens=new Set()){for(const token of state.entries.keys()){const total=this.total();if(total.bytes<=this.maxBytes&&total.entries<=this.maxEntries)break;const entry=state.entries.get(token);if(!protectedTokens.has(token)&&!entry.pins&&!entry.pending)this.remove(state,token)}}
