@@ -58,6 +58,7 @@ export interface SurfaceHandle {
   fitView(): void
   magnifyView(zoom: number): void
   selectedInk(): number
+  captureRegion(): Rect | null
   deleteSelectedInk(): boolean
   clearInkSelection(): boolean
   /** Commit the current pen/selection gesture before taking an owned export snapshot. */
@@ -543,8 +544,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     fitView:()=>precision.fit(),
     magnifyView:zoom=>precision.magnify(zoom),
     selectedInk:()=>inkSelectionRef.current.controller.count,
+    captureRegion:()=>inkSelectionRef.current.area,
     deleteSelectedInk:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;void selection.run({type:'delete'});return true},
-    clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;selection.clear();return true},
+    clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count&&!selection.area)return false;selection.clear();return true},
     flush: () => {finishGesture.current();return flushInkMutations(latest.current.page)||undefined},
     size: () => size.current,
     view: () => ({...viewport.current}),
@@ -875,8 +877,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const erasing = tools.eraser
   const selectedMembership=inkSelect.controller.bits,selectionWidthScale=unit()
   const selectedAction=(action:any)=>{if(inkSelect.controller.bits===selectedMembership)void inkSelect.run(action)}
-  const selectedInk=inkSelect.bounds?rectOnView(inkSelect.bounds,fit.viewport):null
-  const lassoPoints=inkSelect.lasso.map(point=>pointOnView(point,fit.viewport)).map(point=>`${point.x*1000},${point.y*1000}`).join(' ')
+  const selectedRegion=inkSelect.marquee||inkSelect.area||inkSelect.bounds
+  const selectedInk=selectedRegion?rectOnView(selectedRegion,fit.viewport):null
+  const capture=inkSelect.area&&buttons?{bringOff:buttons.bringOff,bring:()=>leaveFor(buttons.bring),picture:()=>leaveFor(buttons.picture),copy:buttons.copy}:undefined
   const shownBox = box ? rectOnView(box, fit.viewport) : null
   const shownRegion = regionBox ? rectOnView(regionBox, fit.viewport) : null
   return (
@@ -898,7 +901,9 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         <canvas ref={canvas} className="ink" data-layer="ink" style={{ width: "100%", height: "100%" }} />
         <canvas ref={backdrop} className="paper" data-layer="paper" style={{ width: "100%", height: "100%" }} />
         <canvas ref={bindLineCanvas} className="line-preview" data-layer="line-preview" style={{width:"100%",height:"100%"}}/>
-        {(selectedInk&&inkSelect.count>0||lassoPoints)&&<svg className="ink-selection-outline" data-ink-selection="outline" viewBox="0 0 1000 1000" preserveAspectRatio="none">{selectedInk&&inkSelect.count>0&&<rect x={selectedInk.x*1000} y={selectedInk.y*1000} width={Math.max(selectedInk.width*1000,1)} height={Math.max(selectedInk.height*1000,1)}/>} {lassoPoints&&<path d={'M'+lassoPoints.replaceAll(' ',' L')+' Z'}/>}</svg>}
+        {selectedInk&&<svg className="ink-selection-outline" data-ink-selection="outline" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+          <rect data-ink-selection={inkSelect.marquee?'marquee':undefined} x={selectedInk.x*1000} y={selectedInk.y*1000} width={Math.max(selectedInk.width*1000,1)} height={Math.max(selectedInk.height*1000,1)}/>
+        </svg>}
         {shownRegion && (
           <div className="box-clip">
             <div className="region-frame" data-tablet="region-frame" style={{
@@ -918,7 +923,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
         )}
       </div>
       {showPrecisionControls && <PrecisionControls zoom={precision.zoom} onZoom={precision.zoomBy} onFit={precision.fit} line={precision.line} angle={precision.angle} onLine={precision.setLine} onAngle={precision.setAngle}/>}
-      {selectedInk&&inkSelect.count>0&&!lassoPoints&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear}/>}
+      {selectedInk&&(inkSelect.count>0||capture)&&!inkSelect.marquee&&<InkSelectionActions box={selectedInk} sheet={fit} count={inkSelect.count} busy={inkSelect.busy} colour={inkSelect.style.colour} width={inkSelect.style.width===null?null:inkSelect.style.width*selectionWidthScale} onColour={colour=>selectedAction({type:'recolor',colorHex:colour})} onWidth={value=>selectedAction({type:'width',width:value/selectionWidthScale})} onDuplicate={()=>{void inkSelect.run({type:'duplicate'})}} onDelete={()=>{void inkSelect.run({type:'delete'})}} onClear={inkSelect.clear} capture={capture}/>}
       {shownBox && buttons && !boxing && fit.width > 0 && (
         // Beside the sheet's element, not in it: a click here is the button's, never a box gesture (BoxActions.tsx).
         <BoxActions box={shownBox} sheet={fit} bringOff={buttons.bringOff}

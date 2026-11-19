@@ -34,7 +34,7 @@ test('an old owner edit completion cannot clear the new owner operation busy sta
  const h=harness();h.render();const old=h.view.controller,first=h.view.run({type:'duplicate'});h.options.page={id:'B'};h.render();const current=h.view.controller,second=h.view.run({type:'delete'});h.render();assert.equal(h.view.busy,true);
  old.finish();await first;await tick();h.render();assert.equal(h.view.busy,true);current.finish();await second;await tick();h.render();assert.equal(h.view.busy,false);h.unmount();
 });
-test('switching pages removes an unfinished old owner lasso',()=>{
- const h=harness();h.render();h.view.begin({pointerId:7},{point:{x:0,y:0},px:{x:0,y:0}},{});h.view.move({pointerId:7},{point:{x:.5,y:.5},px:{x:50,y:50}});h.render();assert.ok(h.view.lasso.length);
- h.options.page={id:'B'};h.render();assert.equal(h.view.lasso.length,0);assert.equal(h.view.pendingGesture(),false);h.unmount();
+test('switching pages removes an unfinished old owner marquee',()=>{
+ const h=harness();h.render();h.view.begin({pointerId:7},{point:{x:0,y:0},px:{x:0,y:0}},{});h.view.move({pointerId:7},{point:{x:.5,y:.5},px:{x:50,y:50}});h.render();assert.equal(h.view.marquee.width,.5);
+ h.options.page={id:'B'};h.render();assert.equal(h.view.marquee,null);assert.equal(h.view.pendingGesture(),false);h.unmount();
 });

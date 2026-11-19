@@ -19,8 +19,9 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   await click('[data-bar=pen]');await drag([.2,.2],[.3,.3]);await drag([.7,.7],[.8,.8],true);
   check((await sheets())[0].strokes.length===2,'both mouse and pen draw strokes in Pen mode');
   await click('[data-bar=select]');await pointer('pointerdown',.1,.1);
-  for(const [x,y]of [[.4,.1],[.4,.4],[.1,.4],[.1,.1]])await pointer('pointermove',x,y);
-  await pointer('pointerup',.1,.1);await drag([.25,.25],[.4,.25]);
+  await pointer('pointermove',.4,.4);
+  check(await js(`!!document.querySelector('rect[data-ink-selection=marquee]')&&!document.querySelector('[data-ink-selection=outline] path')`),'Select previews a rectangular marquee');
+  await pointer('pointerup',.4,.4);await drag([.25,.25],[.4,.25]);
   check(Math.abs((await sheets())[0].strokes[0].points[0].x-.35)<.01&&Math.abs((await sheets())[0].strokes[1].points[0].x-.7)<.01,'dragging a selection moves its ink and leaves other ink alone');
   await command('pen:undo');check(Math.abs((await sheets())[0].strokes[0].points[0].x-.2)<.01,'one Undo restores the entire selection move');
   await command('pen:redo');check(Math.abs((await sheets())[0].strokes[0].points[0].x-.35)<.01,'Redo restores the moved ink');
@@ -58,6 +59,24 @@ app.on('browser-window-created',(_,w)=>{if(started)return;started=true;w.webCont
   check(await checked()==='true','the next insertion retains the chosen layout');
   await click('.float-menu [data-bar=bring-page]');await pause(450);
   check(await js(`(() => {const pane=document.querySelector('#rich .graphics-pane:not(.ink-only):not(.floating-graphics)');return pane&&doc.meta.graphicsPanes[pane.querySelector('img').dataset.asset].docked===true})()`),'Whole Sheet as Picture uses the same dock setting');
+
+  await click('.sheet-add');await pause(250);
+  await click('[data-bar=pen]');await drag([.2,.2],[.3,.3]);await drag([.75,.75],[.85,.85]);
+  await click('[data-bar=select]');await drag([.1,.1],[.5,.5]);
+  const row='[data-ink-selection=actions]';
+  check(await js(`[...document.querySelectorAll('${row} [data-box-action]')].map(button=>button.textContent.trim()).join(',')==='Writing,Picture,Copy'`),'the selected rectangle shows Writing, Picture and Copy');
+  const lastInsertion=pattern=>js(`(() => {const name=Object.keys(doc.assets).filter(name=>${pattern}.test(name)).at(-1);if(!name)return null;return {count:NoteMindGraphics.decodeBase64(doc.assets[name+'.json']).strokes.length,dock:doc.meta.graphicsPanes[name].docked}})()`);
+  await click(row+' [data-box-action=ink]');await pause(250);
+  check((await lastInsertion('/drawing-.*\\.svg$/')).count===1,'Writing inserts only the ink within the selection');
+  await click(row+' [data-box-action=picture]');await pause(450);
+  const picture=await lastInsertion('/sheet-.*\\.png$/');
+  check(picture.count===1&&picture.dock===true,'Picture crops to the selected area and honors the dock checkbox');
+  await click('[data-tablet=bring-menu]');await pause(60);await click('.float-menu [data-bar=bring-page]');await pause(450);
+  check((await lastInsertion('/sheet-.*\\.png$/')).count===2,'Whole Sheet as Picture still uses the entire sheet');
+  await drag([.53,.52],[.62,.61]);
+  check(await js(`document.querySelector('${row} [data-box-action=ink]')?.disabled&&!document.querySelector('${row} [data-box-action=picture]')?.disabled`),'an empty selection still offers Picture');
+  await command('pen:clearSelection');
+  check(await js(`!document.querySelector('${row}')`),'clearing the selection dismisses the area actions');
   fs.writeFileSync(path.join(root,'drawing-tools.png'),(await w.webContents.capturePage()).toPNG());
   report.ok=true;
  }catch(error){report.ok=false;report.error=error.stack;report.console=await js(`({errors:document.getElementById('status').textContent,sheets:[...document.querySelectorAll('.sheet-tab .name')].map(n=>n.textContent)})`).catch(()=>null);}
