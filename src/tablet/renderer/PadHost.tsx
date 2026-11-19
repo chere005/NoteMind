@@ -14,8 +14,9 @@ const FRAME='notemind-pen-display'
 export function PadHost({children}:{children:ReactNode}){
  const [state,setState]=useState<PadState|null>(null),[target,setTarget]=useState<HTMLElement|null>(null),[frame,setFrame]=useState('')
  const [chromeRoot,setChromeRoot]=useState<HTMLDivElement|null>(null),orientation=useOrientation(),follow=usePadChromeOrientation()
+ const [overlay,setOverlay]=useState<HTMLElement|null>(null)
  const viewport=usePadViewport(target)
- const chrome=useMemo(()=>chromeRoot?Object.fromEntries(['tabs','pen','header','find','footer'].map(slot=>[slot,chromeRoot.querySelector<HTMLElement>('[data-pane-slot='+slot+']')])) as Partial<Record<PaneChromeSlot,HTMLElement>>:null,[chromeRoot])
+ const chrome=useMemo(()=>chromeRoot?{...Object.fromEntries(['tabs','pen','header','find','footer'].map(slot=>[slot,chromeRoot.querySelector<HTMLElement>('[data-pane-slot='+slot+']')])),overlay} as Partial<Record<PaneChromeSlot,HTMLElement>>:null,[chromeRoot,overlay])
  useLayoutEffect(()=>{if(!target)return;const view=target.ownerDocument.defaultView!;const apply=()=>{const layout=padOrientationLayout(view.innerWidth,view.innerHeight,orientation,state?.rotation||0,follow);Object.assign(target.style,{width:layout.width+'px',height:layout.height+'px',transformOrigin:'0 0',transform:layout.transform});target.dataset.padTurns=String(layout.turns)};apply();view.addEventListener('resize',apply);return()=>view.removeEventListener('resize',apply)},[target,orientation,state?.rotation,follow])
  useEffect(()=>{
   const api=(window as any).notemind?.pad;if(!api)return
@@ -55,7 +56,7 @@ export function PadHost({children}:{children:ReactNode}){
    <div className="pane-chrome-slot" data-pane-slot="pen"/>
    <div className="pane-chrome-slot" data-pane-slot="header"/>
    <div className="pane-chrome-slot" data-pane-slot="find"/>
-   <PadMirror frame={frame} viewport={viewport}/>
+   <PadMirror frame={frame} viewport={viewport} overlayRef={setOverlay}/>
    <div className="pane-chrome-slot" data-pane-slot="footer"/>
   </div>}
   {target?createPortal(children,target):children}

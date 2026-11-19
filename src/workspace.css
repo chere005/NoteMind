@@ -15,6 +15,11 @@ main{container-type:inline-size;container-name:editor}
 #rich h2{font-size:1.3em;line-height:1.35;margin:1.3em 0 .6em}
 #rich h3{font-size:1.1em;line-height:1.4;margin:1.2em 0 .55em}
 #rich p{margin:.8em 0}
+/* Picture-only paragraphs have no text baseline or nested pane margin. */
+#rich>p.image-paragraph{line-height:0}
+#rich>p.image-paragraph>.graphics-pane{margin:0}
+#rich>p.image-paragraph+p.image-paragraph{margin-top:4px}
+#rich>p.image-paragraph:has(+p.image-paragraph){margin-bottom:4px}
 #rich blockquote{margin:1em 0;padding-left:12px;border-color:var(--wm-muted);color:var(--wm-text)}
 #rich .heading-toggle{left:-16px;width:14px;padding:0;top:2px}
 .bar-btn:focus-visible,#toolbar button:focus-visible,#rich [data-edit-graphics]:focus-visible{outline:2px solid var(--wm-accent);outline-offset:-2px}

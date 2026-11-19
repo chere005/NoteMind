@@ -55,6 +55,7 @@ export interface SurfaceHandle {
   repaint(): void
   /** Fit the complete canonical page without changing ink or history. */
   fitView(): void
+  selectedStrokes(): InkStroke[]
   selectedInk(): number
   deleteSelectedInk(): boolean
   clearInkSelection(): boolean
@@ -536,6 +537,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     clear: () => { const p=latest.current.page;finishGesture.current();return controllerFor(p).clear() },
     repaint: () => schedule(true),
     fitView:()=>precision.fit(),
+    selectedStrokes:()=>{const selection=inkSelectionRef.current.controller;selection.observe();return [...selection.bits.indexes()].map(index=>latest.current.page.strokes[index])},
     selectedInk:()=>inkSelectionRef.current.controller.count,
     deleteSelectedInk:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;void selection.run({type:'delete'});return true},
     clearInkSelection:()=>{const selection=inkSelectionRef.current;if(!selection.controller.count)return false;selection.clear();return true},

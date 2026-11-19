@@ -11,8 +11,9 @@
 #toolbar .toolbar-group+#listMenu{border-left:1px solid var(--wm-rule);border-radius:0;padding-left:8px}
 #toolbar #heading{width:114px;min-width:90px;padding:0 8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
 #toolbar [aria-pressed=true]{background:var(--bar-tint);color:var(--wm-accent)}
-#toolbar #editor-mode{display:flex;flex:none;margin-left:auto}
-#toolbar .editor-mode{padding:0 6px;gap:5px}
+.tabs-row :is(#tab-list,#editor-mode,#capture-toggle){display:flex;align-items:center;flex:none}
+.tabs-row :is(#tab-list,#editor-mode,#capture-toggle)>.bar-btn{width:var(--bar-btn);min-width:var(--bar-btn);height:var(--bar-btn);padding:0;margin:0}
+.tabs-row :is(#tab-list,#editor-mode){margin-right:2px}
 .menu-chevron{font-size:13px;line-height:1;opacity:.7}
 #toolbar .grow{min-width:0}
 .sheet-tabs{display:flex;align-items:center;gap:3px}
@@ -31,7 +32,7 @@
 .float-menu .hint{white-space:nowrap}
 .float-menu button:focus-visible{outline:2px solid var(--wm-accent);outline-offset:-2px}
 .bar-split>.bar-btn.caret{min-width:24px;width:24px}
-@container editor (max-width:620px){#toolbar #listMenu{display:none}#toolbar .editor-mode .bar-label-text{display:none}}
+@container editor (max-width:620px){#toolbar #listMenu{display:none}}
 @container editor (max-width:410px){#toolbar [data-format=fmtUnderline]{display:none}#toolbar #heading{width:88px;min-width:88px}#toolbar :is(#insertMenu,#writingTools) .bar-label-text,#toolbar :is(#insertMenu,#writingTools) .menu-chevron{display:none}#toolbar{gap:3px}#toolbar :is(#insertMenu,#writingTools){width:28px;min-width:28px;padding:0}}
 @container drawing (max-width:380px){.sheet-tabs #video-options>.bar-btn>.wm-icon:first-child{display:none}.sheet-tabs #video-options{max-width:92px}.camera-head .bar-label-text{display:none}.camera-head [data-tablet=pane-save]>.wm-icon{display:block!important}.camera-head [data-capture=ink]>.wm-icon{display:block!important}}
 

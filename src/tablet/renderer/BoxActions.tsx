@@ -1,3 +1,5 @@
+import {createPortal} from 'react-dom'
+import {useSelectionMirror,mirrorRowPlace,type MirrorAnchor} from './SelectionMirror'
 
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
@@ -19,14 +21,17 @@ export interface BoxButtons {
 }
 
 interface Props extends BoxButtons {
+  mirrored?: boolean
+  mirrorAnchor?: MirrorAnchor
   
   box: Rect
   
   sheet: { x: number; y: number; width: number; height: number }
 }
 
-export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, clear, text }: Props) {
+export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, clear, text, mirrored=false, mirrorAnchor }: Props) {
   const row = useRef<HTMLDivElement | null>(null)
+  const mirror = useSelectionMirror(row, sheet, mirrored)
   const [size, setSize] = useState<Size | null>(null)
   const [pending, setPending] = useState(false)
   
@@ -39,7 +44,7 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
     if (full === null) { setFull(element.offsetWidth); return }
     const next = { width: element.offsetWidth, height: element.offsetHeight }
     setSize((was) => (was && was.width === next.width && was.height === next.height ? was : next))
-  }, [compact, full, bringOff, pending])
+  }, [compact, full, bringOff, pending, sheet.width])
 
   // (The sheet is letterboxed in the middle of its pane, tabletPage.ts fitRect: the margin under it is the one over it.)
   const place: RowPlace | null = size ? placeRow(box, sheet, size, ROW_GAP, { above: sheet.y, below: sheet.y }) : null
@@ -50,6 +55,7 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
     try { await action() } finally { setPending(false) }
   }
   const off = bringOff !== null
+  const mirrorPlace = mirrorAnchor&&size ? mirrorRowPlace(mirrorAnchor,size) : null
 
   
   const watching = useRef<(() => void) | null>(null)
@@ -102,11 +108,13 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
   }
 
   return (
+    <>
+    {mirror&&createPortal(<BoxActions box={box} sheet={mirror.sheet} erase={erase} bring={bring} picture={picture} copy={copy} bringOff={bringOff} clear={clear} text={text} mirrorAnchor={mirror.anchor} mirrored/>,mirror.target)}
     <div className="box-actions" ref={row} data-tablet="box-actions" data-pen-handover="" data-side={place?.side ?? ""} data-compact={compact ? "1" : "0"}
          role="group"
          aria-label="The box"
          style={{
-           left: sheet.x + (place?.left ?? 0), top: sheet.y + (place?.top ?? 0),
+           left: mirrorPlace?.left ?? sheet.x + (place?.left ?? 0), top: mirrorPlace?.top ?? sheet.y + (place?.top ?? 0),
            visibility: place && full !== null ? "visible" : "hidden",
          }}
          // The row is not the sheet: a press here never reaches the box's own gestures (one that moves is handed over: `watch`).
@@ -126,5 +134,6 @@ export function BoxActions({ box, sheet, erase, bring, picture, copy, bringOff, 
               onClick={run(erase)}>Erase</button>
 
     </div>
+    </>
   )
 }

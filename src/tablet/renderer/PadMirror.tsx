@@ -24,7 +24,7 @@ export function usePadViewport(root:HTMLElement|null){
  return viewport
 }
 
-export function PadMirror({frame,viewport}:{frame:string,viewport:Viewport|null}){
+export function PadMirror({frame,viewport,overlayRef}:{frame:string,viewport:Viewport|null,overlayRef?:(element:HTMLDivElement|null)=>void}){
  const stage=useRef<HTMLDivElement>(null),held=useRef<any>(null)
  const [size,setSize]=useState({width:0,height:0})
  useLayoutEffect(()=>{const element=stage.current;if(!element)return;const measure=()=>{const r=element.getBoundingClientRect();setSize(previous=>previous.width===r.width&&previous.height===r.height?previous:{width:r.width,height:r.height})};const observer=new ResizeObserver(measure);observer.observe(element);measure();return()=>observer.disconnect()},[])
@@ -45,7 +45,7 @@ export function PadMirror({frame,viewport}:{frame:string,viewport:Viewport|null}
   if(forwardPadMirrorPointer(packet))event.preventDefault()
   if(type==='pointerup'||type==='pointercancel'){held.current=null;try{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)}catch{}}
  }
- const key=(event:React.KeyboardEvent)=>{if(event.ctrlKey||event.metaKey||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;if(forwardPadMirrorKey({type:event.type as 'keydown'|'keyup',key:event.key,code:event.code,repeat:event.repeat,ctrlKey:event.ctrlKey,altKey:event.altKey,shiftKey:event.shiftKey,metaKey:event.metaKey,isComposing:event.nativeEvent.isComposing,keyCode:event.nativeEvent.keyCode})){event.preventDefault();event.stopPropagation()}}
+ const key=(event:React.KeyboardEvent)=>{if(event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return;if(forwardPadMirrorKey({type:event.type as 'keydown'|'keyup',key:event.key,code:event.code,repeat:event.repeat,ctrlKey:event.ctrlKey,altKey:event.altKey,shiftKey:event.shiftKey,metaKey:event.metaKey,isComposing:event.nativeEvent.isComposing,keyCode:event.nativeEvent.keyCode})){event.preventDefault();event.stopPropagation()}}
 
  const wheel=(event:React.WheelEvent<HTMLDivElement>)=>{if(!viewport||!scale)return;const point=at(event);(window as any).notemind.pad.input({type:'mouseWheel',...point,deltaX:event.deltaX,deltaY:event.deltaY});event.preventDefault()}
  const unturn=q===1?`translate(0,${h*scale}px) rotate(-90deg)`:q===2?`translate(${w*scale}px,${h*scale}px) rotate(180deg)`:q===3?`translate(${w*scale}px,0) rotate(90deg)`:'none'
@@ -53,6 +53,7 @@ export function PadMirror({frame,viewport}:{frame:string,viewport:Viewport|null}
   {frame&&viewport&&scale>0?<div className="pad-mirror-viewport" data-pad-viewport={JSON.stringify(viewport)} style={{width:w*scale,height:h*scale}} tabIndex={0} aria-label="Drawing on pen display. Use the mouse to interact."
    onContextMenu={event=>event.preventDefault()} onPointerDown={event=>send(event,'pointerdown')} onPointerMove={event=>send(event,'pointermove')} onPointerUp={event=>send(event,'pointerup')} onPointerCancel={event=>send(event,'pointercancel')} onLostPointerCapture={cancel} onKeyDown={key} onKeyUp={key} onWheel={wheel}>
    <div className="pad-mirror-image" style={{width:viewport.width*scale,height:viewport.height*scale,transform:unturn}}><img alt="Drawing on pen display" draggable={false} src={'data:image/jpeg;base64,'+frame} style={{width:viewport.displayWidth*scale,height:viewport.displayHeight*scale,left:-viewport.x*scale,top:-viewport.y*scale}}/></div>
+   <div ref={overlayRef} className="selection-mirror" data-pane-slot="overlay"/>
   </div>:<p>Opening the drawing page…</p>}
  </div>
 }

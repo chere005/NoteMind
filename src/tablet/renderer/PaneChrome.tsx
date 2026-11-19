@@ -1,7 +1,7 @@
 import {createContext,useContext,type ReactNode} from 'react'
 import {createPortal} from 'react-dom'
 
-export type PaneChromeSlot='tabs'|'pen'|'header'|'find'|'footer'
+export type PaneChromeSlot='tabs'|'pen'|'header'|'find'|'footer'|'overlay'
 export const PaneChromeContext=createContext<Partial<Record<PaneChromeSlot,HTMLElement>>|null>(null)
 
 // Both sets of controls call the same controller; the page and its effects mount only once.

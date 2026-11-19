@@ -114,6 +114,18 @@
       return node || null;
     }
 
+		function markPicture(node) {
+			const block = topLevel(node);
+			if (block?.tagName === 'P') block.classList.toggle('image-paragraph', isImageBlock(block));
+		}
+		for (const node of editor.children) markPicture(node);
+		new MutationObserver(records => {
+			for (const record of records) {
+				markPicture(record.target);
+				if (record.target === editor) for (const node of record.addedNodes) markPicture(node);
+			}
+		}).observe(editor, {childList:true, subtree:true, characterData:true});
+
     function neighbour(node, step) {
       let next = step < 0 ? node.previousSibling : node.nextSibling;
       while (next && !isBlockNode(next)) next = step < 0 ? next.previousSibling : next.nextSibling;

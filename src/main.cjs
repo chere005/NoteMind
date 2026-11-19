@@ -351,6 +351,9 @@ ipcMain.handle('reveal-path', (_, source) => shell.showItemInFolder(source));
 ipcMain.handle('open-external',(_,url)=>{if(typeof url!=='string'||!['https:','http:','mailto:'].includes(new URL(url).protocol))throw Error('Unsupported link.');return shell.openExternal(url);});
 
 ipcMain.handle('copy-table', (_, data) => { if(typeof data?.text!=='string'||typeof data?.html!=='string'||data.html.length>5_000_000)throw Error('Invalid table clipboard data.'); return ClipboardItem ? clipboard.write([new ClipboardItem({'text/plain':data.text,'text/html':data.html})]) : clipboard.write({text:data.text,html:data.html}); });
+const drawingClipboard = require('./drawing-clipboard-native.cjs').drawingClipboard({clipboard, ClipboardItem, nativeImage});
+ipcMain.handle('copy-drawing', (_, value) => drawingClipboard.copy(value));
+ipcMain.handle('read-drawing-clipboard', () => drawingClipboard.read());
 ipcMain.handle('copy-png', (_, base64) => { const image = nativeImage.createFromBuffer(Buffer.from(base64, 'base64')); if (image.isEmpty()) throw Error('Could not copy image.'); return ClipboardItem ? clipboard.write([new ClipboardItem({'image/png':new Blob([image.toPNG()],{type:'image/png'})})]) : clipboard.writeImage(image); });
 
 const documentWrites=new Map();
@@ -399,4 +402,4 @@ ipcMain.handle('run-python', async (_, file) => {
 
 ipcMain.handle('python-stop',()=>stopPython());
 
-ipcMain.handle('close-sheet-choice',async(_,name)=>{const r=await dialog.showMessageBox(win,{type:'question',message:'Save changes to '+name+'?',buttons:['Save','Don’t Save','Cancel'],defaultId:0,cancelId:2});return ['save','discard','cancel'][r.response]});
+ipcMain.handle('close-sheet-choice',async(event,name,fromPad=false)=>{const pad=padController?.contents(),parent=(fromPad&&pad&&!pad.isDestroyed()?BrowserWindow.fromWebContents(pad):null)||BrowserWindow.fromWebContents(event.sender)||win;const r=await dialog.showMessageBox(parent,{type:'question',message:'Save changes to '+name+'?',buttons:['Save','Don’t Save','Cancel'],defaultId:0,cancelId:2});return ['save','discard','cancel'][r.response]});

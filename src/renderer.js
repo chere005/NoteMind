@@ -149,7 +149,31 @@ function insertAsset(name, data, sheet=null, sidecar=null,sidecarChunks=null,ima
  const assets={[name]:data};if(imageChunks)window.NoteMindDocumentSync?.hint(assets,name,data,imageChunks);if(sidecar){assets[name+'.json']=sidecar;window.NoteMindDocumentSync?.hint(assets,name+'.json',sidecar,sidecarChunks)}else if(sheet)assets[name+'.json']=NoteMindGraphics.encodeBase64(sheet);
  window.NoteMindAssetAdmission?.admit(doc.assets,{add:assets,chunks:(owned,key)=>window.NoteMindDocumentSync?.assetChunks(owned,key)});if(visual){restoreCaret();if(!getSelection()?.rangeCount)throw Error('Choose an insertion point in the Notepad.');}window.NoteMindHistory?.initialize(activeTab);for(const[key,value]of Object.entries(assets))Object.defineProperty(doc.assets,key,{value,enumerable:true,writable:true,configurable:true});window.NoteMindDocumentSync?.copyHints(assets,doc.assets);doc.meta ||= {};doc.meta.graphicsPanes ||= {};Object.defineProperty(doc.meta.graphicsPanes,name,{value:{version:1},enumerable:true,writable:true,configurable:true});
  const text='\n\n!['+(sheet||sidecar?'Drawing':'Image')+']('+name+')\n\n';
- if(visual){restoreCaret();const selection=getSelection(),range=selection.getRangeAt(0);const node=range.endContainer.nodeType===1?range.endContainer:range.endContainer.parentElement;const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol');if(block&&rich.contains(block)){range.setStartAfter(block);range.collapse(true);}else range.collapse(false);const fragment=range.createContextualFragment(render(text)+'<p><br></p>'),last=fragment.lastChild;range.insertNode(fragment);if(last){range.setStartAfter(last);range.collapse(true);selection.removeAllRanges();selection.addRange(range);}richChanged=true;}
+ if(visual){
+	restoreCaret();
+	const selection=getSelection(),range=selection.getRangeAt(0);
+	const node=range.endContainer.nodeType===1?range.endContainer:range.endContainer.parentElement;
+	const tail=node===rich&&range.endOffset>0?rich.childNodes[range.endOffset-1]:null;
+	const block=node.closest?.('p,h1,h2,h3,h4,h5,h6,blockquote,pre,ul,ol')||
+		(tail?.nodeType===1&&tail.hasAttribute('data-editor-tail')?tail:null);
+	// Replace the empty insertion line instead of leaving it between successive pictures.
+	const empty=block?.matches('p')&&!block.textContent.trim()&&
+		[...block.childNodes].every(child=>child.nodeType===3||child.nodeName==='BR');
+	if(block&&rich.contains(block)){
+		range.setStartAfter(block);
+		range.collapse(true);
+		if(empty)block.remove();
+	}else range.collapse(false);
+	const fragment=range.createContextualFragment(render(text)+'<p data-editor-tail><br></p>');
+	const last=fragment.lastChild;
+	range.insertNode(fragment);
+	range.selectNodeContents(last);
+	range.collapse(true);
+	selection.removeAllRanges();
+	selection.addRange(range);
+	carets.set(activeTab.id,range.cloneRange());
+	richChanged=true;
+ }
  else source.setRangeText(text,source.selectionStart,source.selectionEnd,'end');
  markDirty();return true;
 }

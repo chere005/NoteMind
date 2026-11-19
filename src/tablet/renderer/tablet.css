@@ -34,16 +34,16 @@
 /* The row under the box (BoxActions.tsx on the sheet, CameraPane's on the picture): one slim dark strip of small buttons,
    readable on any paper. The primary is first and lit, Erase (which destroys) is last and red. On the sheet it sits
    beside the sheet's element in the host (placed in px by boxRow.ts), never over the box. */
-.tablet-host .box-actions, .camera .camera-stage .box-actions {
-  display: flex; align-items: center; gap: 1px; height: 24px; box-sizing: border-box;
-  padding: 0 2px; border-radius: 7px; white-space: nowrap; user-select: none;
+.tablet-host .box-actions, .camera .camera-stage .box-actions, .selection-mirror .box-actions {
+  display: flex; align-items: center; gap: 2px; min-height: 36px; box-sizing: border-box;
+  padding: 3px; border-radius: 7px; white-space: nowrap; user-select: none;
   background: rgba(28, 28, 32, 0.9); border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
-.tablet-host .box-actions { position: absolute; z-index: 3; }
-.tablet-host .box-actions button, .camera .camera-stage .box-actions button {
-  height: 20px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: #e8e8ea;
-  font: inherit; font-size: 11.5px; font-weight: 500; line-height: 20px; cursor: pointer;
+.tablet-host .box-actions, .selection-mirror .box-actions { position: absolute; z-index: 3; }
+.tablet-host .box-actions button, .camera .camera-stage .box-actions button, .selection-mirror .box-actions button {
+  height: 28px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: #e8e8ea;
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 28px; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
 .tablet-host .box-actions button:hover:not(:disabled), .camera .camera-stage .box-actions button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); color: #fff; }
@@ -150,3 +150,9 @@
 .sheet-error { flex: none; max-width: 40%; margin: 0 6px; padding: 2px 8px; border: 1px solid #c0504d; border-radius: 6px; background: transparent; color: inherit; font-size: 11.5px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 
 .camera .camera-stage>.box-actions{position:absolute;z-index:4}
+
+.selection-mirror{position:absolute;inset:0;pointer-events:none;z-index:8}
+.selection-mirror>.box-actions,.selection-mirror>.ink-selection-actions{pointer-events:auto}
+.selection-mirror .box-actions{max-width:calc(100% - 12px);height:auto;flex-wrap:wrap;white-space:normal}
+.selection-mirror .box-actions button.primary{background:var(--wm-accent-fill,var(--wm-accent));color:#fff}
+.selection-mirror .box-actions button.danger{color:#ff8f85}

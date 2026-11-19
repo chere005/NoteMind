@@ -21,9 +21,9 @@
  toolbar.append(legacy);
  const textGroup=document.createElement('span');textGroup.className='toolbar-group text-tools';textGroup.setAttribute('role','group');textGroup.setAttribute('aria-label','Text formatting');
  for(const button of [$('heading'),toolbar.querySelector('[data-command=bold]'),toolbar.querySelector('[data-command=italic]'),toolbar.querySelector('[data-format=fmtUnderline]')])textGroup.append(button);
- const list=make('listMenu','Lists','list',listItems),insert=make('insertMenu','Insert','plus',insertItems),grow=toolbar.querySelector('.grow'),mode=document.createElement('span');mode.id='editor-mode';
+ const list=make('listMenu','Lists','list',listItems),insert=make('insertMenu','Insert','plus',insertItems),grow=toolbar.querySelector('.grow');
  more.className='bar-btn toolbar-menu format-menu';more.title='Formatting options';more.setAttribute('aria-label','Formatting options');more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');more.innerHTML=svg('more')+'<span class="bar-label-text">Format</span><span class="menu-chevron" aria-hidden="true">⌄</span>';more.onclick=()=>menu(more,formatItems(),'Formatting options');
- toolbar.prepend(textGroup,list,insert,more);toolbar.append(grow,mode);
+ toolbar.prepend(textGroup,list,insert,more);toolbar.append(grow);
  for(const [selector,label,key]of [['[data-command=bold]','Bold','B'],['[data-command=italic]','Italic','I'],['[data-format=fmtUnderline]','Underline','U']]){const button=toolbar.querySelector(selector);button.title=label+' ('+mod+'+'+key+')';button.setAttribute('aria-label',label);}
  for(const button of toolbar.querySelectorAll('button'))if(!button.hasAttribute('aria-label'))button.setAttribute('aria-label',button.title||button.textContent.trim());
  function updateState(){for(const [selector,key]of [['[data-command=bold]','bold'],['[data-command=italic]','italic'],['[data-format=fmtUnderline]','underline']])toolbar.querySelector(selector)?.setAttribute('aria-pressed',String(!!(visual&&rich.contains(getSelection()?.anchorNode)&&document.queryCommandState(key))));}

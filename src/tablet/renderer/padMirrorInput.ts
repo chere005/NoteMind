@@ -167,7 +167,10 @@ function bridgeFor(view: View, emit: Emit): Bridge {
     const overviewArrow=event.altKey&&!event.shiftKey&&["ArrowDown","ArrowUp","ArrowLeft","ArrowRight"].includes(event.key)&&target.matches(".page-overview-page")&&!!target.closest(".page-overview")&&!target.closest("[hidden], [inert]")
     const preset=/^[1-9]$/.test(event.key)
     if(event.isComposing||event.keyCode===229||preset&&(event.type!=="keydown"||event.repeat||event.shiftKey||!target.matches('[data-tablet="surface"]')))return false
-    if(event.ctrlKey||event.metaKey||event.altKey&&!overviewArrow||!preset&&!["Escape","ArrowDown","ArrowUp","ArrowLeft","ArrowRight","Home","End","Enter"," "].includes(event.key))return false
+    const clipboard=(event.ctrlKey||event.metaKey)&&!event.altKey&&!event.shiftKey&&
+		['c','v'].includes(event.key.toLowerCase())&&!!target.closest('.tablet-pane')&&
+		!target.closest('input,textarea,select,[contenteditable=true]')
+    if(!clipboard&&(event.ctrlKey||event.metaKey||event.altKey&&!overviewArrow||!preset&&!["Escape","ArrowDown","ArrowUp","ArrowLeft","ArrowRight","Home","End","Enter"," "].includes(event.key)))return false
 
     const keyEvent = new view.KeyboardEvent(event.type, {
       key: event.key, code: event.code, repeat: event.repeat,
