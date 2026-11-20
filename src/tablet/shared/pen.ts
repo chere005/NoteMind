@@ -13,6 +13,9 @@
 // Samples
 // ---------------------------------------------------------------------------------------------
 
+/** Pointer identifier shared by the renderer's synthetic pen input paths. */
+export const SYNTH_POINTER_ID = 4242
+
 /**
  * One pen reading, as every backend produces it.
  *
@@ -366,13 +369,13 @@ export const LIVENESS = {
 export const clamp01 = (v: number): number => (v !== v ? 0 : v < 0 ? 0 : v > 1 ? 1 : v)
 
 // Physical pen-display button state, independent of the pointer's mapped buttons.
-export interface PenButtonsState { present: boolean; range: boolean; tip: boolean; lower: boolean; upper: boolean; selectionPosition?: true }
+export interface PenButtonsState { present: boolean; range: boolean; tip: boolean; lower: boolean; upper: boolean; contactPosition?: true }
 export const NO_BUTTONS: PenButtonsState = { present:false, range:false, tip:false, lower:false, upper:false }
 export const sameButtons = (a: PenButtonsState, b: PenButtonsState): boolean =>
-  a.present === b.present && a.range === b.range && a.tip === b.tip && a.lower === b.lower && a.upper === b.upper && a.selectionPosition === b.selectionPosition
+  a.present === b.present && a.range === b.range && a.tip === b.tip && a.lower === b.lower && a.upper === b.upper && a.contactPosition === b.contactPosition
 export function readButtons(raw: unknown): PenButtonsState {
   if (typeof raw !== "object" || raw === null) return { ...NO_BUTTONS }
   const o = raw as Record<string, unknown>, range = o.range === true
   return { present:o.present === true, range, tip:range && o.tip === true, lower:range && o.lower === true, upper:range && o.upper === true,
-	...(o.present === true && o.selectionPosition === true ? { selectionPosition: true } : {}) }
+	...(o.present === true && o.contactPosition === true ? { contactPosition: true } : {}) }
 }

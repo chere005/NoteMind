@@ -11,9 +11,9 @@
 #toolbar .toolbar-group+#listMenu{border-left:1px solid var(--wm-rule);border-radius:0;padding-left:8px}
 #toolbar #heading{width:114px;min-width:90px;padding:0 8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
 #toolbar [aria-pressed=true]{background:var(--bar-tint);color:var(--wm-accent)}
-.tabs-row :is(#tab-list,#editor-mode,#capture-toggle){display:flex;align-items:center;flex:none}
-.tabs-row :is(#tab-list,#editor-mode,#capture-toggle)>.bar-btn{width:var(--bar-btn);min-width:var(--bar-btn);height:var(--bar-btn);padding:0;margin:0}
-.tabs-row :is(#tab-list,#editor-mode){margin-right:2px}
+.tabs-row :is(#tab-switches,#editor-mode,#tab-list,#capture-toggle){display:flex;align-items:center;flex:none}
+.tabs-row :is(#tab-switches,#editor-mode,#tab-list,#capture-toggle)>.bar-btn{width:var(--bar-btn);min-width:var(--bar-btn);height:var(--bar-btn);padding:0;margin:0}
+.tabs-row :is(#tab-switches,#editor-mode,#tab-list){margin-right:2px}
 .menu-chevron{font-size:13px;line-height:1;opacity:.7}
 #toolbar .grow{min-width:0}
 .sheet-tabs{display:flex;align-items:center;gap:3px}

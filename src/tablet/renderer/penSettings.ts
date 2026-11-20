@@ -16,20 +16,8 @@
  *    choice) are written as well, for an older NoteMind reading the same key.
  *    An older map is migrated by `migrateButtons`.
  *
- * `eraser` is the Erase TOOL and `selectTool` the Select tool OF THE document
- * (the drawing layer over the words): neither is remembered, so the app never
- * comes up erasing, and they exclude each other. Since 2026-10-10 the bar has
- * ONE pen button (Sean: "i only need a pen enabled and disabled button.. and a
- * dropdown to choose between pen or eraser"): `tool` is what that button is
- * (remembered), `eraser` is its on / off when it is the eraser, and the Select
- * tool has no button of its own (⌥⌘3; the page says so while it is on).
- * The TABLET SHEET has its own pair (`sheetTools`: the eraser set by the pen's
- * Erase Tool toggle (the header has no Erase button since 2026-10-05), the
- * header's Select; one pair for the whole set of sheets, not per tab, not remembered
- * either): nothing done in the document (a click, the pen button, Ctrl+P, a
- * placement tool: `putToolsDown`) changes the sheet's, and the sheet's never
- * light the document toolbar. The pen's toggle actions pick the pair of the
- * surface the pen is over (penActions.ts, tabletFocus.ts).
+ * The pen or eraser choice is remembered. Drawing keeps the active Eraser and Select tools in `sheetTools`.
+ * A held pen button uses its configured action for the duration of the contact.
  *
  * And one thing is learned, not chosen: whether the pen has been SEEN, and
  * whether it reports pressure at all. A driver without Windows Ink sends
@@ -48,12 +36,6 @@ export type PenSeen = "none" | "pen" | "pressure"
 
 export type SideButton = "selects" | "erases"
 
-/**
- * WHAT THE BAR'S ONE PEN BUTTON DOES (Sean, 2026-10-10: "i only need a pen enabled and disabled button.. and a dropdown
- * to choose between pen or eraser (which switches the mode of the single button)"). The button toggles its tool; the
- * dropdown picks which tool that is. `pen` is the document's pen mode (the canvas draws), `eraser` is the Erase tool.
- * Remembered like the rest of the pen's settings; whether it is ON is not (the app never comes up erasing).
- */
 export type PenTool = "pen" | "eraser"
 
 export interface PenSettings {
@@ -62,7 +44,7 @@ export interface PenSettings {
   /** Derived from `buttons.lower.hold`: erases, or anything else ("selects"). */
   sideButton: SideButton
   buttons: PenButtonMap
-  /** What the bar's one pen button is: the pen or the eraser (the button's own on / off is `mode` / `eraser`). */
+  /** The last pen or eraser chosen in the Drawing toolbar. */
   tool: PenTool
   /** Which pen the pen is on a drawing sheet: Pen, Marker, Fountain Pen or Highlighter (penKinds.ts). Remembered. */
   kind: PenKind
@@ -122,51 +104,9 @@ export function setButton(slot: Slot, job: "hold" | "double", action: HoldAction
   const buttons = { ...state.buttons, [slot]: { ...state.buttons[slot], [job]: action } }
   set({ buttons, sideButton: sideOf(buttons) })
 }
-// The Erase tool on is the eraser being the bar's tool: the button's picture says so whichever way it was turned on.
-export const setEraser = (eraser: boolean) => set(eraser ? { eraser, tool: "eraser", selectTool: false } : { eraser })
-/** The bar's one button is the pen or the eraser (the dropdown's choice): only WHICH, never on or off. */
+/** The selected pen or eraser is stored alongside the pen kind. */
 export const setPenTool = (tool: PenTool) => set({ tool })
-/** Which pen the pen is (the pen button's menu): only the kind, the tool is the caller's to choose. */
 export const setPenKind = (kind: PenKind) => set({ kind })
-export const setSelectTool = (selectTool: boolean) => set(selectTool ? { selectTool, eraser: false } : { selectTool })
-
-/** Where the bar's one pen button is: its tool, whether the eraser is on, whether the pen is down (the app's mode). */
-export interface PenButtonState { tool: PenTool; eraser: boolean; down: boolean }
-
-/**
- * What pressing the pen button, picking from its dropdown or pressing its key does (docs/PLAN-bars-2026-10.md P1).
- *
- *  - `button`: the button's own click toggles its tool — the pen down or up, or the eraser on or off.
- *  - `choosePen` / `chooseEraser`: the dropdown's Pen / Eraser. They set what the button is AND turn it on (the
- *    wireframe: "Eraser picked: the same button, now erasing"); the other tool is let go.
- *  - `keyPen` (⌥⌘1) / `keyEraser` (⌥⌘2): the key is the button when its tool is already the button's, and the dropdown's
- *    choice when it is not ("⌥⌘2 sets the tool to eraser and toggles it"). So a key and the menu cannot disagree.
- */
-export type PenPress = "button" | "choosePen" | "chooseEraser" | "keyPen" | "keyEraser"
-
-export function nextPenButton(now: PenButtonState, press: PenPress): PenButtonState {
-  switch (press) {
-    case "button":
-      return now.tool === "pen" ? { tool: "pen", eraser: false, down: !now.down } : { tool: "eraser", eraser: !now.eraser, down: now.down }
-    case "choosePen": return { tool: "pen", eraser: false, down: true }
-    case "chooseEraser": return { tool: "eraser", eraser: true, down: now.down }
-    case "keyPen": return nextPenButton(now, now.tool === "pen" ? "button" : "choosePen")
-    case "keyEraser": return nextPenButton(now, now.tool === "eraser" ? "button" : "chooseEraser")
-  }
-}
-
-/**
- * ⌥⌘2 / the pen's Erase action for the document: the same step as the menu and the button (the eraser's half never needs
- * the pen's mode, which belongs to the app).
- */
-export function pressEraseKey(): void {
-  const next = nextPenButton({ tool: state.tool, eraser: state.eraser, down: false }, "keyEraser")
-  setPenTool(next.tool)
-  setEraser(next.eraser)
-}
-
-/** Both of the document's one-gesture tools put away: the pen writes on the page again (the sheet's stay as they are). */
-export const putToolsDown = () => { if (state.eraser || state.selectTool) set({ eraser: false, selectTool: false }) }
 
 // MARK: - The tablet sheet's own tools
 

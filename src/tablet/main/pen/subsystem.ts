@@ -162,25 +162,25 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
 
   const buttons = createButtonsFeed()
   const buttonsReader = deps.platform === "darwin" && !deps.e2e ? new MacPenButtons(deps.displayHelper ?? null, buttons, trace, now) : null
-  let selectionFrame: { win: BrowserWindow; pad: boolean; bounds: Box; origin: Box; rotation: number } | null = null
-  const offSelection = buttons.onChange(state => { if (!state.tip) selectionFrame = null })
-  if (buttonsReader) buttonsReader.selectionPoint = ({ x, y, start }) => {
-	if (start) {
-	  selectionFrame = null
+  let contactFrame: { win: BrowserWindow; pad: boolean; bounds: Box; origin: Box; rotation: number } | null = null
+  const offContact = buttons.onChange(state => { if (!state.tip) contactFrame = null })
+  if (buttonsReader) buttonsReader.contactPoint = ({ x, y, ...contact }) => {
+	if (contact.start) {
+	  contactFrame = null
 	  const win = deps.window(), pad = deps.displayTarget?.()
 	  if (!win || win.isDestroyed() || (!pad && !win.isFocused())) return
 	  const display = pad ?? deps.screen.getAllDisplays().find(display => /wacom/i.test(display.label))
 		?? deps.screen.getDisplayNearestPoint(deps.screen.getCursorScreenPoint())
 	  const origin = pad?.bounds ?? win.getContentBounds()
-	  selectionFrame = { win, pad: !!pad, bounds: display.bounds, rotation: display.rotation, origin }
+	  contactFrame = { win, pad: !!pad, bounds: display.bounds, rotation: display.rotation, origin }
 	}
-	const frame = selectionFrame
+	const frame = contactFrame
 	if (!frame || frame.win.isDestroyed() || (!frame.pad && !frame.win.isFocused())) return
 	const { bounds, origin, rotation } = frame
 	const turns = rotation === 90 ? 1 : rotation === 180 ? 2 : rotation === 270 ? 3 : 0
 	const point = screenToSheet({ x, y }, turns)
-	frame.win.webContents.send("pen:selection-point", {
-	  start, pad: frame.pad, clientX: bounds.x - origin.x + point.x * bounds.width,
+	frame.win.webContents.send("pen:contact-point", {
+	  ...contact, pad: frame.pad, clientX: bounds.x - origin.x + point.x * bounds.width,
 	  clientY: bounds.y - origin.y + point.y * bounds.height,
 	})
   }
@@ -222,7 +222,7 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
     try { unwatch?.() } catch { /* ignore */ }
     for (const off of unlisten.splice(0)) { try { off() } catch { /* ignore */ } }
     try { deps.powerMonitor.removeListener("resume", onResume); deps.powerMonitor.removeListener("unlock-screen", onUnlock) } catch { /* ignore */ }
-    clearInterval(audit);lease.stop();offCaptureSamples?.();offCaptureStatus?.();offSelection()
+    clearInterval(audit);lease.stop();offCaptureSamples?.();offCaptureStatus?.();offContact()
     deps.powerMonitor.removeListener("suspend",onSuspend);deps.powerMonitor.removeListener("lock-screen",onLock);deps.powerMonitor.removeListener("resume",clearSuspend);deps.powerMonitor.removeListener("unlock-screen",clearLock)
     try { buttonsReader?.stop() } catch { /* ignore */ }
     try { ipc.dispose() } catch { /* ignore */ }

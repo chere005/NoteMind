@@ -17,12 +17,11 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 import { isBoxDrag, type Point, type Rect, type Size } from "@notemind/core"
-import { displayMouseContact, holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, SYNTH_POINTER_ID, withNative } from "./penButtons"
-import { nativeState } from "./nativeButtons"
-import { watchDisplaySelection } from "./nativeButtonsFeed"
+import { displayMouseContact, holdBegins, inContact, penLifted, resolvePress, slotOf, SYNTH_POINTER_ID, withNative } from "./penButtons"
+import { watchDisplayContact } from "./nativeButtonsFeed"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
-import { setTabletUndo, watchSheetPen } from "./tabletFocus"
+import { setTabletUndo } from "./tabletFocus"
 import {
   boxFromPoints, hitBox, moveBox, paintStrokes, resizeBox, SHEET_REF, strokeUnder,strokeUnderAsync,
   paintStrokesYielding,
@@ -478,12 +477,6 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     return true
   }, [schedule])
 
-  // The pen over the sheet's side of the pane (or last there): its double taps and ExpressKeys toggle the sheet's tools.
-  useEffect(() => {
-    const element = host.current
-    return element ? watchSheetPen(element.closest(".camera") ?? element) : undefined
-  }, [])
-
   /**
    * A Bring in from the box's row: what it did is in the NOTE, so the next Ctrl+Z is the note's (the row goes with the
    * box, and the sheet under the mouse is not "the pen over the sheet" until the pointer moves onto it again).
@@ -638,26 +631,21 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   /** The pen touched the sheet at its last event: a hold begins only where a touch begins (penButtons.holdBegins). */
   const touching = useRef(false)
   const driverPointer = useRef<number | null>(null)
+	const rawContact = useRef(false)
   const drawingPress = (event: PointerEvent) => event.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(event)
     ? event : displayMouseContact(event)
-	const upperSelects = () => {
-		const action = penSettings().buttons.upper.hold
-		return action === 'select' || action === 'add'
-	}
-	const nativeSelectionEcho = (event: PointerEvent, input: ReturnType<typeof drawingPress>) => {
-		const state = nativeState()
-		return event.pointerId !== SYNTH_POINTER_ID && input.pointerType === 'pen' && state.selectionPosition
-			&& state.upper && !state.lower && upperSelects()
-	}
 	useLayoutEffect(() => {
 		const element = wrap.current
-		return element ? watchDisplaySelection(element, upperSelects) : undefined
+		if (!element) return
+		return watchDisplayContact(element,
+			() => !gesture.current && !precision.pendingGesture() && !inkSelect.pendingGesture() && !deferredInputs.current.some(input => !input.ended),
+			owns => { rawContact.current = owns })
 	}, [page])
 
   const down = (event: PointerEvent) => {
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
     const input = drawingPress(event), pen = input.pointerType === "pen"
-	if (nativeSelectionEcho(event, input)) { event.preventDefault(); return }
+	if (rawContact.current && pen && event.pointerId !== SYNTH_POINTER_ID) { event.preventDefault(); return }
     if (pen) touching.current = inContact(input)
     if (precision.pendingGesture()||inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return

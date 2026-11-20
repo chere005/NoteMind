@@ -8,7 +8,7 @@ The JSON has `format: "notemind-graphics"`, `version: 1`, `name`, `aspect` (widt
 
 Choose **Edit in Wacom** on a pane, or **Edit with Tablet** in its context menu. The editor loads its editable strokes and background. **Update** (the primary Save to Original action) replaces that pane's preview and stroke data as one undoable Notepad change. Closing the original Notepad prevents replacement. Bringing the drawing in separately creates an independent pane.
 
-The drawing bar has Pen, Eraser and Select tools, colour swatches and a width dropdown. Mouse and pen both follow the selected tool; held pen buttons override it. The lower button erases complete strokes and double-taps Undo; the upper button selects while held and dragged and double-taps Redo. In Select mode, drag a box around complete strokes, then drag inside it to move those strokes. Corner handles resize selected ink. Strokes crossing the box stay unchanged. A move or resize is one Undo; cancellation restores the starting ink. Clear Sheet has its own button and is undoable.
+The drawing bar has Pen, Eraser and Select tools, colour swatches and a width dropdown. Tap a stroke or drag a box to select ink. Drag inside the selection to move it. Undo reverses a move or Clear Sheet. See the default held-button gestures and Undo/Redo in [Drawing pen buttons](PEN-BUTTONS.md).
 
 Readers reject unsupported versions, invalid numeric data, mismatched pressure arrays and excessive point counts. Saving, autosave, Notepad undo, archive checksums and Markdown sidecars preserve both the preview and the editable data.
 

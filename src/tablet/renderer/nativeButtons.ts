@@ -1,23 +1,6 @@
 /**
- * nativeButtons.ts - A PEN DISPLAY'S SIDE BUTTONS, as the display itself reports them.
- *
- * Sean, 2026-10-28: "can you make the default wacom buttons do the erase and hold to select rather than making me select different
- * buttons in the wacom settings?". On a pen display (the Wacom One 12) the Wacom driver turns a side button into whatever Wacom
- * Center says: Right Click, Middle Click, Pan/Scroll. Only a button set to Right or Middle Click ever reached the page, as a pen
- * event with a button bit, and a button left on Pan/Scroll never did. The display also reports its pen to the app by itself (main/pen,
- * `wm-pen --buttons`: tip, the two side buttons, in range), whatever the driver does with them; this module holds that state, and
- * penButtons.ts reads the DOM pen pointer WITH it.
- *
- * While the display's pen is the pen in play (`nativeLive`):
- *   - the pen's side buttons are the display's, not the pointer events': a Right / Middle Click the driver sends for a button is
- *     dropped from what the pointer says (penButtons.ts `withNative`) and the display's own state is read instead;
- *   - the nearer-tip physical button is the lower slot: hold erases and double-tap undoes. The farther button is the upper
- *     slot: hold selects and double-tap redoes. Physical and driver reports use the same slots.
- *   - what the driver sends for the buttons is not heard (penActions.ts `installNativeGuard`): a right-click menu, a middle click, the
- *     scroll wheel of Pan/Scroll, while a button is down and for SIDE_TAIL_MS after it came up.
- *
- * With no pen display (nothing present, another platform, a Windows pen) none of this exists and the pointer is read as it always was.
- * Pure: no DOM, no Electron, so the tests ask it directly; the clock is `performance.now()` unless a caller passes one.
+ * Passive display button state. Driver pointer events use these physical switches while the Wacom pen is in range.
+ * `nativeButtonsFeed.ts` also handles contact coordinates for Drawing when the display supplies them.
  */
 
 import { NO_BUTTONS, sameButtons, type PenButtonsState } from "../shared/pen"

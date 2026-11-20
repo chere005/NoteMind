@@ -1,9 +1,7 @@
 /**
  * What a press of the pen (or the mouse) means, with no React and no DOM in
- * it so the tests can ask it directly. Shared by the notes page
- * (`Canvas.tsx`, ink regions included: they draw with the same engine) and the
- * tablet sheet (`TabletSurface.tsx`), so they can never disagree about which
- * button does what.
+ * it so the tests can ask it directly. The Drawing and Camera surfaces use the same
+ * physical slots and default assignments. See docs/PEN-BUTTONS.md.
  *
  * WHAT CHROMIUM DELIVERS FOR A WACOM PEN (Windows Ink, 2-button pen):
  *
@@ -39,8 +37,9 @@
  */
 
 import { WIDTH_LADDER } from "@notemind/core"
+import { SYNTH_POINTER_ID } from "../shared/pen"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState } from "./nativeButtons"
-export const SYNTH_POINTER_ID = 4242
+export { SYNTH_POINTER_ID }
 
 export type HoldAction = "select" | "add" | "erase" | "pan" | "none"
 export type TapAction =
@@ -112,8 +111,6 @@ export const DOUBLE_CHOICES: { action: TapAction; label: string }[] = [
 export const SLOT_NAMES: Record<Slot, string> = {
   lower: "Lower button (near the tip)", upper: "Upper button (farther from the tip)", eraser: "Eraser end", tipAlt: "Tip + Alt",
 }
-
-export const DISPLAY_SLOT_NAMES = SLOT_NAMES
 
 /** The popover's order: the nearer-tip button first. */
 export const ROW_ORDER: Slot[] = ["lower", "upper", "eraser", "tipAlt"]
@@ -195,16 +192,11 @@ export interface ButtonRow {
 }
 
 /** One row per button for the Pen popover: the name, the hold job, the double-tap job. */
-export const buttonRows = (map: PenButtonMap, display = false): ButtonRow[] => ROW_ORDER.map((slot) => ({
-  slot, name: (display ? DISPLAY_SLOT_NAMES : SLOT_NAMES)[slot], hold: map[slot].hold, double: hasDoubleTap(slot) ? map[slot].double : null,
+export const buttonRows = (map: PenButtonMap): ButtonRow[] => ROW_ORDER.map((slot) => ({
+  slot, name: SLOT_NAMES[slot], hold: map[slot].hold, double: hasDoubleTap(slot) ? map[slot].double : null,
 }))
 
-export const buttonsHint = (display: boolean, physicalFeed = false): string =>
-  "Hold = the button held while the pen touches (Select: a drag inside the selection moves it). Double-tap = the button pressed twice quickly "
-  + "without the tip touching; a single press does nothing. "
-  + (display || physicalFeed
-    ? "The physical side buttons are read directly, so Wacom Center needs no setting for them."
-    : "Leave the lower button at Wacom's Right Click and the upper button at Middle Click: NoteMind reads them itself.")
+export const BUTTONS_HINT = "For Hold, keep the side button down and touch or drag the pen tip. For Double-tap, press and release the same side button twice while hovering."
 
 /** The side buttons in words, for the Pen chip's tooltip. */
 export const buttonSummary = (map: PenButtonMap): string =>
@@ -393,7 +385,7 @@ export const TAP_HOLD_MS = 500
 
 export interface TapState {
   /** The side button that was down at the previous event (to see presses and releases as edges). */
-  down: SideSlot | null
+  down: SideSlot | "both" | null
   /** The side button whose taps are being counted, or null. */
   slot: SideSlot | null
   /** That button is down now, as a press that may be a tap. */
@@ -408,8 +400,10 @@ export interface TapState {
 export const noTap: TapState = { down: null, slot: null, held: false, pressedAt: 0, releasedAt: 0, taps: 0, touched: false }
 export type Phase = "down" | "move" | "up" | "cancel"
 
-const sideDown = (buttons: number): SideSlot | null =>
-  (buttons & BIT.lower) !== 0 ? "lower" : (buttons & BIT.upper) !== 0 ? "upper" : null
+const sideDown = (buttons: number): TapState["down"] => {
+	const side = buttons & SIDE
+	return side === SIDE ? "both" : side === BIT.lower ? "lower" : side === BIT.upper ? "upper" : null
+}
 
 /**
  * One pen event in (with its time, ms), the tap state out, and the action to fire if this event completed a DOUBLE
@@ -423,6 +417,7 @@ export function tapStep(
   if (event.pointerType !== "pen") return { state, fire: null }
   if (phase === "cancel") return { state: noTap, fire: null }
   const down = phase === "up" ? null : sideDown(event.buttons)
+	if (down === "both" || state.down === "both") return { state: { ...noTap, down }, fire: null }
   const touching = phase !== "up" && inContact(event)
   let s: TapState = state
   // A run whose next press never came in time is over.
@@ -433,9 +428,9 @@ export function tapStep(
     if (!s.held && s.slot !== null && touching) s = { ...noTap, down }
     return { state: s, fire: null }
   }
-  // The button that was down came up (or the other one took over).
+  // A tap has its own release in the air. A tip contact or a different side button ends the pair.
   if (s.held) {
-    const quick = !s.touched && now - s.pressedAt <= TAP_HOLD_MS
+    const quick = down === null && !touching && !s.touched && now - s.pressedAt <= TAP_HOLD_MS
     if (!quick) s = noTap
     else if (s.taps + 1 >= 2) {
       const action = buttons[s.slot!].double

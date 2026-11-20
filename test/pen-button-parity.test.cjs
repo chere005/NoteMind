@@ -43,8 +43,7 @@ test('lower and upper physical slots migrate once and retain explicit versioned 
  assert.deepEqual(plain(pen.migrateButtons({buttonLayout:pen.BUTTON_LAYOUT,slots:migrated})),migrated);
  const reversed={...custom,lower:{hold:'select',double:'redo'},upper:{hold:'erase',double:'undo'}};
  assert.deepEqual(plain(pen.migrateButtons({buttonLayout:pen.BUTTON_LAYOUT,slots:reversed})),reversed);
- const rows=pen.buttonRows(pen.DEFAULT_BUTTONS,true);assert.equal(rows[0].slot,'lower');assert.match(rows[0].name,/Lower.*near/);assert.equal(rows[1].slot,'upper');assert.match(rows[1].name,/Upper.*farther/);
- assert.match(pen.buttonsHint(true),/needs no setting/);
+ const rows=pen.buttonRows(pen.DEFAULT_BUTTONS);assert.equal(rows[0].slot,'lower');assert.match(rows[0].name,/Lower.*near/);assert.equal(rows[1].slot,'upper');assert.match(rows[1].name,/Upper.*farther/);
 });
 
 test('display capture and separate-tablet HID reports agree on physical holds and air double taps',()=>{

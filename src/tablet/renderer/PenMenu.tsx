@@ -12,17 +12,16 @@ import { createPortal } from "react-dom"
 import { returnFocusSoon } from "./focusReturn"
 import { setButton, setPenDraws, setPressure, usePenSettings } from "./penSettings"
 import {
-  ACTION_WORDS, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, buttonsHint, type HoldAction, type TapAction,
+  ACTION_WORDS, BUTTONS_HINT, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, type HoldAction, type TapAction,
 } from "./penButtons"
 import { heldAction, heldSlot, usePenLive } from "./penLive"
 import { OrientationSelect } from "./OrientationSelect"
-import { useNativeButtons } from "./nativeButtonsFeed"
 import { acceptStatus, changeSettings, usePenFeedStore } from "./penFeed"
 import { menuRoot, menuSize } from "./padCoordinates"
 
 const WORDS = {
   none: "No pen seen yet. Touch the tablet with the pen over this window.",
-  pen: "Pen detected, but it reports no pressure. In Wacom Tablet Properties turn on \"Use Windows Ink\" (then restart NoteMind) for pressure and the eraser end.",
+  pen: "Pen detected without pressure.",
   pressure: "Pen detected with pressure.",
 } as const
 
@@ -79,8 +78,6 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
     catch (error) { setPadError(error instanceof Error ? error.message : String(error)) }
     finally { padPending.current = false; setPadAction(null) }
   }
-  const display = useNativeButtons().present || !!pad?.available
-  const physicalFeed = status?.tablet?.sideButtonMapping === "physical"
   const pop = useRef<HTMLDivElement | null>(null)
   const [popupDoc,setPopupDoc]=useState<Document|null>(null)
   const [bounds,setBounds]=useState<{left:number;top:number;width:number;maxHeight:number}|null>(null)
@@ -135,7 +132,7 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
         <span />
         <span className="hint" style={{ margin: 0 }}>Hold</span>
         <span className="hint" style={{ margin: 0 }}>Double-tap</span>
-        {buttonRows(settings.buttons, display || physicalFeed).map((row) => (
+        {buttonRows(settings.buttons).map((row) => (
           <Fragment key={row.slot}>
             <span>{row.name}</span>
             <select value={row.hold} data-pen={`btn-${row.slot}`} aria-label={`${row.name}: hold`} style={{ minWidth: 0 }}
@@ -151,7 +148,7 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
           </Fragment>
         ))}
       </div>
-      <p className="hint" data-pen="buttons-hint">{buttonsHint(display, physicalFeed)}</p>
+      <p className="hint" data-pen="buttons-hint">{BUTTONS_HINT}</p>
 
       <h4>Tablet orientation</h4>
       <label className="pen-slot">

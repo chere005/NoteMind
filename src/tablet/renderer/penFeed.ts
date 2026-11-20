@@ -36,9 +36,9 @@ import { tabletToSheet } from "../shared/orientation"
 import { currentTurns, setTabletAspect } from "./orientation"
 import { penGate, type Gate } from "./penGate"
 import { nativePenTarget, type NativePenTarget } from "./penTarget"
+import { SYNTH_POINTER_ID } from "../shared/pen"
 
-/** The fixed pointer id of the synthetic pen (design 8.3). */
-export const SYNTH_POINTER_ID = 4242
+export { SYNTH_POINTER_ID }
 /** A pointerup this close to its pointerdown clicks the button it started on. */
 export const CLICK_SLOP_PX = 6
 

@@ -1,7 +1,5 @@
-import { readButtons } from '../shared/pen'
-import { useSyncExternalStore } from 'react'
+import { readButtons, SYNTH_POINTER_ID } from '../shared/pen'
 import { nativeState, onNativeButtons, setNativeButtons } from './nativeButtons'
-import { SYNTH_POINTER_ID } from './penButtons'
 let installed=false
 export function installNativeButtons(): void {
  if(installed || typeof window === 'undefined')return
@@ -18,42 +16,43 @@ export function installNativeButtons(): void {
  window.addEventListener('focus',refresh)
 }
 
-export function useNativeButtons() {
- return useSyncExternalStore(listener=>onNativeButtons(()=>listener()),nativeState,nativeState)
-}
+type ContactPoint = { clientX: number; clientY: number; pad: boolean; start: boolean; buttons: number; pressure: number; tiltX: number; tiltY: number }
 
-type SelectionPoint = { clientX: number; clientY: number; pad: boolean; start: boolean }
-
-/** A driver-independent selection drag belongs to the drawing surface under its first tip contact. */
-export function watchDisplaySelection(surface: HTMLElement, enabled: () => boolean): () => void {
+/** Use raw contact on the drawing surface under the tip. A driver gesture already in progress keeps its owner. */
+export function watchDisplayContact(surface: HTMLElement, canStart: () => boolean, ownsContact: (owns: boolean) => void): () => void {
 	const view = surface.ownerDocument.defaultView
 	const pen = (window as any).wm?.pen
-	if (!view || !pen?.onSelectionPoint) return () => {}
-	let last: SelectionPoint | null = null
+	if (!view || !pen?.onContactPoint) return () => {}
+	let last: ContactPoint | null = null
 	let modifiers = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false }
-	const emit = (type: string, point: SelectionPoint, contact: boolean) => {
+	const emit = (type: string, point: ContactPoint, contact: boolean) => {
 		surface.dispatchEvent(new (view as Window & typeof globalThis).PointerEvent(type, {
 			clientX: point.clientX, clientY: point.clientY, pointerId: SYNTH_POINTER_ID,
-			pointerType: 'pen', isPrimary: true, button: type === 'pointermove' ? -1 : type === 'pointerdown' ? 1 : 0,
-			buttons: contact ? 5 : 0, pressure: contact ? .5 : 0, bubbles: true, cancelable: true, ...modifiers,
+			pointerType: 'pen', isPrimary: true, button: type === 'pointermove' ? -1 : 0,
+			buttons: contact ? point.buttons : 0, pressure: contact ? point.pressure : 0,
+			tiltX: point.tiltX, tiltY: point.tiltY, bubbles: true, cancelable: true, ...modifiers,
 		}))
 	}
 	const end = (cancelled: boolean) => {
 		const point = last
 		last = null
-		if (point) emit(cancelled ? 'pointercancel' : 'pointerup', point, false)
+		if (point) {
+			ownsContact(false)
+			emit(cancelled ? 'pointercancel' : 'pointerup', point, false)
+		}
 	}
 	const offButtons = onNativeButtons(state => {
 		if (!state.tip) end(!state.present || !state.range)
 	})
-	const offPoint = pen.onSelectionPoint((point: SelectionPoint) => {
+	const offPoint = pen.onContactPoint((point: ContactPoint) => {
 		if (!surface.isConnected || point.pad !== (view !== window) || !Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return
 		const state = nativeState()
-		if (!state.selectionPosition || !state.tip) return
+		if (!state.contactPosition || !state.tip) return
 		if (point.start) {
 			end(true)
 			const target = surface.ownerDocument.elementFromPoint(point.clientX, point.clientY)
-			if (!enabled() || !surface.contains(target) || target?.closest('button')) return
+			if (!canStart() || !surface.contains(target) || target?.closest('button')) return
+			ownsContact(true)
 		} else if (!last) return
 		last = point
 		emit(point.start ? 'pointerdown' : 'pointermove', point, true)

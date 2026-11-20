@@ -29,16 +29,10 @@
 // answer is {"k":"refused","why":"a pen display draws by itself","penDisplay":true} and exit 6, and the Intuos / One by Wacom
 // small (CTL-472) is still seized exactly as before, also when a pen display is plugged in beside it.
 //
-// A PEN DISPLAY'S SIDE BUTTONS ARE READ, NOT TAKEN (`wm-pen --buttons`, Sean 2026-10-28: "make the default wacom buttons do the erase
-// and hold to select rather than making me select different buttons in the wacom settings"). The driver sends the Wacom One 12's two
-// side buttons as whatever Wacom Center says (Right Click, Pan/Scroll, ...), so the app cannot tell them apart by the pointer alone. The
-// display has a second HID interface, a vendor one (usage page 0xFFD1, usage 0x300), which delivers input report 0x1E for every pen
-// sample. The side-button mode opens it without seizing or Input Monitoring and says only what changed of
-//   {"k":"buttons","tip":b,"lower":b,"upper":b,"range":b}
-// (`lower` is the button nearer the tip). It moves nothing, seizes nothing, and keeps running while the display comes and goes:
-//   {"k":"opened","mode":"buttons","name":…,"pid":…} when the interface is open, {"k":"closed","why":…} when it goes (after an all-false
-//   "buttons" line), {"k":"raw","hex":…} for the first reports of any other shape, {"k":"log","m":…}. Ending the process (stdin closed,
-//   SIGTERM) closes it.
+// Passive mode (`--buttons`) opens the vendor interface (usage page 0xFFD1, usage 0x300) without seizing it.
+// It reports physical switches independently of Wacom Center mappings. On Wacom One 12 (056a:03ce) it also reports
+// valid contact positions and pressure. The final contact position precedes the report that lifts the tip.
+// `--decode-passive` replays hex fixtures through the same decoder without opening a device.
 //
 // The independent input mode (`--capture-one`) checks Input Monitoring without prompting, validates a report source and clean hover,
 // then exclusively opens only that known source, any required known sibling, and the One Mouse interface. The child releases on
@@ -215,7 +209,7 @@ if arguments.first == "--list" {
 
 // ---- a pen display's side buttons (usage page 0xFFD1, usage 0x300; see the header)
 
-/// What the pen display's report says of the pen: in range, the tip down, and the two side buttons. Nothing else is read.
+/// The display’s physical switches and proximity, independent of its contact coordinates.
 struct Side: Equatable {
     var tip = false, lower = false, upper = false, range = false
 }
@@ -277,6 +271,41 @@ func onePen(_ bytes: [UInt8]) -> OnePen? {
     if range && status & 0x20 != 0 { flags |= 0x08 }
     return OnePen(flags: flags, x: x, y: y, pressure: pressure,
                   contactCount: Int(bytes[1]), tiltX: tiltX, tiltY: tiltY)
+}
+
+struct PassiveReports {
+    let contactPosition: Bool
+    private(set) var side = Side()
+    private var lastContact: OnePen?
+
+    init(contactPosition: Bool) { self.contactPosition = contactPosition }
+
+    mutating func read(_ bytes: [UInt8], emit: ([String: Any]) -> Void) -> Bool {
+        guard let now = sideState(bytes) else { return false }
+        let changed = now != side
+        side = now
+        if now.tip && changed { emit(sideLine(now)) }
+        if contactPosition && now.range, let position = onePen(bytes), let contact = now.tip ? position : lastContact {
+            emit(["k": "contact-point", "x": position.x, "y": position.y, "p": contact.pressure,
+                  "f": contact.flags, "tiltX": position.tiltX, "tiltY": position.tiltY, "start": lastContact == nil])
+            lastContact = contact
+        }
+        if !now.tip {
+            if changed { emit(sideLine(now)) }
+            lastContact = nil
+        }
+        return true
+    }
+}
+
+if arguments.first == "--decode-passive" {
+    guard arguments.count > 1 else { exit(64) }
+    var reports = PassiveReports(contactPosition: true)
+    for report in arguments.dropFirst() {
+        let bytes = report.split(separator: " ").compactMap { UInt8($0, radix: 16) }
+        _ = reports.read(bytes, emit: say)
+    }
+    exit(0)
 }
 
 func onePenLine(_ pen: OnePen) -> [String: Any] {
@@ -673,9 +702,7 @@ if arguments.first == "--capture-one" {
     exit(0)
 }
 
-var side = Side()
-var selectingWithUpperButton = false
-var sentSelectionPoint = false
+var passiveReports = PassiveReports(contactPosition: false)
 var sideUnknown = 0
 var sideDevice: IOHIDDevice?
 var sideRefused: IOReturn = 0
@@ -687,8 +714,8 @@ func closeButtons(_ why: String) {
     IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
     // The buttons are not held by a display that is gone.
-    selectingWithUpperButton = false
-    if side != Side() { side = Side(); say(sideLine(side)) }
+    if passiveReports.side != Side() { say(sideLine(Side())) }
+    passiveReports = PassiveReports(contactPosition: false)
     say(["k": "closed", "why": why])
 }
 
@@ -702,33 +729,18 @@ func openButtons() {
     }
     sideRefused = 0
     sideDevice = device
+    let pid = number(device, kIOHIDProductIDKey)
+    passiveReports = PassiveReports(contactPosition: pid == 0x03CE)
     IOHIDDeviceRegisterInputReportCallback(device, sideBuffer, 256, { _, _, _, _, _, report, length in
         let bytes = Array(UnsafeBufferPointer(start: report, count: length))
-        if let now = sideState(bytes) {
-            // Pan/Scroll can withhold pointer motion from the page. Read position during
-            // a tip drag started with the upper button without taking over the device.
-            let was = side
-            side = now
-            if !was.tip && now.tip && now.upper && !now.lower {
-                selectingWithUpperButton = true
-                sentSelectionPoint = false
-            }
-            if now.tip && now != was { say(sideLine(now)) }
-            if selectingWithUpperButton && now.range && (now.tip || sentSelectionPoint), let pen = onePen(bytes) {
-                say(["k": "selection-point", "x": pen.x, "y": pen.y, "start": !sentSelectionPoint])
-                sentSelectionPoint = true
-            }
-            if !now.tip && now != was { say(sideLine(now)) }
-            if !now.tip { selectingWithUpperButton = false }
-        } else if sideUnknown < 8 {
+        if !passiveReports.read(bytes, emit: say) && sideUnknown < 8 {
             sideUnknown += 1
             say(["k": "raw", "hex": hexLine(Array(bytes.prefix(32)))])
         }
     }, nil)
     IOHIDDeviceRegisterRemovalCallback(device, { _, _, _ in closeButtons("the display was unplugged") }, nil)
     IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-    let pid = number(device, kIOHIDProductIDKey)
-    say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": pid, "selectionPosition": pid == 0x03CE])
+    say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": pid, "contactPosition": passiveReports.contactPosition])
 }
 
 if arguments.first == "--buttons" {

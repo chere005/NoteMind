@@ -23,15 +23,37 @@ test('the display reader processes physical button reports and clears state on d
  assert.equal(reader.start(),true);assert.deepEqual(args,['--buttons']);
  child.stdout.write('{"k":"opened","mode":"buttons"}\n');assert.equal(buttons.get().present,true);
  child.stdout.write('not json\n{"k":"buttons","range":true,"tip":true,"lower":true,"upper":false}\n');assert.deepEqual(buttons.get(),{present:true,range:true,tip:true,lower:true,upper:false});
- const points=[];reader.selectionPoint=point=>points.push(point);
- child.stdout.write('{"k":"opened","mode":"buttons","selectionPosition":true}\n');
+ const points=[];reader.contactPoint=point=>points.push(point);
+ child.stdout.write('{"k":"opened","mode":"buttons","contactPosition":true}\n');
  child.stdout.write('{"k":"buttons","range":true,"tip":true,"upper":true}\n');
- child.stdout.write('{"k":"selection-point","x":12816,"y":7209,"start":true}\n{"k":"selection-point","x":19224,"y":14418}\n');
- child.stdout.write('{"k":"selection-point","x":25633,"y":14418}\n{"k":"buttons","range":true}\n{"k":"selection-point","x":0,"y":0}\n');
- assert.deepEqual(points,[{x:.5,y:.5,start:true},{x:.75,y:1,start:false}]);
- assert.equal(buttons.get().selectionPosition,true);
+	const point=(patch={})=>JSON.stringify({k:'contact-point',x:12816,y:7209,p:4095,f:0xe5,tiltX:2,tiltY:-3,...patch})+'\n';
+	child.stdout.write(point({start:true})+point({x:19224,y:14418,f:0xe1,p:0}));
+	child.stdout.write(point({x:25633})+point({f:0xe4})+'{"k":"buttons","range":true}\n'+point());
+	assert.deepEqual(points,[{x:.5,y:.5,start:true,buttons:5,pressure:1,tiltX:2,tiltY:-3},
+		{x:.75,y:1,start:false,buttons:1,pressure:.5,tiltX:2,tiltY:-3}]);
+ assert.equal(buttons.get().contactPosition,true);
  child.stdout.write('{"k":"closed","why":"removed"}\n');assert.deepEqual(buttons.get(),shared.NO_BUTTONS);
  child.emit('exit',1,null);assert.equal(timers[0].ms,2000);reader.stop();assert.deepEqual(buttons.get(),shared.NO_BUTTONS);
+});
+
+test('the Mac helper replays normal, erase and select contacts through its passive decoder', {
+	skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')
+},()=>{
+	const helper=path.resolve('src/helpers/wm-pen-display');
+	const report=(flags,x,p)=>{
+		const bytes=Buffer.alloc(34);
+		bytes.set([0x1e,1,flags]);bytes.writeUIntLE(x,3,3);bytes.writeUInt16LE(p,9);
+		return bytes.toString('hex').match(/../g).join(' ');
+	};
+	for (const side of [0,2,4]) {
+		const lines=require('node:child_process').execFileSync(helper,['--decode-passive',report(0xc0|side,100,0),
+			report(0xc1|side,110,1000),report(0xc1|side,120,2200),report(0xc0|side,130,0)],{encoding:'utf8'})
+			.trim().split('\n').map(line=>JSON.parse(line));
+		assert.deepEqual(lines.map(line=>line.k),['buttons','buttons','contact-point','contact-point','contact-point','buttons']);
+		assert.deepEqual(lines.filter(line=>line.k==='contact-point').map(({x,p,f,start})=>[x,p,f,start]),
+			[[110,1000,0xe1|side,true],[120,2200,0xe1|side,false],[130,2200,0xe1|side,false]]);
+		assert.equal(lines.at(-1).tip,false);
+	}
 });
 
 test('the built Mac helper decodes display reports without opening hardware',{skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')},()=>{

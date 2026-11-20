@@ -1,10 +1,4 @@
-/**
- * main/pen/buttonsFeed.ts - what a PEN DISPLAY's own side buttons are now (shared/pen.ts PenButtonsState), kept in one place.
- *
- * The source is `wm-pen --buttons` (macPenBackend.ts MacPenButtons), or - under NOTEMIND_E2E, which never opens the real helper -
- * the test hook (ipc.ts `pen:e2e-buttons`). The readers are the pen IPC, which pushes every change to the window in front, and
- * answers a window that asks (it has just come to the front, or has just loaded). No Electron: the whole file is a vitest.
- */
+/** Stores physical display button state for change notifications and renderer snapshots. */
 
 import { NO_BUTTONS, sameButtons, type PenButtonsState } from "../../shared/pen"
 

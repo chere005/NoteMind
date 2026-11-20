@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),path=require('node:path'),esbuild=require('esbuild');
-const source=esbuild.buildSync({stdin:{contents:"export {installPenActions,registerPenHandlers} from './src/tablet/renderer/penActions.ts';export {setNativeButtons,resetNativeButtons} from './src/tablet/renderer/nativeButtons.ts';export {noticePen} from './src/tablet/renderer/penSettings.ts';export {watchDisplaySelection} from './src/tablet/renderer/nativeButtonsFeed.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',external:['react'],write:false,alias:{'@notemind/core':path.resolve('src/tablet/core.js')}}).outputFiles[0].text;
+const source=esbuild.buildSync({stdin:{contents:"export {installPenActions,registerPenHandlers} from './src/tablet/renderer/penActions.ts';export {setNativeButtons,resetNativeButtons} from './src/tablet/renderer/nativeButtons.ts';export {noticePen} from './src/tablet/renderer/penSettings.ts';export {watchDisplayContact} from './src/tablet/renderer/nativeButtonsFeed.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,platform:'node',format:'cjs',external:['react'],write:false,alias:{'@notemind/core':path.resolve('src/tablet/core.js')}}).outputFiles[0].text;
 const base={present:true,range:true,tip:false,lower:false,upper:false},owned={enabled:true,available:true,owned:true,open:true};
 function fixture({pad=false,focused=false}={}){
  let focus=focused,now=0,push,resolve,undo=0,redo=0;const listeners=new Map(),document={hasFocus:()=>focus},window={document,closed:false,addEventListener:(name,listener)=>{const list=listeners.get(name)||[];list.push(listener);listeners.set(name,list);},removeEventListener:(name,listener)=>listeners.set(name,(listeners.get(name)||[]).filter(value=>value!==listener))};
@@ -39,34 +39,82 @@ test('an interrupted press, disconnect, or expired tap does not count toward red
  h.tap('upper');assert.equal(h.redo(),1);h.stop();
 });
 
-test('Wacom positions make a selection gesture without driver pointer events',()=>{
+for (const [physical, history] of [['lower', 'undo'], ['upper', 'redo']]) {
+	test(`${physical} tip contact on the barrel-release report never triggers ${history}`, () => {
+		const h = fixture({focused: true});
+		h.tap(physical);
+		h.report({[physical]: true});
+		h.report({tip: true});
+		h.report();
+		assert.equal(h[history](), 0);
+		h.tap(physical);
+		assert.equal(h[history](), 0);
+		h.tap(physical);
+		assert.equal(h[history](), 1);
+		h.stop();
+	});
+}
+
+test('switching or overlapping barrel buttons cannot finish an Undo or Redo pair', () => {
+	for (const [first, second] of [['lower', 'upper'], ['upper', 'lower']]) {
+		for (const overlap of [false, true]) {
+			const h = fixture({focused: true});
+			h.tap(first);
+			h.report({[first]: true});
+			if (overlap) h.report({lower: true, upper: true});
+			h.report({[second]: true});
+			h.report();
+			assert.equal(h.undo(), 0);
+			assert.equal(h.redo(), 0);
+			h.stop();
+		}
+	}
+});
+
+test('Wacom contact supplies Draw, Erase and Select without driver pointer events',()=>{
 	const events=[],listeners=new Map(),module={exports:{}};
 	let point;
 	const window={PointerEvent:class{constructor(type,properties){Object.assign(this,{type},properties);}},
-		addEventListener(){},removeEventListener(){},wm:{pen:{onSelectionPoint:listener=>{point=listener;return()=>{point=null;};}}},
+		addEventListener(){},removeEventListener(){},wm:{pen:{onContactPoint:listener=>{point=listener;return()=>{point=null;};}}},
 		notemind:{preferenceGet:async()=>null,onPreference(){}}};
 	const document={defaultView:window,elementFromPoint:x=>x>=0?surface:null};
 	const surface={ownerDocument:document,isConnected:true,contains:node=>node===surface,closest:()=>null,
 		addEventListener:(type,listener)=>listeners.set(type,listener),removeEventListener:type=>listeners.delete(type),
 		dispatchEvent:event=>events.push([event.type,event.clientX,event.clientY,event.buttons])};
 	vm.runInNewContext(source,{module,exports:module.exports,require,window,document,performance});
-	const {watchDisplaySelection,setNativeButtons}=module.exports;
-	const off=watchDisplaySelection(surface,()=>true),active={...base,tip:true,upper:true,selectionPosition:true};
+	const {watchDisplayContact,setNativeButtons}=module.exports;
+	let driverOwns = false;
+	const ownership = [];
+	const off=watchDisplayContact(surface,()=>!driverOwns,value=>ownership.push(value));
+	const active={...base,tip:true,upper:true,contactPosition:true};
+	const send=(fields)=>point({buttons:5,pressure:.7,tiltX:2,tiltY:-3,pad:false,clientX:10,clientY:20,...fields});
 	setNativeButtons(active);
-	point({start:true,pad:true,clientX:10,clientY:20});
-	point({start:true,pad:false,clientX:-5,clientY:20});
-	point({start:false,pad:false,clientX:10,clientY:20});
-	assert.deepEqual(events,[],'A different window or a start outside the sheet cannot select');
-	point({start:true,pad:false,clientX:10,clientY:20});
+	send({start:true,pad:true});
+	send({start:true,clientX:-5});
+	send({start:false});
+	driverOwns = true;
+	send({start:true});
+	driverOwns = false;
+	send({start:false});
+	assert.deepEqual(events,[],'Only a fresh contact on the eligible drawing surface may take ownership');
+	send({start:true});
 	let scrolled=true;listeners.get('wheel')({preventDefault(){scrolled=false;},stopImmediatePropagation(){}});
 	assert.equal(scrolled,false);
 	setNativeButtons({...active,upper:false});
-	point({start:false,pad:false,clientX:95,clientY:70});
+	send({start:false,clientX:95,clientY:70,buttons:1});
 	setNativeButtons({...active,upper:false,tip:false});
-	assert.deepEqual(events,[['pointerdown',10,20,5],['pointermove',95,70,5],['pointerup',95,70,0]]);
-	setNativeButtons(active);point({start:true,pad:false,clientX:15,clientY:30});
+	assert.deepEqual(events,[['pointerdown',10,20,5],['pointermove',95,70,1],['pointerup',95,70,0]]);
+	for (const buttons of [1, 3]) {
+		setNativeButtons({...active,upper:false,lower:buttons===3});
+		send({start:true,buttons});
+		setNativeButtons({...active,tip:false,upper:false});
+		assert.deepEqual(events.at(-2),['pointerdown',10,20,buttons]);
+		assert.deepEqual(events.at(-1),['pointerup',10,20,0]);
+	}
+	setNativeButtons(active);send({start:true,clientX:15,clientY:30});
 	setNativeButtons({...base,present:false,range:false});
 	assert.deepEqual(events.at(-1),['pointercancel',15,30,0]);
+	assert.deepEqual(ownership,[true,false,true,false,true,false,true,false]);
 	off();assert.equal(point,null);assert.equal(listeners.size,0);
 });
 

@@ -39,7 +39,7 @@ import { subscribeOrientation } from "./orientation"
 import { elementPoint } from "./padCoordinates"
 import { holdBegins, inContact, penLifted, pressAction } from "./penButtons"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
-import { setTabletUndo, watchSheetPen } from "./tabletFocus"
+import { setTabletUndo } from "./tabletFocus"
 import { paintStrokes,paintStrokesYielding, strokeUnderAsync, type InkStroke, type TabletPage } from "./tabletPage"
 import {createInkActionController,hasPendingInkMutations,subscribeInkMutations,reserveInkStroke,capacityError} from '../../ink-mutations.js'
 import {yieldTask} from '../../graphics-pane.js'
@@ -266,12 +266,6 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
   /** Where the pointer was when a take left the picture: "entering" it again there is not the pointer coming back. */
   const quietAt = useRef<Point | null>(null)
   const lastAt = useRef<Point | null>(null)
-  // The pen over the picture: its double taps and ExpressKeys toggle the sheet's own tools (the Erase Tool rubs out the ink here too).
-  useEffect(() => {
-    if (!on) return
-    const element = canvas.current
-    return element ? watchSheetPen(element.closest(".camera-workspace") ?? element) : undefined
-  }, [on])
 
   useImperativeHandle(handle, () => ({
     finish,

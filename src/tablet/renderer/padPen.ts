@@ -1,5 +1,5 @@
 import type {PenSample} from '../shared/pen'
-import {createDispatcher,type DispatchEnv} from './penFeed'
+import {createDispatcher,SYNTH_POINTER_ID,type DispatchEnv} from './penFeed'
 import {createGate} from './penGate'
 import {cancelPenTap} from './penActions'
 import {registerPadMirrorInput} from './padMirrorInput'
@@ -18,7 +18,7 @@ export function installPadPen(view:Window,api:any,onStatus:(value:any)=>void):()
  const dispatcher=createPadDispatcher({
   sheetRect:()=>view.closed?null:{left:0,top:0,width:view.innerWidth,height:view.innerHeight},
   elementAt:(x,y)=>doc.elementFromPoint(x,y),fallbackTarget:()=>doc.body,modifiers:()=>({...keys}),
-  dispatch(target,init){const flat=init.type==='pointerenter'||init.type==='pointerleave';gate.emit(()=>target.dispatchEvent(new (view as any).PointerEvent(init.type,{...init,pointerId:4242,pointerType:'pen',isPrimary:true,width:1,height:1,bubbles:!flat,cancelable:!flat,composed:true,view,screenX:view.screenX+init.clientX,screenY:view.screenY+init.clientY})))},
+  dispatch(target,init){const flat=init.type==='pointerenter'||init.type==='pointerleave';gate.emit(()=>target.dispatchEvent(new (view as any).PointerEvent(init.type,{...init,pointerId:SYNTH_POINTER_ID,pointerType:'pen',isPrimary:true,width:1,height:1,bubbles:!flat,cancelable:!flat,composed:true,view,screenX:view.screenX+init.clientX,screenY:view.screenY+init.clientY})))},
   clickable(target){const button=target.closest<HTMLElement>('button,[role="button"],[role="tab"],summary,a[href]');if(!button||button.closest('[data-tablet="surface"]')||button.matches(':disabled,[aria-disabled="true"]'))return null;return button},
   handover:target=>target.closest('[data-pen-handover]')?doc.querySelector('[data-tablet="surface"]'):null,
  })

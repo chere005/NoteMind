@@ -27,13 +27,12 @@
  * each surface runs them while the pen touches (penButtons.resolvePress).
  */
 
-import { echoed, holdBegins, inContact, noTap, resolvePress, tapStep, PEN_COMMANDS, type Phase, type PenAction, type PenCommandAction, type PressLike, type TapState } from "./penButtons"
-import { penNear, penSettings, pressEraseKey, setPenDraws, setSelectTool, setSheetEraser, setSheetSelect, sheetTools } from "./penSettings"
-import { penOnSheet, tabletUndo } from "./tabletFocus"
+import { echoed, holdBegins, inContact, noTap, resolvePress, tapStep, PEN_COMMANDS, SYNTH_POINTER_ID, type Phase, type PenAction, type PenCommandAction, type PressLike, type TapState } from "./penButtons"
+import { penNear, penSettings, setPenDraws, setSheetEraser, setSheetSelect, sheetTools } from "./penSettings"
+import { tabletUndo } from "./tabletFocus"
 import { penGate } from "./penGate"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState, onNativeButtons } from "./nativeButtons"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
-const SYNTH_POINTER_ID = 4242
 
 type Id = PenAction | PenCommandAction
 const handlers = new Map<Id, () => void>()
@@ -82,7 +81,7 @@ function rightClick(): void {
   } finally { allowMenu = false }
 }
 
-/** The tablet bar's buttons, found by what they say (CameraPane.tsx owns them). */
+/** Fallback for commands while the Drawing action handlers mount. */
 function pressTabletButton(match: string): void {
   const views=[lastView,...actionWindows].filter((view,index,all): view is Window => !!view && all.indexOf(view)===index)
   const buttons = views.flatMap(view=>[...view.document.querySelectorAll<HTMLButtonElement>(".camera-bar button, [data-tablet]")])
@@ -91,10 +90,7 @@ function pressTabletButton(match: string): void {
   if (found && !found.disabled) found.click()
 }
 
-/**
- * Erase / Select on or off FOR THE SURFACE THE PEN IS OVER (or was last over, tabletFocus.ts): the tablet sheet has
- * its own pair, the document's is the toolbar's ⌫ / ⬚. A double tap, an ExpressKey and the menu all come here.
- */
+/** Toggle a Drawing tool for a configured double tap, shortcut, or menu command. */
 function toggleTool(which: "erase" | "select"): void {
     const sheet = sheetTools()
     if (which === "erase") setSheetEraser(!sheet.eraser)

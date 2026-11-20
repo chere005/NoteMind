@@ -5,20 +5,14 @@ import type { ButtonsFeed } from "./buttonsFeed"
 function parseHelperLine(text: string): any { try { const value=JSON.parse(text); return value && typeof value.k === "string" ? value : null } catch { return null } }
 
 export type ButtonsSpawner = (file: string, args: string[]) => ChildProcess
-export type SelectionPoint = { x: number; y: number; start: boolean }
+export type ContactPoint = { x: number; y: number; start: boolean; buttons: number; pressure: number; tiltX: number; tiltY: number }
 
 /** Restart after the helper dies by itself: 2 s, 10 s, 30 s, then not until `start()` is called again (a resume, an unlock). */
 export const BUTTONS_RESTART_MS = [2000, 10000, 30000] as const
 
-/**
- * The pen display's own side buttons (the Wacom One 12): the helper's `--buttons` mode runs for as long as the app does, finds the
- * display's vendor interface whenever it is there and says what changed of {tip, lower, upper, range}. This turns its lines into the
- * feed's state: `present` while the interface is open, all clear (and not present) when the display goes, the helper ends or dies.
- * It opens no tablet, seizes nothing and asks for no permission, so it needs no gate: it simply runs. The helper being absent (no
- * Swift when the app was built, another platform) makes `start()` do nothing and leaves the feed as it was: not present.
- */
+/** Reads physical button changes and supported contact coordinates from the passive macOS helper. */
 export class MacPenButtons {
-	selectionPoint?: (point: SelectionPoint) => void
+	contactPoint?: (point: ContactPoint) => void
   private child: ChildProcess | null = null
   private generation = 0
   private restarts = 0
@@ -103,19 +97,21 @@ export class MacPenButtons {
         if (line.mode !== "buttons") return
         this.restarts = 0
         this.trace.event("manager", "buttons-opened", { name: line.name ?? null, pid: line.pid ?? null })
-        this.feed.set({ ...NO_BUTTONS, present: true, ...(line.selectionPosition === true ? { selectionPosition: true } : {}) })
+        this.feed.set({ ...NO_BUTTONS, present: true, ...(line.contactPosition === true ? { contactPosition: true } : {}) })
         break
 	  case "buttons": {
-		const { selectionPosition } = this.feed.get()
-		this.feed.set({ present: true, range: line.range === true, tip: line.tip === true, lower: line.lower === true, upper: line.upper === true, ...(selectionPosition ? { selectionPosition } : {}) })
+		const { contactPosition } = this.feed.get()
+		this.feed.set({ present: true, range: line.range === true, tip: line.tip === true, lower: line.lower === true, upper: line.upper === true, ...(contactPosition ? { contactPosition } : {}) })
 		break
 	  }
-	  case "selection-point": {
-		const { selectionPosition, tip, range } = this.feed.get()
-		if (selectionPosition && tip && range && Number.isInteger(line.x) && Number.isInteger(line.y)
-		  && line.x >= 0 && line.x <= 25632 && line.y >= 0 && line.y <= 14418) {
-		  this.selectionPoint?.({ x: line.x / 25632, y: line.y / 14418, start: line.start === true })
-		}
+	  case "contact-point": {
+		const { contactPosition, tip, range } = this.feed.get()
+		const { x, y, p, f, tiltX, tiltY } = line
+		if (!contactPosition || !tip || !range || ![x, y, p, f, tiltX, tiltY].every(Number.isInteger)) break
+		if (x < 0 || x > 25632 || y < 0 || y > 14418 || p < 0 || p > 4095 || f < 0xe0 || f > 0xef || !(f & 1)) break
+		if (tiltX < -64 || tiltX > 63 || tiltY < -64 || tiltY > 63) break
+		const buttons = (f & 7) | (f & 8 ? 32 : 0)
+		this.contactPoint?.({ x: x / 25632, y: y / 14418, start: line.start === true, buttons, pressure: p / 4095 || .5, tiltX, tiltY })
 		break
 	  }
       case "closed":

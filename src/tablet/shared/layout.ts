@@ -46,7 +46,3 @@ export function readFraction(raw: unknown): number | null {
 
 
 export const maxVideoWidth = (available: number): number => videoWidth(available, 1)
-
-
-export const isMaximised = (available: number, fraction: number | null): boolean =>
-  available > 0 && videoWidth(available, fraction) >= maxVideoWidth(available) - 1
