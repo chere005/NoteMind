@@ -12,3 +12,4 @@ The shared `dtp` and `tdtp` definitions, authorization, and installed result app
 - Treat committed strokes and point arrays as immutable; drawing caches use their identity.
 - Fix small UX defects found during an audit before finishing it.
 - Do not add persistent instructional or diagnostic prose to the drawing pane; use existing controls and requested tooltips.
+- The pen buttons are a contract: `docs/PEN-BUTTONS.md` is the behaviour, and `test/pen-buttons-contract.test.cjs` and `test/pen-buttons-app.test.cjs` check it on every `npm test`. Never change the behaviour or weaken those tests without Sean's explicit word; a change updates the document and both tests together.

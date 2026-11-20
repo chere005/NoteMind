@@ -27,7 +27,7 @@
 
 import { useSyncExternalStore } from "react"
 import {
-  BUTTON_LAYOUT, DEFAULT_BUTTONS, hasDoubleTap, holdMap, migrateButtons,
+  BUTTON_LAYOUT, DEFAULT_BUTTONS, SLOTS, hasDoubleTap, holdMap, migrateButtons,
   type HoldAction, type PenButtonMap, type Slot, type TapAction,
 } from "./penButtons"
 import { isPenKind, type PenKind } from "./penKinds"
@@ -102,6 +102,11 @@ export function setButton(slot: Slot, job: "double", action: TapAction): void
 export function setButton(slot: Slot, job: "hold" | "double", action: HoldAction | TapAction): void {
   if (job === "double" && !hasDoubleTap(slot)) return
   const buttons = { ...state.buttons, [slot]: { ...state.buttons[slot], [job]: action } }
+  set({ buttons, sideButton: sideOf(buttons) })
+}
+/** Every button back to the standard jobs (docs/PEN-BUTTONS.md). */
+export function resetButtons(): void {
+  const buttons = Object.fromEntries(SLOTS.map((slot) => [slot, { ...DEFAULT_BUTTONS[slot] }])) as PenButtonMap
   set({ buttons, sideButton: sideOf(buttons) })
 }
 /** The selected pen or eraser is stored alongside the pen kind. */

@@ -39,6 +39,7 @@
 import { WIDTH_LADDER } from "@notemind/core"
 import { SYNTH_POINTER_ID } from "../shared/pen"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState } from "./nativeButtons"
+import { activeChord, type Chord } from "./penChord"
 export { SYNTH_POINTER_ID }
 
 export type HoldAction = "select" | "add" | "erase" | "pan" | "none"
@@ -196,6 +197,7 @@ export const buttonRows = (map: PenButtonMap): ButtonRow[] => ROW_ORDER.map((slo
   slot, name: SLOT_NAMES[slot], hold: map[slot].hold, double: hasDoubleTap(slot) ? map[slot].double : null,
 }))
 
+export const CHORD_HINT = "Tap the bottom button, then hold the top one: touch and drag up or down to zoom. Tap the top button, then hold the bottom one: touch and drag to scroll a zoomed page."
 export const BUTTONS_HINT = "For Hold, keep the side button down and touch or drag the pen tip. For Double-tap, press and release the same side button twice while hovering."
 
 /** The side buttons in words, for the Pen chip's tooltip. */
@@ -332,6 +334,8 @@ export type Press =
    */
   | { kind: "select"; additive: boolean; tool: boolean; move: boolean }
   | { kind: "pan" }
+  /** The zoom chord: the tip touching and dragging up or down zooms around the touch (usePrecisionView.beginZoom). */
+  | { kind: "zoom" }
   /** Nothing for a surface to do: a side button in the air (its double tap is the runtime's, penActions.ts). */
   | { kind: "ignore" }
 
@@ -339,6 +343,11 @@ export function resolvePress(event: PressLike, settings: PressSettings): Press {
   // The mouse's secondary button is a temporary Select tool, independently of the pen's physical button map.
   if (event.pointerType === "mouse" && (event.button === 2 || (event.buttons & BIT.lower) !== 0)) {
     return { kind: "select", additive: false, tool: false, move: true }
+  }
+  // A chord (penChord.ts) outranks the buttons' own holds while its second button is down: touching it zooms or scrolls, hovering does nothing.
+  const chord = activeChord()
+  if (chord !== null && event.pointerType === "pen") {
+    return inContact(event) ? { kind: chord === "zoom" ? "zoom" : "pan" } : { kind: "ignore" }
   }
   const displayEvent = withNative(event)
   const slot = slotOf(displayEvent)
@@ -364,7 +373,7 @@ export function resolvePress(event: PressLike, settings: PressSettings): Press {
   return { kind: "draw" }
 }
 
-export type PressAction = "draw" | "erase" | "select" | "pan" | "ignore"
+export type PressAction = "draw" | "erase" | "select" | "pan" | "zoom" | "ignore"
 
 /** The surfaces' view of a press. */
 export function pressAction(event: PressLike, settings: PressSettings): PressAction {
@@ -396,8 +405,10 @@ export interface TapState {
   taps: number
   /** The pen touched during this press: a hold, not a tap. */
   touched: boolean
+  /** A two-button chord is on, for as long as its second button stays down (penChord.ts). */
+  chord: Chord | null
 }
-export const noTap: TapState = { down: null, slot: null, held: false, pressedAt: 0, releasedAt: 0, taps: 0, touched: false }
+export const noTap: TapState = { down: null, slot: null, held: false, pressedAt: 0, releasedAt: 0, taps: 0, touched: false, chord: null }
 export type Phase = "down" | "move" | "up" | "cancel"
 
 const sideDown = (buttons: number): TapState["down"] => {
@@ -416,8 +427,11 @@ export function tapStep(
 ): { state: TapState; fire: TapAction | null } {
   if (event.pointerType !== "pen") return { state, fire: null }
   if (phase === "cancel") return { state: noTap, fire: null }
+  // A chord outlasts the tip's lifts between its drags: only the second button letting go ends it.
+  if (state.chord && phase === "up") return { state, fire: null }
   const down = phase === "up" ? null : sideDown(event.buttons)
 	if (down === "both" || state.down === "both") return { state: { ...noTap, down }, fire: null }
+  if (state.chord && down !== state.down) return { state: { ...noTap, down }, fire: null }
   const touching = phase !== "up" && inContact(event)
   let s: TapState = state
   // A run whose next press never came in time is over.
@@ -440,6 +454,11 @@ export function tapStep(
   if (down !== null) {
     // A new press. Pressed WITH contact it is a hold, and the end of any run.
     if (touching) return { state: { ...noTap, down }, fire: null }
+    // The OTHER side button pressed in the air, in time after one clean tap of the first, is a chord: bottom then top zooms,
+    // top then bottom scrolls. Its presses are not taps: letting go of it counts toward nothing.
+    if (s.slot !== null && s.slot !== down && !s.held && s.taps === 1) {
+      return { state: { ...noTap, down, chord: s.slot === "lower" ? "zoom" : "scroll" }, fire: null }
+    }
     if (s.slot !== down) s = { ...noTap, slot: down }
     s = { ...s, slot: down, held: true, pressedAt: now, touched: false }
   }

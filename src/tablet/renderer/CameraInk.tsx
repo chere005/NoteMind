@@ -316,7 +316,7 @@ export const CameraInk = forwardRef<CameraInkHandle, Props>(function CameraInk(
     // the box under it is the mouse's.
     event.preventDefault()
     event.stopPropagation()
-    if (action === "ignore" || action === "pan") return
+    if (action === "ignore" || action === "pan" || action === "zoom") return
     const point = at(event)
     if (action === "draw" && !onPicture(point, latest.current.view)) return
     try { canvas.current?.setPointerCapture(event.pointerId) } catch { /* the pointer is gone */ }

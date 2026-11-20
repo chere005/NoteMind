@@ -660,6 +660,7 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     // Pen and mouse both follow the active drawing tool.
     const { px, unit: point, raw, inside } = at(event)
     if(action==='pan'){precision.beginPan(event,px);return}
+    if(action==='zoom'){precision.beginZoom(event,px);return}
     // A bound sheet: the shaded margin round the region takes no stroke.
     if (action === "draw" && !inside) return
     const mouseSelection=input.pointerType==='mouse'&&(input.button===2||(input.buttons&2)!==0)

@@ -10,10 +10,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import { returnFocusSoon } from "./focusReturn"
-import { setButton, setPenDraws, setPressure, usePenSettings } from "./penSettings"
+import { setButton, setPenDraws, setPressure, usePenSettings, resetButtons } from "./penSettings"
 import {
-  ACTION_WORDS, BUTTONS_HINT, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, type HoldAction, type TapAction,
-} from "./penButtons"
+  ACTION_WORDS, BUTTONS_HINT, DOUBLE_CHOICES, HOLD_CHOICES, buttonRows, buttonSummary, type HoldAction, type TapAction, CHORD_HINT } from "./penButtons"
 import { heldAction, heldSlot, usePenLive } from "./penLive"
 import { OrientationSelect } from "./OrientationSelect"
 import { acceptStatus, changeSettings, usePenFeedStore } from "./penFeed"
@@ -149,6 +148,8 @@ export function PenSheet({ at, onClose }: { at: SheetPlace; onClose(): void }) {
         ))}
       </div>
       <p className="hint" data-pen="buttons-hint">{BUTTONS_HINT}</p>
+      <p className="hint" data-pen="chord-hint">{CHORD_HINT}</p>
+      <button type="button" data-pen="buttons-reset" title="Bottom button: erase, double-tap Undo. Top button: select, double-tap Redo." onClick={resetButtons}>Standard buttons</button>
 
       <h4>Tablet orientation</h4>
       <label className="pen-slot">

@@ -44,6 +44,14 @@ File → Open shows Word, PDF, and image documents in the right pane. Convert ma
 
 Drawing sheets, camera pages, project membership, and window layout persist locally. Drafts, version snapshots, the searchable library, and deleted-item recovery copies live in the application's data directory. A failed or conflicting autosave leaves a recoverable draft and a visible status message. Named workspace files save their membership changes automatically.
 
+## Updates
+
+The installed Mac app (Apple Silicon) checks the GitHub releases of this repository 30 seconds after it starts and every six hours, and downloads a newer version in the background. When it is ready the app asks whether to restart and install now; Later installs it the next time the app starts. **Help > Check for Updates** checks at once and **Help > Check for Updates Automatically** turns the background checks off. Progress is logged in `updates.log` in the app's data folder.
+
+An update is installed only if it is signed by the same developer identity as the running app; macOS enforces that, so the release zip is the whole trust chain and there is no separate update key. Copies run from source or built without that signature never update.
+
+To release: raise `version` in `package.json` (and the lock file), run `npm run build`, then `npm run package:update`. It checks the signature and writes `dist/NoteMind-<version>-mac-arm64.zip`. Create the release with `gh release create v<version> dist/NoteMind-<version>-mac-arm64.zip`. The updater looks for that exact asset name in the latest non-draft, non-prerelease release.
+
 ## Checks
 
 `npm test` covers archives, checksums, Word round trips, Markdown image sidecars, file history, projects and the `.wmpr` format, image processing, Python, selections, tab buffers, and storage validation. Electron tests in `test/review.cjs`, `test/restart.cjs`, `test/sidebar.cjs`, `test/document-pane.cjs`, `test/document-integration.cjs`, and `test/welcome.cjs`, `test/editor-toolbar.cjs`, `test/workspace-ux.cjs`, `test/tables-styles.cjs`, `test/notes-features.cjs`, `test/notes-recovery.cjs`, `test/keys-format.cjs`, `test/projects.cjs`, `test/find-replace.cjs`, `test/clipboard.cjs`, `test/footer.cjs`, `test/structure.cjs`, `test/tabs-recents.cjs`, `test/pdf-export.cjs` and `test/help.cjs` exercise the application. `test/restart.cjs` reads the profile `test/review.cjs` leaves, so run them in that order; `test/pen-smoke.cjs` is a plain Node script. The document integration check also opens the exported DOCX in LibreOffice. `node test/portable.cjs` checks the packaged executable, native tablet bridge, independent workspace windows, and shutdown.

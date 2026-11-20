@@ -19,6 +19,8 @@ interface Props {
   surface?: InkSurface
   /** The open sheet's own actions, on the same bar after the pen's (the pane has two bars, not three). */
   trailing?: React.ReactNode
+  /** Opens the sheet that sets what the pen's side buttons do (PenMenu.tsx). */
+  onPenSettings?(): void
 }
 
 /**
@@ -26,7 +28,7 @@ interface Props {
  * The colours are always swatches on the bar. The width, the presets and the paper have buttons of their own only
  * where the bar has room for all of it (pane.css); they are in the pen's and the options menus at every width.
  */
-export function PenControl({ colour, width, onColour, onWidth, presets, presetsEnabled, onError, surface = 'sheet', trailing = null }: Props) {
+export function PenControl({ colour, width, onColour, onWidth, presets, presetsEnabled, onError, surface = 'sheet', onPenSettings, trailing = null }: Props) {
   const picker = useRef<HTMLInputElement>(null), tools = useSheetTools(), kind = kindOn(usePenSettings().kind, surface);
   const presetMenu = useToolPresetMenu({ controller: presets.controller, state: presets.state, enabled: presetsEnabled, onError });
   const pen = () => { setPenTool('pen'); setSheetEraser(false); setSheetSelect(false); };
@@ -45,6 +47,7 @@ export function PenControl({ colour, width, onColour, onWidth, presets, presetsE
     </span> },
     '-',
     { label: 'Tool Presets', icon: 'list', dataBar: 'pen-presets', submenu: presetMenu.items() },
+    ...(onPenSettings ? [{ label: 'Pen Buttons…', dataBar: 'pen-buttons', onClick: onPenSettings } as MenuItem] : []),
   ];
   return <>
     <span ref={presetMenu.host} className="tool-preset-control pen-kind">

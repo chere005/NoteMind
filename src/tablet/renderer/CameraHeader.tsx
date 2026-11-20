@@ -99,6 +99,9 @@ interface TabletProps {
   canUndo: boolean
   undoTitle: string
   onUndo(): void
+  canRedo: boolean
+  redoTitle: string
+  onRedo(): void
   canClear: boolean
   onClear(): void
   
@@ -155,6 +158,7 @@ export function TabletHeader(p:TabletProps) {
   {!p.showEditor&&<EditorButton onClick={p.onToggleEditor}/>}
   <PaperMenu/>
   <button type="button" className="bar-btn" data-tablet="undo" aria-label="Undo" title={p.undoTitle} disabled={!p.canUndo} onClick={p.onUndo}><Icon name="undo"/></button>
+  <button type="button" className="bar-btn" data-tablet="redo" aria-label="Redo" title={p.redoTitle} disabled={!p.canRedo} onClick={p.onRedo}><Icon name="redo"/></button>
   <span className="pen-insert-actions">
     <button type="button" className="bar-btn" data-tablet="clear" aria-label="Clear Page" title="Clear the drawing page" disabled={!p.canClear} onClick={p.onClear}><Icon name="trash"/></button>
     <span className="grow"/>

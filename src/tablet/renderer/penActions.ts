@@ -30,6 +30,7 @@
 import { echoed, holdBegins, inContact, noTap, resolvePress, tapStep, PEN_COMMANDS, SYNTH_POINTER_ID, type Phase, type PenAction, type PenCommandAction, type PressLike, type TapState } from "./penButtons"
 import { penNear, penSettings, setPenDraws, setSheetEraser, setSheetSelect, sheetTools } from "./penSettings"
 import { tabletUndo } from "./tabletFocus"
+import { setChord } from "./penChord"
 import { penGate } from "./penGate"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState, onNativeButtons } from "./nativeButtons"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
@@ -124,12 +125,14 @@ export function runPenCommand(id: string): boolean {
 }
 
 let tap: TapState = noTap
-export function cancelPenTap(): void { tap = noTap }
+/** Every change of the tap state also tells the surfaces whether a chord is on (penChord.ts). */
+function setTap(next: TapState): void { tap = next; setChord(next.chord ?? null) }
+export function cancelPenTap(): void { setTap(noTap) }
 const installed = new WeakMap<Window, () => void>()
 
 function step(phase: Phase, event: PressLike): void {
   const result = tapStep(tap, phase, event, penSettings().buttons, performance.now())
-  tap = result.state
+  setTap(result.state)
   if (result.fire) runPenAction(result.fire, true)
 }
 
@@ -148,7 +151,7 @@ function followNative(): void {
   const api=(window as any).notemind?.pad
   if(api?.state&&api?.onState){
     padPending=true;let revision=0
-    const receive=(state:ActionPadState|null):void=>{actionPad=state;padPending=false;if(!nativeActionsEligible()){tap=noTap;echoBits=0}}
+    const receive=(state:ActionPadState|null):void=>{actionPad=state;padPending=false;if(!nativeActionsEligible()){setTap(noTap);echoBits=0}}
     api.onState((state:ActionPadState)=>{revision++;receive(state)})
     const before=revision
     void api.state().then((state:ActionPadState)=>{if(revision===before)receive(state)},()=>{if(revision===before)receive(null)})
@@ -156,12 +159,13 @@ function followNative(): void {
   onNativeButtons((now, was) => {
     const side = nativeSideMask(now)
     if (side !== 0 || nativeSideMask(was) !== 0) sideAt = performance.now()
-    if(!nativeActionsEligible()){tap=noTap;return}
+    if(!nativeActionsEligible()){setTap(noTap);return}
 	if (!now.present) { cancelPenTap(); return }
 	if (!now.range) {
 	  // A brief hover gap between completed taps can come from lifting the pen as the buttons are clicked.
 	  // Leaving range with the button held is not a release. The normal double-tap deadline still applies.
-	  if (tap.held) cancelPenTap()
+	  // (a chord's button may let go out of range, unseen: the chord ends with the range)
+	  if (tap.held || tap.chord) cancelPenTap()
 	  return
 	}
     step("move", { pointerType: "pen", button: -1, buttons: side | (now.tip ? 1 : 0), pressure: now.tip ? 0.5 : 0 })
@@ -267,7 +271,7 @@ export function installPenActions(win: Window = window): () => void {
   const existing = installed.get(win); if (existing) return existing
   followNative()
   actionWindows.add(win)
-  const resetIfInactive=():void=>{if(!nativeActionsEligible()){tap=noTap;echoBits=0}}
+  const resetIfInactive=():void=>{if(!nativeActionsEligible()){setTap(noTap);echoBits=0}}
   win.addEventListener('blur',resetIfInactive)
   const unguard = installNativeGuard(win)
   const hear = (phase: Phase) => (event: PointerEvent) => {
@@ -290,10 +294,11 @@ export function installPenActions(win: Window = window): () => void {
     if (phase === "cancel" || inContact(event)) echoBits = 0
     if (phase === "down") {
       const press = resolvePress(event, penSettings())
-      // (the Wacom sheet, or the camera's picture the pen writes on: CameraInk.tsx)
-      const sheet = event.target && typeof (event.target as Element).closest === "function" && (event.target as Element).closest(".tablet, .camera-ink") !== null
-      // Not the surfaces' business: a side button in the air, or a pan over a sheet that has nowhere to scroll.
-      if (press.kind === "ignore" || (press.kind === "pan" && sheet)) {
+      // (the camera's picture the pen writes on: CameraInk.tsx, which has no zoomed view to scroll or zoom)
+      const sheet = event.target && typeof (event.target as Element).closest === "function" && (event.target as Element).closest(".camera-ink") !== null
+      // Not the surfaces' business: a side button in the air, or a pan or zoom over a picture that has nowhere to go.
+      // A Wacom sheet takes both itself (TabletSurface, usePrecisionView): the scroll and zoom chords (penChord.ts).
+      if (press.kind === "ignore" || ((press.kind === "pan" || press.kind === "zoom") && sheet)) {
         event.preventDefault()
         event.stopPropagation()
       }

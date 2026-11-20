@@ -39,19 +39,27 @@
  .pen-bar [data-capture="ink"]>.bar-label-text{display:none}
 }
 /* Narrower: first the buttons tighten, then the swatches (never under 18px), so every colour stays on the bar. */
-@container (max-width:455px){
+@container (max-width:515px){
  .pen-bar .bar-btn:not(.caret){min-width:24px;padding:0 3px}
+ .pen-bar .pen-swatch{width:20px;min-width:20px;height:20px}
+ .pen-bar .pen-swatches{gap:4px}
+}
+@container (max-width:455px){
+ .pen-bar .bar-btn:not(.caret){min-width:22px;padding:0 3px}
+ .pen-bar>*,.pen-bar .pen-trailing>*,.pen-bar .pen-insert-actions>*{margin-left:-1px}
+ .pen-bar .pen-swatches{gap:4px}
 }
 @container (max-width:419px){
  .pen-bar .pen-swatches{gap:4px;padding:0 2px}
- .pen-bar .pen-swatch{width:20px;min-width:20px;height:20px}
+ .pen-bar .pen-swatch{width:19px;min-width:19px;height:19px}
  .pen-bar .pen-swatch::after{inset:-6px -2px}
  .pen-bar .pen-swatch.on{outline-width:1.5px;outline-offset:1px}
 }
 /* The width Sean keeps the pane at (380px). The bar is the query's container and cannot close its own gap: its items do. */
 @container (max-width:395px){
- .pen-bar>*,.pen-bar .pen-trailing>*,.pen-bar .pen-insert-actions>*{margin-left:-2px}
- .pen-bar .pen-swatches{gap:3px}
+ .pen-bar>*,.pen-bar .pen-trailing>*,.pen-bar .pen-insert-actions>*{margin-left:-3px}
+ .pen-bar .bar-btn:not(.caret){min-width:20px;padding:0 2px}
+ .pen-bar .pen-swatches{gap:2px}
  .pen-bar .pen-swatch{width:18px;min-width:18px;height:18px}
  .pen-bar .pen-swatch::after{inset:-6px -1.5px}
 }

@@ -70,6 +70,7 @@ const PATHS = {
   straighten: "<path d=\"M3.75 3.5h8.5l1 9h-10.5z\"/><path d=\"M6.25 3.5 5.5 12.5M9.75 3.5l.75 9\" stroke-width=\"1\"/>",
   close: "<path d=\"m4 4 8 8M12 4l-8 8\"/>",
   undo: "<path d=\"M5.5 5.25H10a3 3 0 0 1 0 6H6.5\"/><path d=\"m7.5 2.75-2.5 2.5 2.5 2.5\"/>",
+  redo: "<path d=\"M10.5 5.25H6a3 3 0 0 0 0 6h3.5\"/><path d=\"m8.5 2.75 2.5 2.5-2.5 2.5\"/>",
   para: "<path d=\"M12.25 2.5H6.75a3 3 0 0 0 0 6h1.5M9.75 2.5v11M12.25 2.5v11\"/>",
   // The drawing layer's inspector (P5): order, a copy, delete, crop, dock into the note, and an arrow's heads and lines.
   resize: "<path d=\"M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9\"/>",

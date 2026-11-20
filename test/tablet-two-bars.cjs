@@ -309,8 +309,8 @@ app.on('browser-window-created', (_, w) => {
       report.pane380 = state;
       check(state.width <= 400, 'The pane took the 380 pixel width: ' + state.width);
       fits(state, 'in a 380 pixel pane');
-      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,clear,ink,bring-menu',
-        'A 380 pixel pane shows pen, eraser, select, colours, Undo, Clear Page and Insert: ' + state.order);
+      check(state.order.join() === 'pen,pen-kinds,eraser,select,swatches,undo,redo,clear,ink,bring-menu',
+        'A 380 pixel pane shows pen, eraser, select, colours, Undo, Redo, Clear Page and Insert: ' + state.order);
       check(!state.widthSelect && !state.presets && !state.paper, 'Width, presets and paper leave a 380 pixel bar');
       colour = await tap('Purple');
       check(colour.pressed === 'true' && colour.colour.toLowerCase() === '#8e44ad',
@@ -389,6 +389,39 @@ app.on('browser-window-created', (_, w) => {
       check(denseBand[3] > 200 && denseBand[1] > 200, 'On a dense sheet the highlight shows beside the writing: ' + denseBand);
       await shot('dark-dense-highlight', true);
       await choose('pen');
+      // Redo sits beside Undo: nothing to redo until something is taken back, and it brings the stroke back in place.
+      const redoState = () => js(`(()=>{const u=document.querySelector('#pen-control [data-tablet=undo]'),r=document.querySelector('#pen-control [data-tablet=redo]');
+        return {next:r&&u&&u.nextElementSibling===r,redoDisabled:r&&r.disabled,undoDisabled:u&&u.disabled,label:r&&r.getAttribute('aria-label'),
+          icon:!!(r&&r.querySelector('svg'))}})()`);
+      let redo = await redoState();
+      check(redo.next && redo.icon && redo.label === 'Redo', 'Redo is the button right after Undo: ' + JSON.stringify(redo));
+      check(redo.redoDisabled === true && redo.undoDisabled === false, 'With nothing taken back Redo is off and Undo is on');
+      const beforeUndo = (await strokes()).length;
+      await click('#pen-control [data-tablet=undo]');
+      await pause(400);
+      check((await strokes()).length === beforeUndo - 1, 'Undo takes the last stroke back');
+      redo = await redoState();
+      check(redo.redoDisabled === false, 'After Undo, Redo is on');
+      await click('#pen-control [data-tablet=redo]');
+      await pause(400);
+      check((await strokes()).length === beforeUndo, 'Redo brings the stroke back');
+      check((await redoState()).redoDisabled === true, 'Redo is off again once nothing is left to redo');
+
+      // The pen's side buttons: the settings are reachable from the pen menu and hold the intended jobs.
+      await openPenMenu();
+      check(await js(`!!document.querySelector('.float-menu [data-bar=pen-buttons]')`), 'The pen menu has a Pen Buttons row');
+      await click('.float-menu [data-bar=pen-buttons]');
+      await pause(500);
+      const buttons = await js(`(()=>{const pick=id=>{const e=document.querySelector('[data-pen="'+id+'"]');return e?e.options[e.selectedIndex].textContent:null};
+        return {lowerHold:pick('btn-lower'),lowerDouble:pick('dbl-lower'),upperHold:pick('btn-upper'),upperDouble:pick('dbl-upper'),
+          hint:(document.querySelector('[data-pen="buttons-hint"]')||{}).textContent}})()`);
+      report.penButtons = buttons;
+      check(buttons.lowerHold === 'Erase strokes' && buttons.lowerDouble === 'Undo', 'Lower button: hold erases, double-tap Undo: ' + JSON.stringify(buttons));
+      check(buttons.upperHold === 'Select' && buttons.upperDouble === 'Redo', 'Upper button: hold selects, double-tap Redo: ' + JSON.stringify(buttons));
+      check(/keep the side button down and touch or drag the pen tip/.test(buttons.hint || ''), 'Hold needs the tip to touch');
+      await shot('dark-pen-buttons');
+      await escape();
+
       nativeTheme.themeSource = 'light';
       await pause(700);
       await shot('light-sheet');

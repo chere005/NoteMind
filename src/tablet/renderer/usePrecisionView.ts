@@ -6,6 +6,8 @@ import {elementPoint} from './padCoordinates'
 
 // A portal remount retains only view scalars, keyed weakly by its owning page.
 const savedViews=new WeakMap()
+/** A zoom drag of this many pixels doubles or halves the view roughly every 90. */
+const ZOOM_DRAG_PER_PX=.008
 let toolState={line:false,angle:0};const toolListeners=new Set<()=>void>(),subscribeTools=(listener:()=>void)=>{toolListeners.add(listener);return()=>toolListeners.delete(listener)},readTools=()=>toolState,changeTools=(change:Partial<typeof toolState>)=>{toolState={...toolState,...change};for(const listener of toolListeners)listener()}
 type Options={page:TabletPage;focusRoot:()=>HTMLElement|null;beforeChange:()=>void;onViewport:(view:Rect)=>void;onError:(error:any)=>void;
  onDrawingZoom?:(zoom:number|null)=>void}
@@ -15,7 +17,7 @@ export function usePrecisionView(options:Options){
  model.current ||=new PrecisionView({stateCache:savedViews,...(options.onDrawingZoom&&{minZoom:DRAWING_ZOOM[0]/100,maxZoom:DRAWING_ZOOM.at(-1)/100})})
  const [zoom,setZoom]=useState(1),[panArmed,setPanArmed]=useState(false),[panning,setPanning]=useState(false)
  const {line,angle}=useSyncExternalStore(subscribeTools,readTools,readTools)
- const dragging=useRef<{id:number;last:Point}|null>(null)
+ const dragging=useRef<{id:number;last:Point;zoomAround?:Point}|null>(null)
  const reportZoom=()=>{const state=model.current!.state;setZoom(state.zoom);latest.current.onDrawingZoom?.(state.fixedScale?state.zoom:null)}
  const apply=()=>{reportZoom();latest.current.onViewport(viewport(model.current!.state))}
  const configure=(frame:Rect,size:Size,aspect:number)=>{model.current!.bind(latest.current.page,{frame,size,aspect});reportZoom();return viewport(model.current!.state)}
@@ -31,7 +33,9 @@ export function usePrecisionView(options:Options){
  const fitPage=()=>change(fit)
  const resetZoom=()=>latest.current.onDrawingZoom?magnify(1):fitPage()
  const beginPan=(event:PointerEvent,point:Point)=>{latest.current.beforeChange();dragging.current={id:event.pointerId,last:point};setPanning(true)}
- const movePan=(event:PointerEvent,point:Point)=>{const g=dragging.current;if(!g||g.id!==event.pointerId)return false;const delta={x:point.x-g.last.x,y:point.y-g.last.y};g.last=point;model.current!.change(state=>pan(state,delta));apply();return true}
+ const movePan=(event:PointerEvent,point:Point)=>{const g=dragging.current;if(!g||g.id!==event.pointerId)return false;const delta={x:point.x-g.last.x,y:point.y-g.last.y};g.last=point;if(g.zoomAround){const factor=Math.exp(-delta.y*ZOOM_DRAG_PER_PX);model.current!.change(state=>zoomAt(latest.current.onDrawingZoom?lockScale(state):state,factor,g.zoomAround));apply();return true}model.current!.change(state=>pan(state,delta));apply();return true}
+ // The pen's zoom chord (penChord.ts): the tip dragging up zooms in, down zooms out, around where it first touched.
+ const beginZoom=(event:PointerEvent,point:Point)=>{latest.current.beforeChange();dragging.current={id:event.pointerId,last:point,zoomAround:point};setPanning(true)}
  const endPan=()=>{dragging.current=null;setPanning(false)}
  useLayoutEffect(()=>{
    const element=latest.current.focusRoot(),doc=element?.ownerDocument,view=doc?.defaultView;if(!element||!doc||!view)return
@@ -53,5 +57,5 @@ export function usePrecisionView(options:Options){
    view.addEventListener('blur',blur)
    return()=>{dragging.current=null;window.removeEventListener('notemind-command',command,true);doc.removeEventListener('keydown',key,true);doc.removeEventListener('keyup',release);view.removeEventListener('blur',blur);element.removeEventListener('wheel',wheel)}
  },[options.page])
- return{configure,zoom,zoomBy,magnify,fit:fitPage,panArmed,panning,beginPan,movePan,endPan,active:(id:number)=>dragging.current?.id===id,pendingGesture:()=>!!dragging.current,line,angle,setLine:(enabled:boolean)=>{latest.current.beforeChange();changeTools({line:enabled})},setAngle:(value:number)=>{latest.current.beforeChange();changeTools({angle:value})}}
+ return{configure,zoom,zoomBy,magnify,fit:fitPage,panArmed,panning,beginPan,beginZoom,movePan,endPan,active:(id:number)=>dragging.current?.id===id,pendingGesture:()=>!!dragging.current,line,angle,setLine:(enabled:boolean)=>{latest.current.beforeChange();changeTools({line:enabled})},setAngle:(value:number)=>{latest.current.beforeChange();changeTools({angle:value})}}
 }
