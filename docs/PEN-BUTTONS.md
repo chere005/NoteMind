@@ -1,27 +1,41 @@
 # Pen buttons
 
-The pen has two side buttons. **Bottom** is the one nearer the tip (the display's lower switch, DOM `buttons` bit 2).
-**Top** is the one farther from the tip (the upper switch, bit 4).
+**This is a fixed contract. It must never break.** Sean set this behaviour and confirmed it (2026-11-20). Change it only on Sean's explicit word, and then change this page and the tests below in the same commit.
 
-This behaviour is fixed by the owner. It must never break, and it is checked on every run of `npm test`:
+The pen has two side buttons:
 
-- `test/pen-buttons-contract.test.cjs`: every row below, as button and tip events through the real state machine and press rules.
-- `test/pen-buttons-app.test.cjs`: the same gestures on a real drawing sheet in the app, hidden (`test/pen-buttons-app.cjs`).
-- `test/pen-buttons-native.test.cjs`: the same gestures again with the Wacom display's own button reports and contact points, which is how a pen display's buttons reach the app (`test/pen-buttons-native.cjs`).
-- Behind them, `npm test` also checks the saved assignments, contact routing and tap timing (`pen-button-parity`, `pen-action-owner`, `pen-contact-drawing`, `pen-display`), and `test/pad-app.cjs` runs the mocked Wacom window with pressure, erase, selection, Undo and Redo.
-
-Changing a row needs the owner's explicit word, and this file and all three tests change in the same commit.
+- **Lower** (bottom): the button nearer the tip. It is the display's lower switch, DOM `buttons` bit 2.
+- **Upper** (top): the button farther from the tip. It is the upper switch, bit 4.
 
 ## What the buttons do
 
-| Gesture | Result |
-|---|---|
-| Bottom button held, tip touches (tap or drag) | Delete: erases whole strokes under the tip. |
-| Bottom button double-tap | Undo. |
-| Top button held, tip touches and drags | Selection box (a tap selects the stroke under the tip). |
-| Top button double-tap | Redo. |
-| Bottom button tapped, then top button pressed and held, quickly | Zoom: the tip touches and drags up to zoom in, down to zoom out, around where it touched. |
-| Top button tapped, then bottom button pressed and held, quickly | Scroll: the tip touches and drags to pan the page. Only does anything when the page is zoomed in. |
+| Do this | It does this |
+| --- | --- |
+| **Lower held, tip taps or drags** | **Delete:** erases the whole strokes the tip touches. |
+| **Lower double-tap** | **Undo** |
+| **Upper held, tip taps or drags** | **Selection box.** A tap selects the stroke under the tip. |
+| **Upper double-tap** | **Redo** |
+| **Lower tapped, then upper held, tip drags** | **Zoom** around where the tip touched: drag up to zoom in, down to zoom out. |
+| **Upper tapped, then lower held, tip drags** | **Scroll:** pans the page. It only does something when the page is zoomed in. |
+
+**Holding a button alone does nothing.** Nothing is deleted, selected, zoomed or scrolled until the tip touches.
+
+**A held button is a mode until it is let go.** Every tap or drag deletes, selects, zooms or scrolls until that button comes up. Zoom and scroll last while their second button is held, across the tip's lifts between drags.
+
+## The tests that hold it
+
+Every `npm test`, and so every release, runs these:
+
+| Test | What it checks |
+| --- | --- |
+| `test/pen-buttons-contract.test.cjs` | Every row above, as button and tip events through the real state machine and press rules. |
+| `test/pen-buttons-app.test.cjs` | The same gestures on a real drawing sheet in the app, hidden (`test/pen-buttons-app.cjs`). |
+| `test/pen-buttons-native.test.cjs` | The same gestures as the Wacom One 12 delivers them, hidden (`test/pen-buttons-native.cjs`). This means the display's own button reports and contact points, with the driver's Right Click and Pan/Scroll events played beside them. |
+| `test/pen-contract-doc.test.cjs` | This page still states the contract, and the tests above still exist and check every step. |
+
+Behind them, `npm test` also checks:
+- the saved assignments, contact routing and tap timing (`pen-button-parity`, `pen-action-owner`, `pen-contact-drawing`, `pen-display`);
+- the mocked Wacom window with pressure, erase, selection, Undo and Redo (`test/pad-app.cjs`).
 
 ## Rules that go with them
 

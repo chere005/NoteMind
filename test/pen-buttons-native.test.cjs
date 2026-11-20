@@ -12,5 +12,5 @@ test('the pen buttons do what docs/PEN-BUTTONS.md says when the Wacom display re
   assert.ok(result, 'the check wrote no report: ' + (run.stderr || run.error || '').toString().slice(0, 600));
   assert.equal(result.ok, true, result.error);
   assert.equal(run.status, 0);
-  assert.ok(result.checks.length >= 21, 'every step of the contract ran: ' + result.checks.length);
+  assert.ok(result.checks.length >= 25, 'every step of the contract ran: ' + result.checks.length);
 });
