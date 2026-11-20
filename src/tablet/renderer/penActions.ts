@@ -144,6 +144,7 @@ function step(phase: Phase, event: PressLike): void {
 }
 
 let following = false
+let silentNoted = false, penEventsWithoutReports = 0
 type ActionPadState = {enabled:boolean;available:boolean;owned:boolean;open:boolean}
 let actionPad:ActionPadState|null=null,padPending=false
 function nativeActionsEligible():boolean {
@@ -287,6 +288,11 @@ export function installPenActions(win: Window = window): () => void {
     if (event.pointerType !== "pen") return
     lastPoint = { x: event.clientX, y: event.clientY }
     lastView = win
+    if (!nativeLive() && !silentNoted && ++penEventsWithoutReports === 40) {
+      // The pen is moving in this window and the display has told us nothing of it: its button reports are not arriving.
+      silentNoted = true
+      trace("native-silent", { present: nativeState().present, range: nativeState().range })
+    }
     if (nativeLive() && event.pointerId !== SYNTH_POINTER_ID) return
     const side = event.buttons & 6
     if (side !== 0) {

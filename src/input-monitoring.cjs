@@ -27,12 +27,17 @@ function createInputMonitoring({shell,helper,execFile=require('node:child_proces
   }).finally(()=>{inflight=null;});
   return inflight;
  }
+ /** What macOS says for this app now: granted, denied, undecided (asking the person, once) or unknown. Opens nothing. */
+ async function status(){
+  if(platform!=='darwin')return 'unknown';
+  try{return await check();}catch(error){report(error);return 'unknown';}
+ }
  function onStatus(status){
   if(status?.state!=='needs-input-monitoring')return null;
   if(attempted)return inflight;
   return request();
  }
- return {onStatus,request};
+ return {onStatus,request,status};
 }
 
-module.exports={createInputMonitoring};
+module.exports={createInputMonitoring,SETTINGS};

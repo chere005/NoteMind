@@ -31,6 +31,7 @@ const inputMonitoring=require('./input-monitoring.cjs').createInputMonitoring({s
 const updater=require('./updater.cjs').createUpdater({app,autoUpdater:require('electron').autoUpdater,dialog,getWindow:()=>win,env:process.env,log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'updates.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});
 
 app.on('will-quit',()=>updater.dispose());
+const inputMonitoringCheck=require('./input-monitoring-check.cjs').createInputMonitoringCheck({inputMonitoring,dialog,shell,getWindow:()=>win,hasPenDisplay:()=>screen.getAllDisplays().some(display=>/wacom/i.test(display.label)),settingsUrl:require('./input-monitoring.cjs').SETTINGS,env:process.env,log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'startup.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});
 let sheetWrite = Promise.resolve();
 let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
 let cameraPersistenceService=null;const cameraPersistence=()=>cameraPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'camera-pages.json'),{legacyKind:'camera'});
@@ -183,7 +184,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
     {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom Window',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')}]},
 
   ]));
-  buildMenu();updater.start();
+  buildMenu();updater.start();setTimeout(()=>{void inputMonitoringCheck.check().catch(()=>{});},4000).unref();
   const refreshRecents=async()=>{const all=await projectService.recents.read();recentFiles.splice(0,recentFiles.length,...all.files.map(x=>x.path));recentProjects.splice(0,recentProjects.length,...all.projects.map(x=>x.path));buildMenu();};
   projectService.recents.onChange(refreshRecents);refreshRecents();
 
