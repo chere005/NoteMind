@@ -169,9 +169,11 @@ app.once('browser-window-created', (_, window) => {
 				const side = workspace.querySelector('.sidebar:not([hidden])');
 				const room = workspace.clientWidth - (side?.clientWidth || 0) - document.querySelector('#paneResize').clientWidth;
 				const size = sheet.getBoundingClientRect();
-				const display = (await window.notemind.pad.state())?.display || {width:1080,height:1920};
+				const pad = await window.notemind.pad.state(), display = pad?.display || {width:1080,height:1920};
+				// The Wacom window's shape only while the Wacom display is a screen of its own; mirrored or absent, the drawing fills the pane.
+				const separate = !!(pad?.available && pad?.enabled), stageBox = stage.getBoundingClientRect();
 				return {zoom:sheet.dataset.precisionZoom, width:document.querySelector('#pane').clientWidth, expectedWidth:Math.min(1080, Math.max(280, room-460)),
-					aspect:size.width/size.height, expectedAspect:display.width/(display.height-chrome)};
+					aspect:size.width/size.height, expectedAspect:separate ? display.width/(display.height-chrome) : stageBox.width/stageBox.height, separate};
 			})()`);
 			const resetDrawing = await reset();
 			assert.equal(resetDrawing.zoom, '1');
@@ -181,7 +183,9 @@ app.once('browser-window-created', (_, window) => {
 			await js(`document.querySelector('.pane-divider').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true})); void 0`);
 			await tick();
 			assert.equal((await scale()).value,'fit');
-			assert.ok(Math.abs((await reset()).aspect - resetDrawing.aspect) < .01);
+			// The Wacom window's shape holds while the pane is resized; a drawing that fills the pane follows it.
+			const resized = await reset();
+			assert.ok(Math.abs(resized.aspect - (resetDrawing.separate ? resetDrawing.aspect : resized.expectedAspect)) < .01);
       await js(`{
         const sheet = document.querySelector('[data-tablet=surface]');
         sheet.focus();

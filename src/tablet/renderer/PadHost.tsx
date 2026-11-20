@@ -12,7 +12,11 @@ import {DEFAULT_WACOM_SIZE,type DrawingDisplay} from '../shared/layout'
 
 type PadState={enabled:boolean,available:boolean,open:boolean,owned:boolean,bounds?:{width:number,height:number}|null,rotation?:number,display?:{width:number,height:number,rotation:number}|null}
 const FRAME='notemind-pen-display'
-export function PadHost({children,onDisplaySize}:{children:ReactNode;onDisplaySize?:(size:DrawingDisplay)=>void}){
+/**
+ * `onSeparateDisplay`: whether the Wacom display is a screen of its own the drawing can have a window on (an extended desktop, the
+ * pen display window enabled). Mirrored, or with no display, it is not, and the drawing has no Wacom window to take the shape of.
+ */
+export function PadHost({children,onDisplaySize,onSeparateDisplay}:{children:ReactNode;onDisplaySize?:(size:DrawingDisplay)=>void;onSeparateDisplay?:(separate:boolean)=>void}){
  const [state,setState]=useState<PadState|null>(null),[target,setTarget]=useState<HTMLElement|null>(null),[frame,setFrame]=useState('')
  const [chromeRoot,setChromeRoot]=useState<HTMLDivElement|null>(null),orientation=useOrientation(),follow=usePadChromeOrientation()
  const [overlay,setOverlay]=useState<HTMLElement|null>(null)
@@ -20,6 +24,8 @@ export function PadHost({children,onDisplaySize}:{children:ReactNode;onDisplaySi
 	const display=state?.display ?? state?.bounds ?? DEFAULT_WACOM_SIZE
 	const displayRotation=state?.display?.rotation ?? state?.rotation ?? 0
 	const lastDrawing=useRef<DrawingDisplay|null>(null)
+	const separate=!!(state?.available&&state.enabled)
+	useLayoutEffect(()=>{onSeparateDisplay?.(separate)},[separate,onSeparateDisplay])
 	useLayoutEffect(()=>{
 		const {width,height}=padOrientationLayout(display.width,display.height,orientation,displayRotation,follow)
 		if (viewport?.drawing) {
