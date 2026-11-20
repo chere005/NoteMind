@@ -23,6 +23,13 @@ test('the display reader processes physical button reports and clears state on d
  assert.equal(reader.start(),true);assert.deepEqual(args,['--buttons']);
  child.stdout.write('{"k":"opened","mode":"buttons"}\n');assert.equal(buttons.get().present,true);
  child.stdout.write('not json\n{"k":"buttons","range":true,"tip":true,"lower":true,"upper":false}\n');assert.deepEqual(buttons.get(),{present:true,range:true,tip:true,lower:true,upper:false});
+ const points=[];reader.selectionPoint=point=>points.push(point);
+ child.stdout.write('{"k":"opened","mode":"buttons","selectionPosition":true}\n');
+ child.stdout.write('{"k":"buttons","range":true,"tip":true,"upper":true}\n');
+ child.stdout.write('{"k":"selection-point","x":12816,"y":7209,"start":true}\n{"k":"selection-point","x":19224,"y":14418}\n');
+ child.stdout.write('{"k":"selection-point","x":25633,"y":14418}\n{"k":"buttons","range":true}\n{"k":"selection-point","x":0,"y":0}\n');
+ assert.deepEqual(points,[{x:.5,y:.5,start:true},{x:.75,y:1,start:false}]);
+ assert.equal(buttons.get().selectionPosition,true);
  child.stdout.write('{"k":"closed","why":"removed"}\n');assert.deepEqual(buttons.get(),shared.NO_BUTTONS);
  child.emit('exit',1,null);assert.equal(timers[0].ms,2000);reader.stop();assert.deepEqual(buttons.get(),shared.NO_BUTTONS);
 });

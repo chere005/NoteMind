@@ -17,7 +17,9 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 import { isBoxDrag, type Point, type Rect, type Size } from "@notemind/core"
-import { displayMouseContact, holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, withNative } from "./penButtons"
+import { displayMouseContact, holdBegins, inContact, penLifted, pressAction, resolvePress, slotOf, SYNTH_POINTER_ID, withNative } from "./penButtons"
+import { nativeState } from "./nativeButtons"
+import { watchDisplaySelection } from "./nativeButtonsFeed"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
 import { setTabletUndo, watchSheetPen } from "./tabletFocus"
@@ -638,10 +640,24 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
   const driverPointer = useRef<number | null>(null)
   const drawingPress = (event: PointerEvent) => event.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(event)
     ? event : displayMouseContact(event)
+	const upperSelects = () => {
+		const action = penSettings().buttons.upper.hold
+		return action === 'select' || action === 'add'
+	}
+	const nativeSelectionEcho = (event: PointerEvent, input: ReturnType<typeof drawingPress>) => {
+		const state = nativeState()
+		return event.pointerId !== SYNTH_POINTER_ID && input.pointerType === 'pen' && state.selectionPosition
+			&& state.upper && !state.lower && upperSelects()
+	}
+	useLayoutEffect(() => {
+		const element = wrap.current
+		return element ? watchDisplaySelection(element, upperSelects) : undefined
+	}, [page])
 
   const down = (event: PointerEvent) => {
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
     const input = drawingPress(event), pen = input.pointerType === "pen"
+	if (nativeSelectionEcho(event, input)) { event.preventDefault(); return }
     if (pen) touching.current = inContact(input)
     if (precision.pendingGesture()||inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return

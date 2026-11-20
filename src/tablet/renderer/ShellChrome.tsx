@@ -6,7 +6,7 @@ import {Icon} from './icons';
 import {MenuButton} from './MenuButton';
 const toMenu=items=>items.map(item=>item==='-'?item:{...item,...(item.submenu?{submenu:toMenu(item.submenu)}:{}),...(item.run?{onClick:()=>Promise.resolve().then(item.run).catch(error=>window.alert(error.message))}:{})});
 const click=id=>document.getElementById(id)?.click();
-export function ShellChrome({source}){
+export function ShellChrome({source,onResetDrawing}){
  const [floating,setFloating]=useState(null),[visible,setVisible]=useState(!document.getElementById('pane').hidden);
  const active=useRef(null),serial=useRef(0);
  const close=id=>{if(id!==undefined&&active.current?.serial!==id)return;active.current=null;setFloating(null)};
@@ -28,7 +28,7 @@ export function ShellChrome({source}){
  const portal=(id,node)=>document.getElementById(id)?createPortal(node,document.getElementById(id)):null;
  return <>
   {floating&&<FloatingMenu key={floating.serial} {...floating} id="notemind-actions" onClose={()=>close(floating.serial)}/>}
-  {portal('paneResize',<PaneDivider sidebar={sidebar}/>)}
+  {portal('paneResize',<PaneDivider sidebar={sidebar} onResetDrawing={onResetDrawing}/>)}
   {portal('sidebar-buttons',<>
    <MenuButton icon="plus" name="New Notepad" title="New Notepad" optionsLabel="New Notepad options" dataBar="sidebar-new" onMain={()=>window.NoteMindSidebar?.newNotepad()} items={()=>toMenu(window.NoteMindSidebar?.newMenu()||[])}/>
    <button className={'bar-btn'+(editing?' tint':'')} data-sidebar="edit" title={editing?'Hide duplicate and delete controls':'Show duplicate and delete controls on Notepads'} aria-label={editing?'Done organizing':'Organize Notepads'} aria-pressed={editing} onClick={()=>{setEditing(!editing);window.dispatchEvent(new CustomEvent('sidebar-edit',{detail:!editing}))}}><Icon name={editing?'check':'edit'}/></button>

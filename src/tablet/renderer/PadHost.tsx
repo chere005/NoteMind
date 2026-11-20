@@ -1,4 +1,4 @@
-import React,{useEffect,useLayoutEffect,useMemo,useState,type ReactNode} from 'react'
+import React,{useEffect,useLayoutEffect,useMemo,useRef,useState,type ReactNode} from 'react'
 import {createPortal} from 'react-dom'
 import {watchPenIn} from './penSettings'
 import {installPenActions} from './penActions'
@@ -8,14 +8,29 @@ import {PadMirror,usePadViewport} from './PadMirror'
 import {useOrientation,usePadChromeOrientation} from './orientation'
 import {padOrientationLayout} from './padOrientation'
 import {watchLive} from './penLive'
+import {DEFAULT_WACOM_SIZE,type DrawingDisplay} from '../shared/layout'
 
-type PadState={enabled:boolean,available:boolean,open:boolean,owned:boolean,bounds?:{width:number,height:number}|null,rotation?:number}
+type PadState={enabled:boolean,available:boolean,open:boolean,owned:boolean,bounds?:{width:number,height:number}|null,rotation?:number,display?:{width:number,height:number,rotation:number}|null}
 const FRAME='notemind-pen-display'
-export function PadHost({children}:{children:ReactNode}){
+export function PadHost({children,onDisplaySize}:{children:ReactNode;onDisplaySize?:(size:DrawingDisplay)=>void}){
  const [state,setState]=useState<PadState|null>(null),[target,setTarget]=useState<HTMLElement|null>(null),[frame,setFrame]=useState('')
  const [chromeRoot,setChromeRoot]=useState<HTMLDivElement|null>(null),orientation=useOrientation(),follow=usePadChromeOrientation()
  const [overlay,setOverlay]=useState<HTMLElement|null>(null)
  const viewport=usePadViewport(target)
+	const display=state?.display ?? state?.bounds ?? DEFAULT_WACOM_SIZE
+	const displayRotation=state?.display?.rotation ?? state?.rotation ?? 0
+	const lastDrawing=useRef<DrawingDisplay|null>(null)
+	useLayoutEffect(()=>{
+		const {width,height}=padOrientationLayout(display.width,display.height,orientation,displayRotation,follow)
+		if (viewport?.drawing) {
+			const sideways = viewport.turns % 2 !== 0
+			lastDrawing.current = {width: sideways ? viewport.displayHeight : viewport.displayWidth,
+				height: sideways ? viewport.displayWidth : viewport.displayHeight,
+				chromeHeight: sideways ? viewport.displayWidth - viewport.width : viewport.displayHeight - viewport.height}
+		}
+		const measured = lastDrawing.current
+		onDisplaySize?.(measured?.width === width && measured.height === height ? measured : {width,height})
+	},[display.width,display.height,displayRotation,orientation,follow,viewport,onDisplaySize])
  const chrome=useMemo(()=>chromeRoot?{...Object.fromEntries(['tabs','pen','header','find','footer'].map(slot=>[slot,chromeRoot.querySelector<HTMLElement>('[data-pane-slot='+slot+']')])),overlay} as Partial<Record<PaneChromeSlot,HTMLElement>>:null,[chromeRoot,overlay])
  useLayoutEffect(()=>{if(!target)return;const view=target.ownerDocument.defaultView!;const apply=()=>{const layout=padOrientationLayout(view.innerWidth,view.innerHeight,orientation,state?.rotation||0,follow);Object.assign(target.style,{width:layout.width+'px',height:layout.height+'px',transformOrigin:'0 0',transform:layout.transform});target.dataset.padTurns=String(layout.turns)};apply();view.addEventListener('resize',apply);return()=>view.removeEventListener('resize',apply)},[target,orientation,state?.rotation,follow])
  useEffect(()=>{

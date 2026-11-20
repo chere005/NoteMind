@@ -674,6 +674,8 @@ if arguments.first == "--capture-one" {
 }
 
 var side = Side()
+var selectingWithUpperButton = false
+var sentSelectionPoint = false
 var sideUnknown = 0
 var sideDevice: IOHIDDevice?
 var sideRefused: IOReturn = 0
@@ -685,6 +687,7 @@ func closeButtons(_ why: String) {
     IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
     // The buttons are not held by a display that is gone.
+    selectingWithUpperButton = false
     if side != Side() { side = Side(); say(sideLine(side)) }
     say(["k": "closed", "why": why])
 }
@@ -702,7 +705,21 @@ func openButtons() {
     IOHIDDeviceRegisterInputReportCallback(device, sideBuffer, 256, { _, _, _, _, _, report, length in
         let bytes = Array(UnsafeBufferPointer(start: report, count: length))
         if let now = sideState(bytes) {
-            if now != side { side = now; say(sideLine(now)) }
+            // Pan/Scroll can withhold pointer motion from the page. Read position during
+            // a tip drag started with the upper button without taking over the device.
+            let was = side
+            side = now
+            if !was.tip && now.tip && now.upper && !now.lower {
+                selectingWithUpperButton = true
+                sentSelectionPoint = false
+            }
+            if now.tip && now != was { say(sideLine(now)) }
+            if selectingWithUpperButton && now.range && (now.tip || sentSelectionPoint), let pen = onePen(bytes) {
+                say(["k": "selection-point", "x": pen.x, "y": pen.y, "start": !sentSelectionPoint])
+                sentSelectionPoint = true
+            }
+            if !now.tip && now != was { say(sideLine(now)) }
+            if !now.tip { selectingWithUpperButton = false }
         } else if sideUnknown < 8 {
             sideUnknown += 1
             say(["k": "raw", "hex": hexLine(Array(bytes.prefix(32)))])
@@ -710,7 +727,8 @@ func openButtons() {
     }, nil)
     IOHIDDeviceRegisterRemovalCallback(device, { _, _, _ in closeButtons("the display was unplugged") }, nil)
     IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-    say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": number(device, kIOHIDProductIDKey)])
+    let pid = number(device, kIOHIDProductIDKey)
+    say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": pid, "selectionPosition": pid == 0x03CE])
 }
 
 if arguments.first == "--buttons" {

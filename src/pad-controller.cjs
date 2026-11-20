@@ -6,7 +6,7 @@ function createPadController({screen,owner,onChange=()=>{},onFrame=()=>{},onFocu
  function display(){return enabled&&owned?physicalDisplay():null;}
  function padVisible(){return !closed&&!!display()&&ready&&!!pad&&!pad.isDestroyed()&&pad.isVisible()&&!owner.isMinimized?.()&&owner.isVisible();}
  function syncThrottling(){if(owner.isDestroyed?.())return;const next=!padVisible(),contents=owner.webContents;if(next===throttled||!contents?.setBackgroundThrottling||contents.isDestroyed?.())return;contents.setBackgroundThrottling(next);throttled=next;}
- function state(){const d=physicalDisplay();return {enabled,owned,available:!!d,bounds:d?{...d.bounds}:null,label:d?.label||null,rotation:d?.rotation||0,open:padVisible()};}
+ function state(){const d=physicalDisplay(),wacom=d||screen.getAllDisplays().find(display=>/wacom/i.test(display.label||''));return {enabled,owned,available:!!d,bounds:d?{...d.bounds}:null,label:d?.label||null,rotation:d?.rotation||0,open:padVisible(),display:wacom?{width:wacom.bounds.width,height:wacom.bounds.height,rotation:wacom.rotation||0}:null};}
  function publish(){onChange(state());}
  function stopMirror(){mirrorActive=false;mirrorGeneration++;if(mirrorTimer!==null)clearTimeout(mirrorTimer);mirrorTimer=null;mirrorTick=null;lastMirror=null;idleFrames=0;syncThrottling();}
  function activity(){idleFrames=0;if(mirrorActive&&mirrorTimer!==null&&mirrorTick&&mirrorDue-Date.now()>100){clearTimeout(mirrorTimer);mirrorDue=Date.now()+100;mirrorTimer=setTimeout(mirrorTick,100);mirrorTimer.unref?.();}}

@@ -1,14 +1,15 @@
 
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { fractionFor, isMaximised, maxVideoWidth, readFraction, videoWidth } from "../shared/layout"
+import { DRAWING_PANE_WIDTH, fractionFor, maxVideoWidth, readFraction, videoWidth } from "../shared/layout"
 
 const KEY = "notemind.videoFraction"
+type PaneSize = number | null | 'drawing'
 
-function load(): number | null {
-  try { return readFraction(localStorage.getItem(KEY)) } catch { return null }
+function load(): PaneSize {
+  try { const saved = localStorage.getItem(KEY); return saved === 'drawing' ? saved : readFraction(saved) } catch { return null }
 }
-function store(fraction: number | null): void {
+function store(fraction: PaneSize): void {
   try {
     if (fraction === null) localStorage.removeItem(KEY)
     else localStorage.setItem(KEY, String(fraction))
@@ -16,17 +17,17 @@ function store(fraction: number | null): void {
 }
 
 interface Props {
-  
   sidebar: boolean
+	onResetDrawing?: () => void
 }
 
-export function PaneDivider({ sidebar }: Props) {
+export function PaneDivider({ sidebar, onResetDrawing }: Props) {
   const self = useRef<HTMLDivElement>(null)
-  const fraction = useRef<number | null>(load())
-  
-  const before = useRef<{ fraction: number | null } | null>(null)
+  const fraction = useRef<PaneSize>(load())
+  const before = useRef<{ fraction: PaneSize } | null>(null)
   const [dragging, setDragging] = useState(false)
-  const pointer=useRef<{id:number;node:HTMLElement;x:number;width:number}|null>(null)
+  const pointer=useRef<{id:number;node:HTMLElement;x:number;width:number;size:PaneSize}|null>(null)
+  const width = (room: number) => videoWidth(room, fraction.current === 'drawing' ? DRAWING_PANE_WIDTH / room : fraction.current)
 
   const app = (): HTMLElement | null => self.current?.closest<HTMLElement>(".workspace") ?? null
 
@@ -43,7 +44,7 @@ export function PaneDivider({ sidebar }: Props) {
     const root = app()
     const room = available()
     if (!root || room <= 0) return
-    root.style.setProperty("--video-w", `${videoWidth(room, fraction.current)}px`)
+    root.style.setProperty("--video-w", `${width(room)}px`)
   }, [available])
 
   // Re-measured whenever the window, the sidebar or the display scale changes.
@@ -63,7 +64,7 @@ export function PaneDivider({ sidebar }: Props) {
     const room = available()
     if (!start || room <= 0) return
     const video = start.width + start.x - clientX
-    fraction.current = fractionFor(room, videoWidth(room, fractionFor(room, video)))
+    fraction.current = clientX === start.x ? start.size : fractionFor(room, videoWidth(room, fractionFor(room, video)))
     apply()
   }
 
@@ -71,7 +72,11 @@ export function PaneDivider({ sidebar }: Props) {
   const toggleFull = () => {
     const room = available()
     if (room <= 0) return
-    if (isMaximised(room, fraction.current)) {
+	if (onResetDrawing) {
+		before.current = null
+		fraction.current = 'drawing'
+		onResetDrawing()
+	} else if (width(room) >= maxVideoWidth(room) - 1) {
       fraction.current = before.current ? before.current.fraction : null
       before.current = null
     } else {
@@ -85,7 +90,7 @@ export function PaneDivider({ sidebar }: Props) {
   const nudge = (delta: number) => {
     const room = available()
     if (room <= 0) return
-    const now = videoWidth(room, fraction.current)
+    const now = width(room)
     fraction.current = fractionFor(room, videoWidth(room, fractionFor(room, now + delta)))
     apply()
     store(fraction.current)
@@ -104,7 +109,7 @@ export function PaneDivider({ sidebar }: Props) {
     <div ref={self} className={`pane-divider${dragging ? " dragging" : ""}`}
          role="separator" aria-orientation="vertical" aria-label="Resize editor and capture pane"
          tabIndex={0}
-         title="Drag to resize · Double-click to expand or restore"
+         title={onResetDrawing ? "Drag to resize · Double-click to reset drawing size and Fit" : "Drag to resize · Double-click to expand or restore"}
          onPointerDown={(event) => {
            if (event.button !== 0||pointer.current) return
            // The mouse must not take the keyboard from the notes.
@@ -112,7 +117,7 @@ export function PaneDivider({ sidebar }: Props) {
            const room=available()
            if(room<=0)return
            try{event.currentTarget.setPointerCapture(event.pointerId)}catch{return}
-           pointer.current={id:event.pointerId,node:event.currentTarget,x:event.clientX,width:videoWidth(room,fraction.current)}
+           pointer.current={id:event.pointerId,node:event.currentTarget,x:event.clientX,width:width(room),size:fraction.current}
            setDragging(true)
          }}
          onPointerMove={(event) => { if (ownsPointer(event)) move(event.clientX) }}

@@ -174,7 +174,7 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await physicalButtons({upper:true});await physicalPointer('pointerdown',{x:.05,y:.05},{buttons:5,pressure:.7});
  await physicalButtons({upper:true,tip:true});await physicalPointer('pointerdown',{x:.05,y:.05},{button:1,buttons:5,pressure:.7});
  await physicalPointer('pointermove',{x:.9,y:.9},{button:-1,buttons:5,pressure:.7});await physicalButtons({upper:true});await physicalPointer('pointerup',{x:.9,y:.9});await physicalButtons({});
- if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-tablet=box]')`)||JSON.stringify((await strokes()))!==physicalInk)throw Error('Far physical button did not select through the IPC feed without changing ink');
+ if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-ink-selection="outline"]')`)||JSON.stringify((await strokes()))!==physicalInk)throw Error('Far physical button did not select through the IPC feed without changing ink');
  if(await child.webContents.executeJavaScript('window.__physicalDowns')!==2)throw Error('The delayed HID report started a duplicate far-button gesture');
  if(!await child.webContents.executeJavaScript(`document.querySelector('[data-bar=pen]').getAttribute('aria-pressed')==='true'`))throw Error('A physical button hold changed the active Pen tool');
  await child.webContents.executeJavaScript(`document.querySelector('[data-tablet=surface]').removeEventListener('pointerdown',window.__physicalDownListener);window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
@@ -186,6 +186,17 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  await physicalButtons({});
  await savedStrokeCount(0,'Mouse-form Wacom contact ignored the physical Erase button');
  await airDouble('lower');await savedStrokeCount(1,'Physical Undo did not restore ink after the driver fallback gesture');
+	checkpoint('upper-button selection from passive HID coordinates with no driver pointer motion');
+	const selectionPoint=async(x,y,start=false)=>{
+		const client=await child.webContents.executeJavaScript(`(()=>{const r=document.querySelector('[data-tablet="surface"]').getBoundingClientRect();return {clientX:r.left+r.width*${x},clientY:r.top+r.height*${y}};})()`);
+		w.webContents.send('pen:selection-point',{...client,pad:true,start});await wait(30);
+	};
+	await physicalButtons({upper:true,tip:true,selectionPosition:true});
+	await selectionPoint(.05,.05,true);await selectionPoint(.9,.9);
+	if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-ink-selection="marquee"]')`))throw Error('No selection rectangle was drawn from the tablet coordinates');
+	await physicalButtons({selectionPosition:true});
+	if(!await child.webContents.executeJavaScript(`!!document.querySelector('[data-ink-selection="outline"]')`)||JSON.stringify((await strokes()))!==physicalInk)throw Error('The upper-button drag did not finish as an ink selection');
+	await child.webContents.executeJavaScript(`document.querySelector('[data-tablet="surface"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));void 0`);
  await physicalButtons({range:false});await wait(350);
  checkpoint('rotated page controls and pen/mouse coordinates');
  const openOrientation=async()=>{

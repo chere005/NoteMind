@@ -2,6 +2,20 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),{buildSyn
 function bundle(file){const result=buildSync({entryPoints:[file],bundle:true,platform:'node',format:'cjs',write:false});return result.outputFiles[0].text}
 function load(code,globals={}){const module={exports:{}};vm.runInNewContext(code,{module,exports:module.exports,require,process,...globals});return module.exports}
 const {A5_ASPECT,padOrientationLayout}=load(bundle('src/tablet/renderer/padOrientation.ts'));
+const {DEFAULT_WACOM_SIZE, DRAWING_PANE_WIDTH, fitWacomDrawing, videoWidth}=load(bundle('src/tablet/shared/layout.ts'));
+
+test('the drawing reset uses 1080 pixels and fits the drawing area inside the display bars',()=>{
+	assert.equal(videoWidth(2000,DRAWING_PANE_WIDTH/2000),1080);
+	assert.equal(videoWidth(1080,DRAWING_PANE_WIDTH/1080),620);
+	const full=fitWacomDrawing({width:1080,height:1920},DEFAULT_WACOM_SIZE,96);
+	assert.equal(full.width,1080);assert.equal(full.height,1824);
+	const narrower=fitWacomDrawing({width:540,height:1920},DEFAULT_WACOM_SIZE,96);
+	assert.equal(narrower.width,540);assert.equal(narrower.height,912);
+	const shorter=fitWacomDrawing({width:1080,height:912},DEFAULT_WACOM_SIZE,96);
+	assert.equal(shorter.width,540);assert.equal(shorter.height,912);
+	const landscape=fitWacomDrawing({width:1920,height:1080},{width:1920,height:1080},72);
+	assert.equal(landscape.width,1920);assert.equal(landscape.height,1008);
+});
 
 test('page-following chrome accounts for the display rotation without turning it twice',()=>{
  assert.equal(A5_ASPECT,148/210);

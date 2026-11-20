@@ -157,6 +157,31 @@ app.once('browser-window-created', (_, window) => {
       await setScale('fit');
       await tick();
       assert.notEqual((await scale()).pixels, fitted.pixels, 'Fit responds to the pane width');
+			await setScale('150');
+			await tick();
+			await js(`document.querySelector('.pane-divider').dispatchEvent(new MouseEvent('dblclick', {bubbles:true})); void 0`);
+			await tick();
+			const reset = () => js(`(async () => {
+				const workspace = document.querySelector('.workspace');
+				const sheet = document.querySelector('[data-tablet=surface]');
+				const stage = sheet.closest('.tablet-stage');
+				const chrome = stage.closest('.tablet-pane').clientHeight - stage.clientHeight;
+				const side = workspace.querySelector('.sidebar:not([hidden])');
+				const room = workspace.clientWidth - (side?.clientWidth || 0) - document.querySelector('#paneResize').clientWidth;
+				const size = sheet.getBoundingClientRect();
+				const display = (await window.notemind.pad.state())?.display || {width:1080,height:1920};
+				return {zoom:sheet.dataset.precisionZoom, width:document.querySelector('#pane').clientWidth, expectedWidth:Math.min(1080, Math.max(280, room-460)),
+					aspect:size.width/size.height, expectedAspect:display.width/(display.height-chrome)};
+			})()`);
+			const resetDrawing = await reset();
+			assert.equal(resetDrawing.zoom, '1');
+			assert.equal((await scale()).value,'fit');
+			assert.ok(Math.abs(resetDrawing.width - resetDrawing.expectedWidth) < 2);
+			assert.ok(Math.abs(resetDrawing.aspect - resetDrawing.expectedAspect) < .01);
+			await js(`document.querySelector('.pane-divider').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight',bubbles:true})); void 0`);
+			await tick();
+			assert.equal((await scale()).value,'fit');
+			assert.ok(Math.abs((await reset()).aspect - resetDrawing.aspect) < .01);
       await js(`{
         const sheet = document.querySelector('[data-tablet=surface]');
         sheet.focus();

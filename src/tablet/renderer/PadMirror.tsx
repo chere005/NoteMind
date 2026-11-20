@@ -1,7 +1,7 @@
 import React,{useEffect,useLayoutEffect,useRef,useState} from 'react'
 import {forwardPadMirrorPointer,forwardPadMirrorKey} from './padMirrorInput'
 
-type Viewport={x:number,y:number,width:number,height:number,displayWidth:number,displayHeight:number,turns:number,document:boolean}
+type Viewport={x:number,y:number,width:number,height:number,displayWidth:number,displayHeight:number,turns:number,document:boolean,drawing:boolean}
 
 export function usePadViewport(root:HTMLElement|null){
  const [viewport,setViewport]=useState<Viewport|null>(null)
@@ -13,7 +13,7 @@ export function usePadViewport(root:HTMLElement|null){
    for(const element of elements)resize.observe(element)
    const content=elements.find(element=>{const r=element.getBoundingClientRect();return r.width>0&&r.height>0})
    const r=content?.getBoundingClientRect()
-   const next=r?{x:r.left,y:r.top,width:r.width,height:r.height,displayWidth:view.innerWidth,displayHeight:view.innerHeight,turns:Number(root.dataset.padTurns)||0,document:!!content?.closest('.doc-pane')}:null
+   const next=r?{x:r.left,y:r.top,width:r.width,height:r.height,displayWidth:view.innerWidth,displayHeight:view.innerHeight,turns:Number(root.dataset.padTurns)||0,document:!!content?.closest('.doc-pane'),drawing:content?.classList.contains('tablet-stage')===true&&!!content.querySelector('[data-tablet="surface"]')}:null
    setViewport(previous=>JSON.stringify(previous)===JSON.stringify(next)?previous:next)
   }
   const resize=new ResizeObserver(measure),changes=new MutationObserver(measure)

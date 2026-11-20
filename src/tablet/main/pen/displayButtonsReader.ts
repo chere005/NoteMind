@@ -5,6 +5,7 @@ import type { ButtonsFeed } from "./buttonsFeed"
 function parseHelperLine(text: string): any { try { const value=JSON.parse(text); return value && typeof value.k === "string" ? value : null } catch { return null } }
 
 export type ButtonsSpawner = (file: string, args: string[]) => ChildProcess
+export type SelectionPoint = { x: number; y: number; start: boolean }
 
 /** Restart after the helper dies by itself: 2 s, 10 s, 30 s, then not until `start()` is called again (a resume, an unlock). */
 export const BUTTONS_RESTART_MS = [2000, 10000, 30000] as const
@@ -17,6 +18,7 @@ export const BUTTONS_RESTART_MS = [2000, 10000, 30000] as const
  * Swift when the app was built, another platform) makes `start()` do nothing and leaves the feed as it was: not present.
  */
 export class MacPenButtons {
+	selectionPoint?: (point: SelectionPoint) => void
   private child: ChildProcess | null = null
   private generation = 0
   private restarts = 0
@@ -101,11 +103,21 @@ export class MacPenButtons {
         if (line.mode !== "buttons") return
         this.restarts = 0
         this.trace.event("manager", "buttons-opened", { name: line.name ?? null, pid: line.pid ?? null })
-        this.feed.set({ ...NO_BUTTONS, present: true })
+        this.feed.set({ ...NO_BUTTONS, present: true, ...(line.selectionPosition === true ? { selectionPosition: true } : {}) })
         break
-      case "buttons":
-        this.feed.set({ present: true, range: line.range === true, tip: line.tip === true, lower: line.lower === true, upper: line.upper === true })
-        break
+	  case "buttons": {
+		const { selectionPosition } = this.feed.get()
+		this.feed.set({ present: true, range: line.range === true, tip: line.tip === true, lower: line.lower === true, upper: line.upper === true, ...(selectionPosition ? { selectionPosition } : {}) })
+		break
+	  }
+	  case "selection-point": {
+		const { selectionPosition, tip, range } = this.feed.get()
+		if (selectionPosition && tip && range && Number.isInteger(line.x) && Number.isInteger(line.y)
+		  && line.x >= 0 && line.x <= 25632 && line.y >= 0 && line.y <= 14418) {
+		  this.selectionPoint?.({ x: line.x / 25632, y: line.y / 14418, start: line.start === true })
+		}
+		break
+	  }
       case "closed":
         this.trace.event("manager", "buttons-closed", { why: line.why })
         this.feed.set({ ...NO_BUTTONS })

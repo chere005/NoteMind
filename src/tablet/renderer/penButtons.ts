@@ -40,7 +40,7 @@
 
 import { WIDTH_LADDER } from "@notemind/core"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState } from "./nativeButtons"
-const SYNTH_POINTER_ID = 4242
+export const SYNTH_POINTER_ID = 4242
 
 export type HoldAction = "select" | "add" | "erase" | "pan" | "none"
 export type TapAction =

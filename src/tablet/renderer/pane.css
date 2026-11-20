@@ -1,6 +1,7 @@
 .tablet-pane{height:100%;min-height:0}.tablet-pane .tablet-stage{position:relative;flex:1;min-height:0}.tablet-pane .tablet-stage .tablet-host{position:absolute;inset:0}.tablet-pane>.camera-head{overflow-x:auto;scrollbar-width:thin}.tablet-pane .camera-workspace .camera-head{overflow:visible}
 
 .word-page{position:relative}.tablet-pane .sheet-tab.doc .wm-icon{flex:none;opacity:.75}
+.drawing-frame{position:absolute;inset:0;margin:auto}
 
 .tablet-pane>.pen-bar,.pane-chrome-slot>.pen-bar{display:flex;align-items:center;flex:none;gap:5px;height:36px;min-height:36px;padding:4px 8px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;background:var(--bar-strip);border-bottom:1px solid var(--wm-rule);-webkit-app-region:no-drag}
 .pen-bar .pen-swatches{display:flex;flex:none;align-items:center;gap:5px;padding:0 4px}

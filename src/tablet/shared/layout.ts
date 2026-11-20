@@ -6,6 +6,18 @@ export const NOTES_MIN = 460
 export const NOTES_IDEAL = 720
 export const VIDEO_MIN = 280
 export const VIDEO_IDEAL = 420
+export const DRAWING_PANE_WIDTH = 1080
+export const DEFAULT_WACOM_SIZE = { width: DRAWING_PANE_WIDTH, height: 1920 } as const
+
+type Size = { width: number; height: number }
+export type DrawingDisplay = Size & { chromeHeight?: number }
+
+/** Fit the display's drawing area after subtracting the bars. */
+export function fitWacomDrawing(stage: Size, display: Size, chromeHeight: number): Size {
+	const height = Math.max(1, display.height - Math.max(0, chromeHeight))
+	const scale = Math.min(1, stage.width / display.width, stage.height / height)
+	return { width: display.width * scale, height: height * scale }
+}
 
 
 export const DEFAULT_VIDEO_SHARE = VIDEO_IDEAL / (NOTES_IDEAL + VIDEO_IDEAL)
