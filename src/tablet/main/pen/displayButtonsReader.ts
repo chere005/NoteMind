@@ -102,6 +102,8 @@ export class MacPenButtons {
 	  case "buttons": {
 		const { contactPosition } = this.feed.get()
 		this.feed.set({ present: true, range: line.range === true, tip: line.tip === true, lower: line.lower === true, upper: line.upper === true, ...(contactPosition ? { contactPosition } : {}) })
+		// (a trace of what the display reports, for the pen buttons' contract: docs/PEN-BUTTONS.md)
+		this.trace.event("manager", "buttons", { tip: line.tip === true, lower: line.lower === true, upper: line.upper === true, range: line.range === true })
 		break
 	  }
 	  case "contact-point": {

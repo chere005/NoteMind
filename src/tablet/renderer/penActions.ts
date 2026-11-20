@@ -30,7 +30,7 @@
 import { echoed, holdBegins, inContact, noTap, resolvePress, tapStep, PEN_COMMANDS, SYNTH_POINTER_ID, type Phase, type PenAction, type PenCommandAction, type PressLike, type TapState } from "./penButtons"
 import { penNear, penSettings, setPenDraws, setSheetEraser, setSheetSelect, sheetTools } from "./penSettings"
 import { tabletUndo } from "./tabletFocus"
-import { setChord } from "./penChord"
+import { activeChord, setChord } from "./penChord"
 import { penGate } from "./penGate"
 import { nativeLive, nativeSideBusy, nativeSideMask, nativeState, onNativeButtons } from "./nativeButtons"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
@@ -130,10 +130,17 @@ function setTap(next: TapState): void { tap = next; setChord(next.chord ?? null)
 export function cancelPenTap(): void { setTap(noTap) }
 const installed = new WeakMap<Window, () => void>()
 
+/** One line in startup.log (the console's errors go there) for each thing the pen buttons decide; button changes only, never movement. */
+function trace(what: string, data: Record<string, unknown>): void {
+  try { console.error("[pen] " + what + " " + JSON.stringify(data)) } catch { /* a trace never breaks the pen */ }
+}
+
 function step(phase: Phase, event: PressLike): void {
+  const before = tap
   const result = tapStep(tap, phase, event, penSettings().buttons, performance.now())
   setTap(result.state)
-  if (result.fire) runPenAction(result.fire, true)
+  if (result.state.chord !== before.chord) trace("chord", { chord: result.state.chord ?? null })
+  if (result.fire) { trace("double-tap", { action: result.fire }); runPenAction(result.fire, true) }
 }
 
 let following = false
@@ -159,6 +166,7 @@ function followNative(): void {
   onNativeButtons((now, was) => {
     const side = nativeSideMask(now)
     if (side !== 0 || nativeSideMask(was) !== 0) sideAt = performance.now()
+    if (side !== nativeSideMask(was)) trace("native", { lower: now.lower, upper: now.upper, tip: now.tip, range: now.range, eligible: nativeActionsEligible(), pad: actionPad })
     if(!nativeActionsEligible()){setTap(noTap);return}
 	if (!now.present) { cancelPenTap(); return }
 	if (!now.range) {
@@ -294,6 +302,7 @@ export function installPenActions(win: Window = window): () => void {
     if (phase === "cancel" || inContact(event)) echoBits = 0
     if (phase === "down") {
       const press = resolvePress(event, penSettings())
+      if (press.kind !== "draw") trace("press", { kind: press.kind, buttons: event.buttons, chord: activeChord() })
       // (the camera's picture the pen writes on: CameraInk.tsx, which has no zoomed view to scroll or zoom)
       const sheet = event.target && typeof (event.target as Element).closest === "function" && (event.target as Element).closest(".camera-ink") !== null
       // Not the surfaces' business: a side button in the air, or a pan or zoom over a picture that has nowhere to go.

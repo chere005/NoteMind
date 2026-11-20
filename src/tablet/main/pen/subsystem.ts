@@ -168,7 +168,7 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
 	if (contact.start) {
 	  contactFrame = null
 	  const win = deps.window(), pad = deps.displayTarget?.()
-	  if (!win || win.isDestroyed() || (!pad && !win.isFocused())) return
+	  if (!win || win.isDestroyed() || (!pad && !win.isFocused())) { trace.event("manager", "contact-dropped", { why: !win || win.isDestroyed() ? "no window" : "window not focused" }); return }
 	  const display = pad ?? deps.screen.getAllDisplays().find(display => /wacom/i.test(display.label))
 		?? deps.screen.getDisplayNearestPoint(deps.screen.getCursorScreenPoint())
 	  const origin = pad?.bounds ?? win.getContentBounds()

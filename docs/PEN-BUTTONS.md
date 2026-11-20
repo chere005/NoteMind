@@ -7,9 +7,10 @@ This behaviour is fixed by the owner. It must never break, and it is checked on 
 
 - `test/pen-buttons-contract.test.cjs`: every row below, as button and tip events through the real state machine and press rules.
 - `test/pen-buttons-app.test.cjs`: the same gestures on a real drawing sheet in the app, hidden (`test/pen-buttons-app.cjs`).
+- `test/pen-buttons-native.test.cjs`: the same gestures again with the Wacom display's own button reports and contact points, which is how a pen display's buttons reach the app (`test/pen-buttons-native.cjs`).
 - Behind them, `npm test` also checks the saved assignments, contact routing and tap timing (`pen-button-parity`, `pen-action-owner`, `pen-contact-drawing`, `pen-display`), and `test/pad-app.cjs` runs the mocked Wacom window with pressure, erase, selection, Undo and Redo.
 
-Changing a row needs the owner's explicit word, and this file and both tests change in the same commit.
+Changing a row needs the owner's explicit word, and this file and all three tests change in the same commit.
 
 ## What the buttons do
 
@@ -37,6 +38,10 @@ Changing a row needs the owner's explicit word, and this file and both tests cha
 ## Input paths
 
 On a supported Wacom One 12, NoteMind reads the physical switches and the contact coordinates itself, even when the Wacom driver turns a button into Pan/Scroll: tip strokes, pressure and every gesture above come from that path. The drawing surface under the first contact owns a gesture until the tip lifts. For devices that give only driver clicks, Right Click is read as the bottom button and Middle Click as the top button.
+
+## Reading what a real pen did
+
+`pen.log` (the app's data folder) has a `buttons` line for every report the display's helper delivers (tip, bottom, top, in range) and a `contact-dropped` line when a touch could not be used. `startup.log` has `[pen]` lines for what the runtime decided: `native` (a button changed, and whether button gestures were allowed), `chord`, `double-tap`, and `press` (what a touch with a button held became). Gestures that do nothing on a real pen can be read from these.
 
 ## Where it lives
 
