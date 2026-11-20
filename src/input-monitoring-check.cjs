@@ -10,11 +10,16 @@ function createInputMonitoringCheck({
   hasPenDisplay,
   settingsUrl,
   log = () => {},
+  onGranted = () => {},
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
   env = process.env,
   platform = process.platform,
 }) {
   let asked = false;
   let running = null;
+  let watching = null;
+  let tries = 0;
 
   async function run() {
     if (platform !== 'darwin' || !hasPenDisplay()) return {access: 'skipped'};
@@ -24,6 +29,7 @@ function createInputMonitoringCheck({
     // Tests and scratch runs (a data folder of their own) never put a question on the screen.
     if (asked || env.NOTEMIND_DATA) return {access};
     asked = true;
+    if (access === 'denied') watch();
     const options = {
       type: 'info',
       buttons: ['Open System Settings', 'Not Now'],
@@ -44,13 +50,34 @@ function createInputMonitoringCheck({
     return {access, asked: true};
   }
 
+  /**
+   * The person is in System Settings: look again every few seconds (for fifteen minutes) and, the moment macOS says yes,
+   * let the pen's button reader start over, so the setting takes effect without reopening the app.
+   */
+  function watch() {
+    if (watching || platform !== 'darwin') return;
+    const tick = async () => {
+      watching = null;
+      if (++tries > 225) return;
+      const access = await inputMonitoring.status();
+      if (access === 'granted') {
+        log('input monitoring: granted');
+        try { onGranted(); } catch (error) { log(`could not restart the pen buttons: ${error.message}`); }
+        return;
+      }
+      if (access === 'denied') watching = setTimer(tick, 4000);
+    };
+    watching = setTimer(tick, 4000);
+    watching.unref?.();
+  }
+
   /** One check at a time. */
   function check() {
     if (!running) running = run().finally(() => { running = null; });
     return running;
   }
 
-  return {check};
+  return {check, stop() { clearTimer(watching); watching = null; tries = 1e9; }};
 }
 
 module.exports = {createInputMonitoringCheck};

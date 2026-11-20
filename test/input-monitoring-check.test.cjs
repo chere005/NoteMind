@@ -70,3 +70,50 @@ test('a refused System Settings is logged, not thrown', async () => {
   await h.check.check();
   assert.deepEqual(h.calls.log, ['input monitoring: denied', 'could not open System Settings: refused']);
 });
+
+test('while macOS still says denied the check looks again, and when it says granted the pen buttons start over', async () => {
+  const answers = ['denied', 'denied', 'denied', 'granted'];
+  const timers = [];
+  let restarted = 0;
+  const log = [];
+  const check = createInputMonitoringCheck({
+    inputMonitoring: {status: async () => answers.shift()},
+    dialog: {showMessageBox: async () => ({response: 1})},
+    shell: {openExternal: async () => {}},
+    hasPenDisplay: () => true,
+    settingsUrl: URL,
+    log: message => log.push(message),
+    onGranted: () => { restarted++; },
+    setTimer: (fn, ms) => { const timer = {fn, ms, unref() {}}; timers.push(timer); return timer; },
+    clearTimer: () => {},
+    env: {},
+    platform: 'darwin',
+  });
+  await check.check();
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, 4000);
+  for (let round = 0; round < 3; round++) {
+    await timers[round].fn();
+    assert.equal(restarted, round === 2 ? 1 : 0);
+  }
+  assert.equal(restarted, 1);
+  assert.equal(timers.length, 3, 'it stops looking once granted');
+  assert.deepEqual(log, ['input monitoring: denied', 'input monitoring: granted']);
+});
+
+test('an undecided answer is not watched, and stop() ends a watch', async () => {
+  const timers = [];
+  const make = access => createInputMonitoringCheck({
+    inputMonitoring: {status: async () => access}, dialog: {showMessageBox: async () => ({response: 1})}, shell: {openExternal: async () => {}},
+    hasPenDisplay: () => true, settingsUrl: URL,
+    setTimer: (fn, ms) => { const timer = {fn, ms, cleared: false, unref() {}}; timers.push(timer); return timer; },
+    clearTimer: timer => { if (timer) timer.cleared = true; }, env: {}, platform: 'darwin',
+  });
+  await make('undecided').check();
+  assert.equal(timers.length, 0);
+  const denied = make('denied');
+  await denied.check();
+  assert.equal(timers.length, 1);
+  denied.stop();
+  assert.equal(timers[0].cleared, true);
+});

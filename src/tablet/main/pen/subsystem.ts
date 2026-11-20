@@ -55,6 +55,8 @@ export interface PenSubsystem {
   displayHeartbeat?(): void
   displayStop?(): void
   displayRetry?(): void
+  /** The passive button reader starts over (a permission that was just granted applies to a new helper). */
+  buttonsRestart?(): void
   manager: FeedManagerEx | null
   /** Call after the notes window is (re)created: its focus / visibility go to the manager, and a closed or reloaded page lets go. */
   attachWindow(): void
@@ -239,6 +241,7 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
     displayHeartbeat(){const target=eligible();if(capture&&target)lease.heartbeat(target.id)},
     displayStop(){lease.stop()},
     displayRetry(){lease.retry()},
+    buttonsRestart(){ buttonsReader?.stop(); buttonsReader?.start() },
     attachWindow() {
       try { unwatch?.() } catch { /* ignore */ }
       for (const off of unlisten.splice(0)) { try { off() } catch { /* ignore */ } }
