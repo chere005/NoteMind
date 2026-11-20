@@ -166,7 +166,10 @@ let tested=false;electron.app.on('browser-window-created',(_,w)=>{if(tested)retu
  if(await child.webContents.executeJavaScript('window.__physicalDowns')!==1)throw Error('The delayed HID report started a duplicate near-button gesture');
  await airDouble('lower');await savedStrokeCount(1,'Near physical button double tap did not Undo through the real IPC feed');
  if(JSON.stringify((await strokes()))!==physicalInk)throw Error('Physical Undo did not restore every drawing point');
- await airDouble('upper');await savedStrokeCount(0,'Far physical button double tap did not Redo through the real IPC feed');
+ await physicalButtons({upper:true});await physicalButtons({});
+ await physicalButtons({range:false});await physicalButtons({});
+ await physicalButtons({upper:true});await physicalButtons({});
+ await savedStrokeCount(0,'Far physical button double tap across a brief hover gap did not Redo through the real IPC feed');
  await airDouble('lower');await savedStrokeCount(1,'Near physical button could not Undo again after Redo');
  await physicalButtons({upper:true});await physicalPointer('pointerdown',{x:.05,y:.05},{buttons:5,pressure:.7});
  await physicalButtons({upper:true,tip:true});await physicalPointer('pointerdown',{x:.05,y:.05},{button:1,buttons:5,pressure:.7});

@@ -161,7 +161,13 @@ function followNative(): void {
     const side = nativeSideMask(now)
     if (side !== 0 || nativeSideMask(was) !== 0) sideAt = performance.now()
     if(!nativeActionsEligible()){tap=noTap;return}
-    if (!now.present || !now.range) { if (was.present) tap = noTap; return }
+	if (!now.present) { cancelPenTap(); return }
+	if (!now.range) {
+	  // A brief hover gap between completed taps can come from lifting the pen as the buttons are clicked.
+	  // Leaving range with the button held is not a release. The normal double-tap deadline still applies.
+	  if (tap.held) cancelPenTap()
+	  return
+	}
     step("move", { pointerType: "pen", button: -1, buttons: side | (now.tip ? 1 : 0), pressure: now.tip ? 0.5 : 0 })
   })
 }

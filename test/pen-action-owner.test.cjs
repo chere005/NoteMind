@@ -5,9 +5,10 @@ function fixture({pad=false,focused=false}={}){
  let focus=focused,now=0,push,resolve,undo=0,redo=0;const listeners=new Map(),document={hasFocus:()=>focus},window={document,closed:false,addEventListener:(name,listener)=>{const list=listeners.get(name)||[];list.push(listener);listeners.set(name,list);},removeEventListener:(name,listener)=>listeners.set(name,(listeners.get(name)||[]).filter(value=>value!==listener))};
  window.notemind={preferenceGet:async()=>null,preferenceSet:async()=>{},onPreference:()=>()=>{}};if(pad)window.notemind.pad={state:()=>new Promise(done=>resolve=done),onState:listener=>{push=listener;return()=>{};}};
  const module={exports:{}},localStorage={getItem:()=>null,setItem(){}};vm.runInNewContext(source,{module,exports:module.exports,require,window,document,localStorage,performance:{now:()=>now},setTimeout,clearTimeout});const api=module.exports;api.registerPenHandlers({undo:()=>undo++,redo:()=>redo++});const stop=api.installPenActions(window);api.setNativeButtons(base);
- const tap=()=>{now+=20;api.setNativeButtons({...base,lower:true},now);now+=20;api.setNativeButtons(base,now);};
+ const report=(patch={},delay=20)=>{now+=delay;api.setNativeButtons({...base,...patch},now);};
+ const tap=(slot='lower')=>{report({[slot]:true});report();};
  const pointer=(type,values)=>{now+=20;let prevented=false,stopped=false;const event={type,pointerId:21,pointerType:'mouse',button:-1,buttons:0,pressure:0,clientX:100,clientY:100,target:null,...values,preventDefault(){prevented=true},stopPropagation(){},stopImmediatePropagation(){stopped=true}};if(event.pointerType==='pen')api.noticePen(event);for(const listener of listeners.get(type)||[]){if(stopped)break;listener(event);}return {prevented,stopped};};
- return {pointer,noNative:()=>api.resetNativeButtons(),tap,double:()=>{tap();tap();},undo:()=>undo,redo:()=>redo,stop,push:value=>push(value),resolve:value=>resolve(value),focus:value=>{focus=value;if(!value)for(const listener of listeners.get('blur')||[])listener();}};
+ return {pointer,noNative:()=>api.resetNativeButtons(),report,tap,double:()=>{tap();tap();},undo:()=>undo,redo:()=>redo,stop,push:value=>push(value),resolve:value=>resolve(value),focus:value=>{focus=value;if(!value)for(const listener of listeners.get('blur')||[])listener();}};
 }
 test('passive reports only undo the focused window when drawing has no dedicated display',()=>{
  const a=fixture(),b=fixture();a.double();b.double();assert.equal(a.undo(),0);assert.equal(b.undo(),0);a.focus(true);a.double();b.double();assert.equal(a.undo(),1);assert.equal(b.undo(),0);a.stop();b.stop();
@@ -21,6 +22,21 @@ test('a partial tap is discarded on ownership loss or window blur',()=>{
 });
 test('a delayed pad snapshot cannot supersede a newer ownership push',async()=>{
  const h=fixture({pad:true});h.double();assert.equal(h.undo(),0,'ownership is unknown before the first state');h.push({...owned,owned:false});h.resolve(owned);await Promise.resolve();await Promise.resolve();h.double();assert.equal(h.undo(),0);h.push(owned);h.double();assert.equal(h.undo(),1);h.stop();
+});
+
+test('the upper button redoes once across a brief proximity gap on the owned Wacom display',()=>{
+ const h=fixture({pad:true});h.push(owned);
+ h.tap('upper');assert.equal(h.redo(),0);
+ h.report({range:false});h.report();h.tap('upper');
+ assert.equal(h.redo(),1);assert.equal(h.undo(),0);h.stop();
+});
+
+test('an interrupted press, disconnect, or expired tap does not count toward redo',()=>{
+ const h=fixture({focused:true});
+ h.report({upper:true});h.report({range:false});h.report();h.tap('upper');assert.equal(h.redo(),0);
+ h.report({present:false,range:false});h.report();h.tap('upper');assert.equal(h.redo(),0);
+ h.report({range:false},410);h.report();h.tap('upper');assert.equal(h.redo(),0);
+ h.tap('upper');assert.equal(h.redo(),1);h.stop();
 });
 
 
