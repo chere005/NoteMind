@@ -222,6 +222,13 @@ struct Side: Equatable {
  * Any other shape is not a button report (nil).
  */
 func sideState(_ bytes: [UInt8]) -> Side? {
+    // The pen's standard HID report (ID 6, the one the driver reads): contact count, then tip / barrel / secondary barrel
+    // switch in bits 0-2 of byte 2, eraser bit 4, invert bit 5, in range bit 6. Barrel is the button nearer the tip.
+    if bytes.count >= 3, bytes[0] == 0x06 {
+        let status = bytes[2]
+        let range = status & 0x40 != 0
+        return Side(tip: range && status & 0x01 != 0, lower: range && status & 0x02 != 0, upper: range && status & 0x04 != 0, range: range)
+    }
     guard bytes.count >= 3, bytes[0] == 0x1E, bytes[1] <= 1 else { return nil }
     if bytes[1] == 0 { return Side() }
     let status = bytes[2]
@@ -702,6 +709,56 @@ if arguments.first == "--capture-one" {
     exit(0)
 }
 
+// The vendor interface can be silent (macOS 27 with the Wacom driver running): the pen's standard interface, which the driver
+// reads too, carries the same switches. It is read without seizing, for the buttons only; strokes keep coming from the driver.
+var standardReports = PassiveReports(contactPosition: false)
+var standardDevice: IOHIDDevice?
+var standardRefused: IOReturn = 0
+var standardUnknown = 0
+let standardBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 512)
+
+func standardPenInterface() -> IOHIDDevice? {
+    devices().first { device in
+        guard penDisplayProducts.contains(number(device, kIOHIDProductIDKey)),
+              let pairs = IOHIDDeviceGetProperty(device, kIOHIDDeviceUsagePairsKey as CFString) as? [[String: Any]] else { return false }
+        return pairs.contains { ($0[kIOHIDDeviceUsagePageKey] as? Int) == 0x0D && ($0[kIOHIDDeviceUsageKey] as? Int) == 0x02 }
+    }
+}
+
+func closeStandard() {
+    guard let device = standardDevice else { return }
+    standardDevice = nil
+    IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+    IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+    if standardReports.side != Side() { say(sideLine(Side())) }
+    standardReports = PassiveReports(contactPosition: false)
+}
+
+func openStandard() {
+    guard standardDevice == nil, let device = standardPenInterface() else { return }
+    let status = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+    if status != kIOReturnSuccess {
+        if status != standardRefused { standardRefused = status; log("the pen display's pen interface did not open: \(hex(status))") }
+        return
+    }
+    standardRefused = 0
+    standardDevice = device
+    IOHIDDeviceRegisterInputReportCallback(device, standardBuffer, 512, { _, _, _, _, _, report, length in
+        let bytes = Array(UnsafeBufferPointer(start: report, count: length))
+        if !standardReports.read(bytes, emit: say) && standardUnknown < 8 {
+            standardUnknown += 1
+            say(["k": "raw", "hex": hexLine(Array(bytes.prefix(32)))])
+        }
+    }, nil)
+    IOHIDDeviceRegisterRemovalCallback(device, { _, _, _ in closeStandard() }, nil)
+    IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+    // Without the vendor interface this is the only source: tell the app a pen display is here (no contact positions).
+    if sideDevice == nil {
+        say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": number(device, kIOHIDProductIDKey), "contactPosition": false])
+    }
+    log("reading the pen display's standard pen reports")
+}
+
 var passiveReports = PassiveReports(contactPosition: false)
 var sideUnknown = 0
 var sideDevice: IOHIDDevice?
@@ -709,13 +766,14 @@ var sideRefused: IOReturn = 0
 let sideBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 256)
 
 func closeButtons(_ why: String) {
-    guard let device = sideDevice else { return }
+    guard let device = sideDevice else { closeStandard(); return }
     sideDevice = nil
     IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
     // The buttons are not held by a display that is gone.
     if passiveReports.side != Side() { say(sideLine(Side())) }
     passiveReports = PassiveReports(contactPosition: false)
+    closeStandard()
     say(["k": "closed", "why": why])
 }
 
@@ -757,8 +815,9 @@ if arguments.first == "--buttons" {
     }
     stdinClosed.resume()
     openButtons()
+    openStandard()
     // A display plugged in later (or one whose interface was not ready yet) is found within a couple of seconds.
-    let watch = Timer(timeInterval: 2, repeats: true) { _ in openButtons() }
+    let watch = Timer(timeInterval: 2, repeats: true) { _ in openButtons(); openStandard() }
     RunLoop.main.add(watch, forMode: .common)
     CFRunLoopRun()
     exit(0)

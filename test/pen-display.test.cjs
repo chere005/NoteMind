@@ -56,6 +56,22 @@ test('the Mac helper replays normal, erase and select contacts through its passi
 	}
 });
 
+test('the Mac helper reads the side buttons from the pen display\'s standard pen report too', {
+	skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')
+},()=>{
+	// Report ID 6: contact count, then status bits 0 tip, 1 barrel (the button nearer the tip), 2 secondary barrel, 6 in range.
+	const helper=path.resolve('src/helpers/wm-pen-display');
+	const report=status=>Buffer.from([6,1,status,0,0,0]).toString('hex').match(/../g).join(' ');
+	const lines=require('node:child_process').execFileSync(helper,['--decode-passive',report(0x40),report(0x42),report(0x43),report(0x44),
+		report(0x45),report(0x40),Buffer.from([6,0,0,0,0,0]).toString('hex').match(/../g).join(' ')],{encoding:'utf8'})
+		.trim().split('\n').map(line=>JSON.parse(line));
+	assert.deepEqual(lines.map(line=>line.k),Array(7).fill('buttons'));
+	assert.deepEqual(lines.map(({tip,lower,upper,range})=>[tip,lower,upper,range]),[
+		[false,false,false,true],[false,true,false,true],[true,true,false,true],[false,false,true,true],
+		[true,false,true,true],[false,false,false,true],[false,false,false,false],
+	]);
+});
+
 test('the built Mac helper decodes display reports without opening hardware',{skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')},()=>{
  const run=(...args)=>JSON.parse(require('node:child_process').execFileSync(path.resolve('src/helpers/wm-pen-display'),args,{encoding:'utf8'}));
  assert.deepEqual(run('--decode','1e 01 c3'),{k:'buttons',range:true,tip:true,lower:true,upper:false});
