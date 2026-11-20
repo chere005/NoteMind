@@ -71,7 +71,7 @@ test('switching or overlapping barrel buttons cannot finish an Undo or Redo pair
 	}
 });
 
-test('Wacom contact supplies Draw, Erase and Select without driver pointer events',()=>{
+test('Wacom contact supplies Erase and Select without driver pointer events, and leaves plain writing to the driver',()=>{
 	const events=[],listeners=new Map(),module={exports:{}};
 	let point;
 	const window={PointerEvent:class{constructor(type,properties){Object.assign(this,{type},properties);}},
@@ -104,17 +104,22 @@ test('Wacom contact supplies Draw, Erase and Select without driver pointer event
 	send({start:false,clientX:95,clientY:70,buttons:1});
 	setNativeButtons({...active,upper:false,tip:false});
 	assert.deepEqual(events,[['pointerdown',10,20,5],['pointermove',95,70,1],['pointerup',95,70,0]]);
-	for (const buttons of [1, 3]) {
-		setNativeButtons({...active,upper:false,lower:buttons===3});
-		send({start:true,buttons});
-		setNativeButtons({...active,tip:false,upper:false});
-		assert.deepEqual(events.at(-2),['pointerdown',10,20,buttons]);
-		assert.deepEqual(events.at(-1),['pointerup',10,20,0]);
-	}
+	// A plain touch is the driver's: the display places nothing for it.
+	const before=events.length;
+	setNativeButtons({...active,upper:false});
+	send({start:true,buttons:1});
+	send({start:false,buttons:1,clientX:30});
+	setNativeButtons({...active,tip:false,upper:false});
+	assert.equal(events.length,before);
+	setNativeButtons({...active,upper:false,lower:true});
+	send({start:true,buttons:3});
+	setNativeButtons({...active,tip:false,upper:false});
+	assert.deepEqual(events.at(-2),['pointerdown',10,20,3]);
+	assert.deepEqual(events.at(-1),['pointerup',10,20,0]);
 	setNativeButtons(active);send({start:true,clientX:15,clientY:30});
 	setNativeButtons({...base,present:false,range:false});
 	assert.deepEqual(events.at(-1),['pointercancel',15,30,0]);
-	assert.deepEqual(ownership,[true,false,true,false,true,false,true,false]);
+	assert.deepEqual(ownership,[true,false,true,false,true,false]);
 	off();assert.equal(point,null);assert.equal(listeners.size,0);
 });
 

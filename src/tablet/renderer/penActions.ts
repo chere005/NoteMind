@@ -166,6 +166,11 @@ function followNative(): void {
   }
   onNativeButtons((now, was) => {
     const side = nativeSideMask(now)
+    // A side button held: the Wacom driver may freeze the pointer where the button went down (Pan/Scroll) while the pen moves on.
+    // The pen itself is on the display, so the sheet shows no pointer then (tablet.css).
+    for (const view of actionWindows) {
+      try { if (side !== 0 && now.range) view.document.documentElement.dataset.penSide = "held"; else delete view.document.documentElement.dataset.penSide } catch { /* closed */ }
+    }
     if (side !== 0 || nativeSideMask(was) !== 0) sideAt = performance.now()
     if (side !== nativeSideMask(was)) trace("native", { lower: now.lower, upper: now.upper, tip: now.tip, range: now.range, eligible: nativeActionsEligible(), pad: actionPad })
     if(!nativeActionsEligible()){setTap(noTap);return}
@@ -204,9 +209,19 @@ function installNativeGuard(win: Window): () => void {
     if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false
     return Math.hypot(clientX - lastPoint.x, clientY - lastPoint.y) <= 24
   }
+  /** The driver's own events while the display's pen is in play, each press, release and change of buttons once: startup.log. */
+  let driverSeen = ""
+  const noteDriver = (e: PointerEvent): void => {
+    const seen = e.pointerType + " " + e.buttons
+    if (e.type === "pointermove" && seen === driverSeen) return
+    driverSeen = seen
+    trace("driver", { type: e.type, pointer: e.pointerType, button: e.button, buttons: e.buttons, pressure: Math.round((e.pressure ?? 0) * 1000) / 1000,
+      x: Math.round(e.clientX), y: Math.round(e.clientY) })
+  }
   const pointer = (event: Event): void => {
     const e = event as PointerEvent
     if (e.pointerType === "mouse" && (e.pointerId === MIRROR_MOUSE_POINTER_ID || isPadMirrorEvent(e))) return
+    if (nativeLive() && e.pointerId !== SYNTH_POINTER_ID && (e.pointerType === "pen" || e.button === 1 || e.button === 2 || (e.buttons & 6) !== 0)) noteDriver(e)
     const pen = e.pointerType === "pen" && e.pointerId !== SYNTH_POINTER_ID
     const contacting = pen && inContact(e)
     if (pen && nativeLive() && e.type === "pointermove") {
@@ -248,7 +263,9 @@ function installNativeGuard(win: Window): () => void {
     }
     // Mouse-form events can be the Wacom driver's echo, but a side-button report is broadcast to every app window.
     // Only suppress the echo at the recent pen point in the window receiving that pen; preserve real mouse input elsewhere.
-    if (e.pointerType === "mouse" && nativeSideBusy() && !nativeState().tip && atLocalPen(event)) drop(event)
+    // (the driver's click can reach the page before the display's report of the button: with the display's pen in range, a
+    // right or middle press at the pen's own point is that click)
+    if (e.pointerType === "mouse" && (nativeSideBusy() || nativeLive()) && !nativeState().tip && atLocalPen(event)) drop(event)
   }
   const mouse = (event: Event): void => {
     if (isPadMirrorEvent(event)) return
@@ -258,13 +275,14 @@ function installNativeGuard(win: Window): () => void {
     if (e.type === "contextmenu") {
       // (a menu comes with the PRESS on a Mac, perhaps before the display's report of it: while its pen is in play, the pen's own menu is dropped too)
       if (allowMenu) return
-      if ((nativeSideBusy() && atLocalPen(event)) || (nativeLive() && (e as PointerEvent).pointerType === "pen")) drop(event)
+      if (((nativeSideBusy() || nativeLive()) && atLocalPen(event)) || (nativeLive() && (e as PointerEvent).pointerType === "pen")) drop(event)
       return
     }
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return
-    if (nativeSideBusy() && atLocalPen(event) && (e.button !== 0 || !nativeState().tip)) drop(event)
+    if ((nativeSideBusy() || (nativeLive() && e.button !== 0)) && atLocalPen(event) && (e.button !== 0 || !nativeState().tip)) drop(event)
   }
-  const wheel = (event: Event): void => { if (nativeSideBusy() && atLocalPen(event)) drop(event) }
+  // (Pan/Scroll turns the pen's movement into a wheel while a side button is down: with the display's pen in play, that is never a scroll)
+  const wheel = (event: Event): void => { if (nativeSideBusy() && (nativeLive() || atLocalPen(event))) drop(event) }
   const listeners: [string, (event: Event) => void][] = [
     ...DRIVER_POINTER.map((type): [string, (event: Event) => void] => [type, pointer]),
     ...DRIVER_MOUSE.map((type): [string, (event: Event) => void] => [type, mouse]),
@@ -286,7 +304,8 @@ export function installPenActions(win: Window = window): () => void {
   const hear = (phase: Phase) => (event: PointerEvent) => {
     if (event.pointerType === "mouse") { echo(phase, event); return }
     if (event.pointerType !== "pen") return
-    lastPoint = { x: event.clientX, y: event.clientY }
+    // (the driver's pointer, where its echoes land: not the display's own placing of a touch, which can be far from a frozen pointer)
+    if (event.pointerId !== SYNTH_POINTER_ID) lastPoint = { x: event.clientX, y: event.clientY }
     lastView = win
     if (!nativeLive() && !silentNoted && ++penEventsWithoutReports === 40) {
       // The pen is moving in this window and the display has told us nothing of it: its button reports are not arriving.

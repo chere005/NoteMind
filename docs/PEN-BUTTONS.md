@@ -37,7 +37,7 @@ Changing a row needs the owner's explicit word, and this file and all three test
 
 ## Input paths
 
-On a supported Wacom One 12, NoteMind reads the physical switches and the contact coordinates itself, even when the Wacom driver turns a button into Pan/Scroll: tip strokes, pressure and every gesture above come from that path. The drawing surface under the first contact owns a gesture until the tip lifts. For devices that give only driver clicks, Right Click is read as the bottom button and Middle Click as the top button.
+On a supported Wacom One 12, NoteMind reads the physical switches and the contact coordinates itself, from the pen report the display sends to the Wacom driver (report ID 6). A touch made with a side button held (or a chord) is placed by the display alone, its tip and its position, whatever the driver makes of that button: Right Click (a press that can carry pressure while the pen only hovers) or Pan/Scroll (the pointer frozen where the button went down, the movement turned into a wheel). None of the driver's events for it starts anything on the sheet, and the sheet shows no pointer while a side button is held. Plain writing stays the driver's. The drawing surface under the first contact owns a gesture until the tip lifts. For devices that give only driver clicks, Right Click is read as the bottom button and Middle Click as the top button.
 
 ## macOS permission
 
@@ -45,13 +45,13 @@ The helper that reads the display's buttons needs **Input Monitoring** for NoteM
 
 ## Reading what a real pen did
 
-`pen.log` (the app's data folder) has a `buttons` line for every report the display's helper delivers (tip, bottom, top, in range) and a `contact-dropped` line when a touch could not be used. `startup.log` has `[pen]` lines for what the runtime decided: `native` (a button changed, and whether button gestures were allowed), `chord`, `double-tap`, and `press` (what a touch with a button held became). Gestures that do nothing on a real pen can be read from these.
+`pen.log` (the app's data folder) has a `buttons` line for every report the display's helper delivers (tip, bottom, top, in range) and a `contact-dropped` line when a touch could not be used. `startup.log` has `[pen]` lines for what the runtime decided: `native` (a button changed, and whether button gestures were allowed), `chord`, `double-tap`, `press` (what a touch with a button held became), `gesture` (what the sheet started for it, and whether the display placed it), and `driver` (each press, release and change of buttons the Wacom driver itself sent while the display's pen was in play). Gestures that do nothing on a real pen can be read from these.
 
 ## Where it lives
 
 | What | Where |
 |---|---|
-| Which switch is which (display report byte 2: `0x02` bottom, `0x04` top; read from the vendor interface's report `0x1E` and from the pen's standard report ID 6, which the Wacom driver reads and which keeps flowing when the vendor stream is silent) | `tools/pen/wm-pen-display.swift` (`sideState`), `src/tablet/main/pen/macPenBackend.ts` |
+| Which switch is which and where the pen touches (display report byte 2: `0x02` bottom, `0x04` top, `0x01` tip; read from the pen's standard report ID 6, which the Wacom driver reads and which keeps flowing when the vendor stream is silent, X/Y/pressure at bytes 3/6/9; and from the vendor interface's report `0x1E`) | `tools/pen/wm-pen-display.swift` (`sideState`), `src/tablet/main/pen/macPenBackend.ts` |
 | The DOM button masks, native overlay | `src/tablet/renderer/penButtons.ts` (`withNative`, `slotOf`, `inContact`), `nativeButtons.ts` |
 | Default jobs, saved settings and their migration | `penButtons.ts` (`DEFAULT_BUTTONS`, `migrateButtons`), `penSettings.ts` |
 | Double-tap and chord state machine (pure) | `penButtons.ts` (`tapStep`) |

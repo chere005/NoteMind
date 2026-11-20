@@ -156,3 +156,5 @@
 .selection-mirror .box-actions{max-width:calc(100% - 12px);height:auto;flex-wrap:wrap;white-space:normal}
 .selection-mirror .box-actions button.primary{background:var(--wm-accent-fill,var(--wm-accent));color:#fff}
 .selection-mirror .box-actions button.danger{color:#ff8f85}
+/* A pen side button held: the driver may hold the pointer still while the pen moves on (penActions.ts); the pen is its own pointer. */
+html[data-pen-side] .tablet-host .tablet { cursor: none !important; }

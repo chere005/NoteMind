@@ -235,8 +235,14 @@ export function withNative(event: PressLike): PressLike {
   // Positive pen pressure identifies that real contact; a zero-pressure driver click during a held button or tail does not.
   const domTip = (event.buttons & BIT.tip) !== 0
   const sideDown = native.lower || native.upper
-  const pressureContact = (event.pressure ?? 0) > 0 && (event.buttons & (BIT.tip | SIDE)) !== 0
-  const tipDown = native.tip || pressureContact || (domTip && !sideDown && !nativeSideBusy())
+  // With a side button involved, a display that reports where its pen touches decides contact by its own tip: what the driver makes
+  // of the button (a click with a pressure of 0.5 or 1, a tip bit at the frozen Pan/Scroll point) is never a touch. Plain writing
+  // keeps the driver's own contact, which can reach the page before the display's report of it.
+  const sideInvolved = sideDown || (event.buttons & SIDE) !== 0 || event.button === 1 || event.button === 2
+  const displayDecides = native.contactPosition === true && sideInvolved
+  const pressure = event.pressure ?? 0
+  const pressureContact = !displayDecides && pressure > 0 && (domTip || ((event.buttons & SIDE) !== 0 && pressure !== 0.5))
+  const tipDown = native.tip || pressureContact || (!displayDecides && domTip && !sideDown && !nativeSideBusy())
   const buttons = (event.buttons & ~(SIDE | BIT.tip)) | nativeSideMask(native) | (tipDown ? BIT.tip : 0)
   const button = event.button === 1 || event.button === 2 ? (tipDown ? 0 : -1) : event.button
   return {
@@ -253,6 +259,19 @@ export function displayMouseContact(event: PressLike): PressLike {
   const { pointerId, pressure, ctrlKey, metaKey, altKey, shiftKey } = event
   return { pointerType: "pen", pointerId, pressure, ctrlKey, metaKey, altKey, shiftKey,
     button: 0, buttons: BIT.tip | nativeSideMask(state), viaDisplay: true }
+}
+
+/**
+ * The display places this touch itself (nativeButtonsFeed.ts): it is in play, reports where its pen touches, and a side button is
+ * down by its report or by this event. The driver's version of such a touch starts nothing on a sheet, whatever the driver made of
+ * the button (a pointer frozen where Pan/Scroll began, a right click carrying pressure while the pen hovers). Plain writing stays
+ * the driver's.
+ */
+export function displayPlacesHold(event: PressLike): boolean {
+  if (event.pointerId === SYNTH_POINTER_ID || !nativeLive()) return false
+  const native = nativeState()
+  if (native.contactPosition !== true) return false
+  return native.lower || native.upper || (event.buttons & SIDE) !== 0 || event.button === 1 || event.button === 2
 }
 
 /** The DOM `buttons` mask of the pen as the app reads it (withNative): tip 1, lower button 2, upper button 4, eraser end 32. */

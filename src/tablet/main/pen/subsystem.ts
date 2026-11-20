@@ -165,12 +165,20 @@ function build(deps: PenSubsystemDeps): PenSubsystem {
   const buttons = createButtonsFeed()
   const buttonsReader = deps.platform === "darwin" && !deps.e2e ? new MacPenButtons(deps.displayHelper ?? null, buttons, trace, now) : null
   let contactFrame: { win: BrowserWindow; pad: boolean; bounds: Box; origin: Box; rotation: number } | null = null
-  const offContact = buttons.onChange(state => { if (!state.tip) contactFrame = null })
+  // A touch that lands on a window the system has not focused yet (the touch itself focuses it): it starts at its next point.
+  let startPending = false
+  const offContact = buttons.onChange(state => { if (!state.tip) { contactFrame = null; startPending = false } })
   if (buttonsReader) buttonsReader.contactPoint = ({ x, y, ...contact }) => {
+	if (!contact.start && !contactFrame && startPending) contact = { ...contact, start: true }
 	if (contact.start) {
 	  contactFrame = null
+	  startPending = false
 	  const win = deps.window(), pad = deps.displayTarget?.()
-	  if (!win || win.isDestroyed() || (!pad && !win.isFocused())) { trace.event("manager", "contact-dropped", { why: !win || win.isDestroyed() ? "no window" : "window not focused" }); return }
+	  if (!win || win.isDestroyed() || (!pad && !win.isFocused())) {
+		startPending = !!win && !win.isDestroyed()
+		trace.event("manager", "contact-dropped", { why: !win || win.isDestroyed() ? "no window" : "window not focused" })
+		return
+	  }
 	  const display = pad ?? deps.screen.getAllDisplays().find(display => /wacom/i.test(display.label))
 		?? deps.screen.getDisplayNearestPoint(deps.screen.getCursorScreenPoint())
 	  const origin = pad?.bounds ?? win.getContentBounds()

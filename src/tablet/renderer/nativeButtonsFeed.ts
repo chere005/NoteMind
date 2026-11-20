@@ -16,6 +16,9 @@ export function installNativeButtons(): void {
  window.addEventListener('focus',refresh)
 }
 
+/** The side buttons in a contact point's mask: lower 2, upper 4. */
+const SIDE_BUTTONS = 6
+
 type ContactPoint = { clientX: number; clientY: number; pad: boolean; start: boolean; buttons: number; pressure: number; tiltX: number; tiltY: number }
 
 /** Use raw contact on the drawing surface under the tip. A driver gesture already in progress keeps its owner. */
@@ -50,6 +53,9 @@ export function watchDisplayContact(surface: HTMLElement, canStart: () => boolea
 		if (!state.contactPosition || !state.tip) return
 		if (point.start) {
 			end(true)
+			// Plain writing is the driver's, with its own calibration. The display places a touch made with a side button held, which
+			// the driver may have turned into a click, a frozen pointer or a scroll.
+			if ((point.buttons & SIDE_BUTTONS) === 0) return
 			const target = surface.ownerDocument.elementFromPoint(point.clientX, point.clientY)
 			if (!canStart() || !surface.contains(target) || target?.closest('button')) return
 			ownsContact(true)

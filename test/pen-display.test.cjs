@@ -72,6 +72,28 @@ test('the Mac helper reads the side buttons from the pen display\'s standard pen
 	]);
 });
 
+test('the Mac helper places a touch from the pen display\'s standard pen report, so a touch with a side button held needs no driver event', {
+	skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')
+},()=>{
+	// Report ID 6 as the display's descriptor lays it out: X at 3 (16 bits, 0...25632), Y at 6 (0...14418), pressure at 9 (0...4095),
+	// tilt at 11 and 13 in hundredths of a degree.
+	const helper=path.resolve('src/helpers/wm-pen-display');
+	const report=(status,x=0,y=0,p=0,tiltX=0,tiltY=0)=>{
+		const bytes=Buffer.alloc(34);bytes.set([6,1,status]);bytes.writeUInt16LE(x,3);bytes.writeUInt16LE(y,6);bytes.writeUInt16LE(p,9);
+		bytes.writeInt16LE(tiltX,11);bytes.writeInt16LE(tiltY,13);return bytes.toString('hex').match(/../g).join(' ');
+	};
+	for (const side of [0,2,4]) {
+		const lines=require('node:child_process').execFileSync(helper,['--decode-passive',report(0x40|side,100,200),
+			report(0x41|side,12816,7209,2048,1234,-2990),report(0x41|side,25632,14418,4095,9000,-9000),report(0x40|side,25632,14418)],{encoding:'utf8'})
+			.trim().split('\n').map(line=>JSON.parse(line));
+		assert.deepEqual(lines.map(line=>line.k),['buttons','buttons','contact-point','contact-point','contact-point','buttons']);
+		// (the lift report carries the last touch's place, as the vendor report's does)
+		assert.deepEqual(lines.filter(line=>line.k==='contact-point').map(({x,y,p,f,tiltX,tiltY,start})=>[x,y,p,f,tiltX,tiltY,start]),
+			[[12816,7209,2048,0xe1|side,12,-30,true],[25632,14418,4095,0xe1|side,63,-64,false],[25632,14418,4095,0xe1|side,0,0,false]]);
+		assert.deepEqual(lines.at(-1),{k:'buttons',tip:false,lower:side===2,upper:side===4,range:true});
+	}
+});
+
 test('the built Mac helper decodes display reports without opening hardware',{skip:process.platform!=='darwin'||!fs.existsSync('src/helpers/wm-pen-display')},()=>{
  const run=(...args)=>JSON.parse(require('node:child_process').execFileSync(path.resolve('src/helpers/wm-pen-display'),args,{encoding:'utf8'}));
  assert.deepEqual(run('--decode','1e 01 c3'),{k:'buttons',range:true,tip:true,lower:true,upper:false});

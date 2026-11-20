@@ -17,7 +17,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react"
 import { isBoxDrag, type Point, type Rect, type Size } from "@notemind/core"
-import { displayMouseContact, holdBegins, inContact, penLifted, resolvePress, slotOf, SYNTH_POINTER_ID, withNative } from "./penButtons"
+import { displayMouseContact, displayPlacesHold, holdBegins, inContact, penLifted, resolvePress, slotOf, SYNTH_POINTER_ID, withNative } from "./penButtons"
 import { watchDisplayContact } from "./nativeButtonsFeed"
 import { isPadMirrorEvent, MIRROR_MOUSE_POINTER_ID } from "./padMirrorInput"
 import { penNear, penSettings, sheetPressSettings, useSheetTools } from "./penSettings"
@@ -646,6 +646,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     if (event.pointerType === "touch" && penNear()) { event.preventDefault(); return }
     const input = drawingPress(event), pen = input.pointerType === "pen"
 	if (rawContact.current && pen && event.pointerId !== SYNTH_POINTER_ID) { event.preventDefault(); return }
+	// The display places a touch made with a side button held: the driver's version of it starts nothing (penButtons.displayPlacesHold).
+	if (pen && !isPadMirrorEvent(event) && displayPlacesHold(input)) { event.preventDefault(); return }
     if (pen) touching.current = inContact(input)
     if (precision.pendingGesture()||inkSelect.pendingGesture()||pendingInput(event)||deferredInputs.current.some(input=>!input.ended&&input.pointerId!==event.pointerId)||gesture.current && gesture.current.pointerId !== event.pointerId) return
     if (!pen && event.button !== 0 && !(event.pointerType === "mouse" && event.button === 2)) return
@@ -653,6 +655,8 @@ export const TabletSurface = forwardRef<SurfaceHandle, Props>(function TabletSur
     const press=resolvePress(input,sheetPressSettings());let action=press.kind;if(precision.panArmed&&!slotOf(withNative(input))&&!event.ctrlKey&&!event.metaKey)action='pan'
     // Nothing to do here: a side button pressed in the air (its double tap is the runtime's, penActions.ts), or Pan.
     if (action === "ignore") return
+    // What a touch made with a button (or a chord) became, and who placed it: startup.log, for a pen that seems wrong.
+    if (pen && action !== "draw") try { console.error("[pen] gesture " + JSON.stringify({ action, display: event.pointerId === SYNTH_POINTER_ID, buttons: input.buttons, x: Math.round(event.clientX), y: Math.round(event.clientY) })) } catch { /* a trace never breaks the pen */ }
     if (input !== event) driverPointer.current = event.pointerId
     wrap.current?.focus({ preventScroll: true })
     // Keep the gesture when the pointer strays past the edge (a synthetic event has no pointer to capture: the feed keeps the target itself).

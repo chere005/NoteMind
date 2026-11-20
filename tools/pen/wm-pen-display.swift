@@ -261,7 +261,27 @@ func signed16LE(_ bytes: [UInt8], _ offset: Int) -> Int {
     Int(Int16(bitPattern: UInt16(uintLE(bytes, offset, 2))))
 }
 
+/// The pen's standard report (ID 6, read from the display's own descriptor): contact count at byte 1; status at byte 2 (bit 0 tip,
+/// 1 barrel, 2 secondary barrel, 5 invert, 6 in range); X[3...4] 0...25632 and Y[6...7] 0...14418, each followed by a padding byte;
+/// pressure[9...10] 0...4095; tilt X/Y at [11...12]/[13...14] in hundredths of a degree. It is given the vendor report's flags and
+/// whole-degree tilt, so one contact path serves both.
+func standardPen(_ bytes: [UInt8]) -> OnePen? {
+    guard bytes.count >= 15, bytes[0] == 0x06 else { return nil }
+    let x = uintLE(bytes, 3, 2), y = uintLE(bytes, 6, 2), pressure = uintLE(bytes, 9, 2)
+    guard x <= 25632, y <= 14418, pressure <= 4095 else { return nil }
+    let degrees = { (offset: Int) -> Int in min(63, max(-64, Int((Double(signed16LE(bytes, offset)) / 100).rounded()))) }
+    let status = bytes[2]
+    let range = status & 0x40 != 0
+    var flags = range ? 0x80 | 0x40 | 0x20 : 0
+    if range && status & 0x01 != 0 { flags |= 0x01 }
+    if range && status & 0x02 != 0 { flags |= 0x02 }
+    if range && status & 0x04 != 0 { flags |= 0x04 }
+    if range && status & 0x20 != 0 { flags |= 0x08 }
+    return OnePen(flags: flags, x: x, y: y, pressure: pressure, contactCount: Int(bytes[1]), tiltX: degrees(11), tiltY: degrees(13))
+}
+
 func onePen(_ bytes: [UInt8]) -> OnePen? {
+    if bytes.first == 0x06 { return standardPen(bytes) }
     guard bytes.count == 34, bytes[0] == 0x1E, bytes[1] <= 1 else { return nil }
     let x = uintLE(bytes, 3, 3), y = uintLE(bytes, 6, 3), pressure = uintLE(bytes, 9, 2)
     let tiltX = signed16LE(bytes, 11), tiltY = signed16LE(bytes, 13)
@@ -710,8 +730,9 @@ if arguments.first == "--capture-one" {
 }
 
 // The vendor interface can be silent (macOS 27 with the Wacom driver running): the pen's standard interface, which the driver
-// reads too, carries the same switches. It is read without seizing, for the buttons only; strokes keep coming from the driver.
-var standardReports = PassiveReports(contactPosition: false)
+// reads too, carries the same switches and the pen's position. It is read without seizing: the driver keeps the pointer, and a
+// touch made with a side button held is placed by the display's own report, whatever the driver makes of that button.
+var standardReports = PassiveReports(contactPosition: true)
 var standardDevice: IOHIDDevice?
 var standardRefused: IOReturn = 0
 var standardUnknown = 0
@@ -731,7 +752,7 @@ func closeStandard() {
     IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
     if standardReports.side != Side() { say(sideLine(Side())) }
-    standardReports = PassiveReports(contactPosition: false)
+    standardReports = PassiveReports(contactPosition: true)
 }
 
 func openStandard() {
@@ -752,10 +773,8 @@ func openStandard() {
     }, nil)
     IOHIDDeviceRegisterRemovalCallback(device, { _, _, _ in closeStandard() }, nil)
     IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-    // Without the vendor interface this is the only source: tell the app a pen display is here (no contact positions).
-    if sideDevice == nil {
-        say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": number(device, kIOHIDProductIDKey), "contactPosition": false])
-    }
+    // This interface is the one that reports: tell the app a pen display is here, with its contact positions.
+    say(["k": "opened", "mode": "buttons", "name": text(device, kIOHIDProductKey), "pid": number(device, kIOHIDProductIDKey), "contactPosition": true])
     log("reading the pen display's standard pen reports")
 }
 

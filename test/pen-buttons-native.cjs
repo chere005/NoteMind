@@ -30,10 +30,45 @@ app.on('browser-window-created', (_, w) => {
       await pause(30);
     };
     const sides = buttons => ({lower: (buttons & LOWER) !== 0, upper: (buttons & UPPER) !== 0});
-    const hover = async (x, y, buttons) => reportPen({tip: false, ...sides(buttons)});
-    const down = async (x, y, buttons) => { await reportPen({tip: true, ...sides(buttons)}); await contact(true, x, y, buttons); await pause(20); };
-    const move = async (x, y, buttons) => contact(false, x, y, buttons);
-    const up = async (x, y, buttons) => { await reportPen({tip: false, ...sides(buttons)}); await pause(700); };
+    // What the Wacom driver sends the page for the same pen, beside the display's reports, as Sean's Wacom One 12 is set up
+    // (Wacom Center: bottom button Right Click, top button Pan/Scroll):
+    //  - the plain tip: pen events where the pen is;
+    //  - the bottom button: a right click as a pen press of button 2 with pressure 1 while the pen only hovers, the same as a mouse
+    //    right click at the pen, then pen moves that carry the button and, once the tip touches, the tip and a pressure;
+    //  - the top button: the pointer frozen where the button went down, a touch reported THERE when the tip touches, the pen's
+    //    movement turned into a wheel at that point, nothing where the pen really is.
+    const driver = (type, x, y, button, buttons, pressure, pointerType = 'pen') => js(`(()=>{const s=document.querySelector('[data-tablet=surface]'),
+      r=s.getBoundingClientRect(),at={clientX:r.left+r.width*${x},clientY:r.top+r.height*${y}};
+      s.dispatchEvent('${type}'==='wheel'?new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:24,...at})
+        :new PointerEvent('${type}',{bubbles:true,cancelable:true,pointerId:${pointerType === 'pen' ? 7 : 1},pointerType:'${pointerType}',isPrimary:true,button:${button},
+          buttons:${buttons},pressure:${pressure},...at}))})()`);
+    let frozen = null, rightHeld = false;
+    const echo = async (phase, x, y, buttons) => {
+      if (buttons & UPPER) {
+        frozen = frozen ?? [x, y];
+        const [fx, fy] = frozen;
+        if (phase === 'down') await driver('pointerdown', fx, fy, 0, TIP | UPPER, 0.6);
+        else if (phase === 'move') { await driver('pointermove', fx, fy, -1, TIP | UPPER, 0.6); await driver('wheel', fx, fy, 0, 0, 0); await driver('wheel', x, y, 0, 0, 0); }
+        else if (phase === 'up') await driver('pointerup', fx, fy, 0, UPPER, 0);
+        else await driver('pointermove', fx, fy, -1, UPPER, 0);
+        return;
+      }
+      frozen = null;
+      if (buttons & LOWER) {
+        if (!rightHeld) { rightHeld = true; await driver('pointerdown', x, y, 2, LOWER, 1); await driver('pointerdown', x, y, 2, LOWER, 1, 'mouse'); await driver('pointerup', x, y, 2, 0, 0, 'mouse'); }
+        const touching = phase === 'down' || phase === 'move';
+        await driver('pointermove', x, y, -1, LOWER | (touching ? TIP : 0), touching ? 0.6 : 1);
+        return;
+      }
+      if (rightHeld) { rightHeld = false; await driver('pointerup', x, y, 2, 0, 0); }
+      if (phase === 'hover') return;
+      await driver(phase === 'down' ? 'pointerdown' : phase === 'up' ? 'pointerup' : 'pointermove', x, y, phase === 'move' ? -1 : 0, phase === 'up' ? 0 : TIP, phase === 'up' ? 0 : 0.5);
+    };
+    const hover = async (x, y, buttons) => { await reportPen({tip: false, ...sides(buttons)}); await echo('hover', x, y, buttons); };
+    // The driver's event for a touch can reach the page before the display's report of it: that order is the one played here.
+    const down = async (x, y, buttons) => { await echo('down', x, y, buttons); await reportPen({tip: true, ...sides(buttons)}); await contact(true, x, y, buttons); await pause(20); };
+    const move = async (x, y, buttons) => { await echo('move', x, y, buttons); await contact(false, x, y, buttons); };
+    const up = async (x, y, buttons) => { await echo('up', x, y, buttons); await reportPen({tip: false, ...sides(buttons)}); await pause(700); };
     // Timed button sequences: the presses and releases the display reports, with the gaps between them.
     const play = async steps => { for (const [, , buttons, wait] of steps) { await reportPen({tip: false, ...sides(buttons)}); await pause(wait); } };
     const tapSteps = (button, x = 0.5, y = 0.5) => [[x, y, button, 70], [x, y, 0, 10]];
@@ -67,16 +102,32 @@ app.on('browser-window-created', (_, w) => {
       await write(0.6);
       const drawn = await strokes();
       const fitted = await view();
-      check((await strokes()).length === 2, 'The plain tip writes two strokes');
+      check((await strokes()).length === 2, 'The plain tip writes two strokes, each once, with the driver\'s events and the display\'s reports both arriving');
+      check(drawn.every(stroke => stroke.count >= 6), 'A plain stroke has every sample the driver sent');
 
       // Bottom button: delete on tap, only when the tip touches.
+      // The driver's right click for the button reaches the page before the display's report of it, with a pressure (0.5 or 1),
+      // and then follows the hovering pen: that is the button, not a touch.
+      for (const pressure of [0.5, 1]) {
+        await driver('pointerdown', 0.25, 0.3, 2, LOWER, pressure);
+        for (const x of [0.3, 0.5, 0.7]) await driver('pointermove', x, 0.3, -1, LOWER, pressure);
+        await driver('pointerup', 0.7, 0.3, 2, 0, 0);
+      }
+      check((await strokes()).length === 2, 'Bottom button pressed while hovering, the driver\'s click arriving first: nothing is erased and nothing is drawn');
       for (const x of [0.3, 0.5, 0.7]) await hover(x, 0.3, LOWER);
-      check((await strokes()).length === 2, 'Bottom button held while hovering over ink erases nothing');
+      check((await strokes()).length === 2, 'Bottom button held while hovering over ink, with the driver\'s right click: nothing is erased');
+      await hover(0.7, 0.3, 0);
       await down(0.5, 0.3, LOWER);
       await up(0.5, 0.3, LOWER);
       await hover(0.5, 0.3, 0, 100);
       let now = await strokes();
       check(now.length === 1 && Math.abs(now[0].y - drawn[1].y) < 1e-9, 'Bottom button held, tip tapped on a stroke: that stroke (and only it) is deleted');
+      // The same touch away from any ink: the driver's right click draws nothing and deletes nothing.
+      await down(0.5, 0.9, LOWER);
+      await move(0.6, 0.9, LOWER);
+      await up(0.6, 0.9, LOWER);
+      await hover(0.6, 0.9, 0, 100);
+      check((await strokes()).length === 1, 'Bottom button held, tip dragged over empty paper: nothing is drawn and nothing else is deleted');
 
       // Bottom button double-tap: Undo. Top button double-tap: Redo.
       await doubleTap(LOWER);
@@ -94,6 +145,12 @@ app.on('browser-window-created', (_, w) => {
       await up(0.9, 0.72, UPPER);
       await pause(300);
       check(await selected(), 'Top button held, tip dragged over a stroke: the stroke is selected');
+      // The box follows the pen, not the pointer the driver froze where the button went down.
+      const outline = await js(`(()=>{const r=document.querySelector('[data-ink-selection=outline] rect'),n=k=>Number(r.getAttribute(k))/1000;
+        return {left:n('x'),right:n('x')+n('width'),top:n('y'),bottom:n('y')+n('height')}})()`);
+      const near = (a, b) => Math.abs(a - b) < 0.02;
+      check(near(outline.left, 0.1) && near(outline.right, 0.9) && near(outline.top, 0.5) && near(outline.bottom, 0.72),
+        'The selection box is the pen\'s drag (0.1 to 0.9, 0.5 to 0.72), not the frozen pointer at 0.2, 0.6: ' + JSON.stringify(outline));
       check((await strokes()).length === 2, 'Selecting erases nothing');
       await js(`window.dispatchEvent(new CustomEvent('notemind-command',{detail:'pen:clearSelection'}))`);
       await pause(300);
