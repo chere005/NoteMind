@@ -2,5 +2,5 @@
   <!-- NoteMind: NM in the suite's monoline style, cyan. -->
   <rect width="96" height="96" rx="20" fill="#111111"/>
   <path d="M 18 70 L 18 26 L 42 70 L 42 26 M 58 70 L 58 40 L 68 54 L 78 40 L 78 70"
-        fill="none" stroke="#38bdf8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+        fill="none" stroke="#2bc4ea" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
