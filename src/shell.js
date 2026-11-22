@@ -28,15 +28,14 @@
     if(!local)return {state:'waiting',message:'Waiting for an iCloud Drive copy'};
     if(!web?.signedIn)return {state:'copied',message:'Copied to iCloud Drive. Sign in to publish to the web viewer.'};
     const remote=web.files[local.rel];
-    if(remote?.state==='synced'&&remote.size===local.size&&remote.mtime===local.mtime)return {state:'synced',message:'Available in the web viewer'};
-    if(remote?.state==='error')return remote;
-    if(web.error)return {state:'error',message:'Could not update the web viewer'};
+    if(remote?.state==='synced'&&remote.size===local.size&&remote.mtime===local.mtime)return {state:'synced',message:'Copied to iCloud Drive and available in the web viewer.'};
+    if(remote?.state==='error'||web.error)return {state:'error',message:'Copied to iCloud Drive. Could not update the web viewer.'};
     return web.busy?{state:'syncing',message:'Sending to the web viewer'}:{state:'waiting',message:'Waiting to send to the web viewer'};
   }
   function paintSync(row) {
     const state=syncState(row);
     let badge=row.querySelector('.note-sync');
-    if(!state){badge?.remove();return;}
+    if(!state){badge?.remove();row.removeAttribute('aria-description');return;}
     if(!badge){
       badge=document.createElement('span');
       badge.className='note-sync';
@@ -52,8 +51,11 @@
     }
     if(badge.dataset.state!==state.state)badge.innerHTML='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+syncSymbols[state.state]+'</svg>';
     badge.dataset.state=state.state;
-    badge.title=state.message;
-    badge.setAttribute('aria-label',state.message);
+    if(badge.dataset.tooltip!==state.message){
+      badge.dataset.tooltip=state.message;
+      badge.setAttribute('aria-label',state.message);
+      row.setAttribute('aria-description',state.message);
+    }
   }
   function updateSync(snapshot) {
     syncSnapshot=snapshot;

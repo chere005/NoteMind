@@ -70,6 +70,12 @@ app.on('browser-window-created',(_,w)=>{w.setFocusable(false);w.webContents.setB
   check(await indicator(unrelated)==='waiting','A different filename keeps its own state');
   check(await waitFor(async()=>{const r=await record(recordName('Week.nm'));return !!r&&r.fields.text.includes('The plan.');},40000),'A Notepad saved later is copied to iCloud Drive and then sent');
   check(await waitFor(async()=>await indicator(file)==='synced',5000),'The icon confirms the file appears in the web index');
+  await js(f=>{
+    const badge=[...document.querySelectorAll('.note-row')].find(row=>row.dataset.path===f).querySelector('.note-sync');
+    const box=badge.getBoundingClientRect();
+    badge.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:box.x,clientY:box.y}));
+  },file);
+  check(await waitFor(()=>js(()=>document.querySelector('[role=tooltip]')?.textContent==='Copied to iCloud Drive and available in the web viewer.'),3000),'Hovering the synced file icon shows its copy and web status');
   web.close();
   check(!web.isDestroyed()&&!web.isVisible(),'Closing the window hides it; sending goes on');
   await page(()=>window.__fake.signOut());
