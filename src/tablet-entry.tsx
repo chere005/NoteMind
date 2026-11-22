@@ -92,7 +92,7 @@ installPenActions();
 const sheetSignature=s=>s.loaded===false?(s.name===s.lazyMetadata?.name&&JSON.stringify(s.paper)===JSON.stringify(s.lazyMetadata?.paper)?s.lazySignature:'pending:'+JSON.stringify([s.name,s.paper])):signatureOf(s,paper());
 const importedAspectIsFixed=(item,strokeCount)=>item.fixedAspect===true||(item.fixedAspect==null&&strokeCount>0);
 function App(){
- const [drawingZoom,setDrawingZoom]=useState<number|null>(null);
+ const [drawingZoom,setDrawingZoom]=useState<number|null>(1);
  const [drawingDisplay,setDrawingDisplay]=useState<DrawingDisplay>(DEFAULT_WACOM_SIZE);
  const [matchWacom,setMatchWacom]=useState(false);
  // The drawing takes the Wacom window's shape (the divider's reset) only while the Wacom display is a screen of its own: mirrored, it fills the pane.

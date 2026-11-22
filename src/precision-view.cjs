@@ -11,7 +11,12 @@ function viewSize(state,zoom=state.zoom){
 }
 function viewport(state){const {width,height}=viewSize(state);return{x:state.center.x-width/2,y:state.center.y-height/2,width,height};}
 function bounded(state){const {width,height}=viewSize(state),axis=(position,start,length,view)=>view>=length?start+length/2:clamp(position,start+view*(.5-state.padding),start+length-view*(.5-state.padding));const center={x:axis(state.center.x,state.frame.x,state.frame.width,width),y:axis(state.center.y,state.frame.y,state.frame.height,height)};if(!point(center)||!coordinate(center.x+width/2)||!coordinate(center.y+height/2)||width<=0||height<=0)throw Error('Precision view exceeds the numeric range.');const next=Object.freeze({...state,center:Object.freeze(center)});recognized.add(next);return next;}
-function create({frame={x:0,y:0,width:1,height:1},size={width:1,height:1},aspect=1,minZoom=1,maxZoom=64,padding=.1}={}){frame=rect(frame);if(!coordinate(aspect)||aspect<=0||!Number.isFinite(minZoom)||!Number.isFinite(maxZoom)||minZoom<.125||minZoom>1||maxZoom<1||maxZoom>256||!Number.isFinite(padding)||padding<0||padding>.5)throw Error('Invalid precision view limits.');return bounded({frame,stage:stage(size),aspect,minZoom,maxZoom,padding,zoom:1,fixedScale:null,center:{x:frame.x+frame.width/2,y:frame.y+frame.height/2}});}
+function create({frame={x:0,y:0,width:1,height:1},size={width:1,height:1},aspect=1,minZoom=1,maxZoom=64,padding=.1,fixedScale=null}={}){
+ frame=rect(frame);
+ if(!coordinate(aspect)||aspect<=0||!Number.isFinite(minZoom)||!Number.isFinite(maxZoom)||minZoom<.125||minZoom>1||maxZoom<1||maxZoom>256||!Number.isFinite(padding)||padding<0||padding>.5)throw Error('Invalid precision view limits.');
+ if(fixedScale!==null&&(!Number.isFinite(fixedScale)||fixedScale<=0))throw Error('Invalid drawing scale.');
+ return bounded({frame,stage:stage(size),aspect,minZoom,maxZoom,padding,zoom:1,fixedScale,center:{x:frame.x+frame.width/2,y:frame.y+frame.height/2}});
+}
 function fit(state){return bounded({...state,zoom:1,fixedScale:null,center:{x:state.frame.x+state.frame.width/2,y:state.frame.y+state.frame.height/2}});}
 const DRAWING_WIDTH=640;
 const DRAWING_ZOOM=[25,33,50,75,90,100,110,125,150,175,200,300,400];
@@ -28,7 +33,7 @@ function pan(state,delta){if(!point(delta))throw Error('Invalid precision pan.')
 function resize(state,size){return bounded({...state,stage:stage(size)});}
 function reframe(state,frame,aspect=state.aspect){if(!coordinate(aspect)||aspect<=0)throw Error('Invalid precision view aspect.');return bounded({...state,frame:rect(frame),aspect});}
 class PrecisionView{
- constructor(options={}){this.state=create(options);this.options={frame:this.state.frame,size:this.state.stage,aspect:this.state.aspect,minZoom:this.state.minZoom,maxZoom:this.state.maxZoom,padding:this.state.padding};if(options.stateCache&&!(options.stateCache instanceof WeakMap))throw Error('Invalid precision state cache.');this.states=options.stateCache||new WeakMap();this.owner=null;this.epoch=0;}
+ constructor(options={}){this.state=create(options);this.options={frame:this.state.frame,size:this.state.stage,aspect:this.state.aspect,minZoom:this.state.minZoom,maxZoom:this.state.maxZoom,padding:this.state.padding,fixedScale:this.state.fixedScale};if(options.stateCache&&!(options.stateCache instanceof WeakMap))throw Error('Invalid precision state cache.');this.states=options.stateCache||new WeakMap();this.owner=null;this.epoch=0;}
  bind(owner,options={}){if(owner!==null&&(typeof owner!=='object'||!owner))throw Error('Invalid precision view owner.');const old=this.owner?.deref(),saved=owner&&(old===owner?this.state:this.states.get(owner)),next=owner?(saved?resize(reframe(saved,options.frame||saved.frame,options.aspect??saved.aspect),options.size||saved.stage):create({...this.options,...options})):create(this.options);this.owner=owner?new WeakRef(owner):null;if(old!==owner)this.epoch++;this.state=next;if(owner)this.states.set(owner,next);return next;}
  change(next){const owner=this.owner?.deref();if(!owner)return false;const state=next(this.state);if(!recognized.has(state))throw Error('Invalid precision view state.');this.state=state;this.states.set(owner,state);return state;}
  capture(){const owner=this.owner,epoch=this.epoch,state=this.state;return{state,valid:()=>!!owner?.deref()&&this.owner===owner&&this.epoch===epoch&&this.state===state};}

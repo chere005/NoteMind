@@ -129,12 +129,14 @@ app.once('browser-window-created', (_, window) => {
         const width = sheet.getBoundingClientRect().width;
         return { value: field.value, width, pixels: width / JSON.parse(sheet.dataset.sheetViewport).width };
       })()`);
+      const initial = await scale();
+      assert.equal(initial.value, '100');
+      assert.ok(Math.abs(initial.pixels - 640) < 1);
+      assert.equal(await js(`document.querySelector('[data-drawing-zoom] option[value=fit]').textContent`), 'Fit');
+      await setScale('fit');
+      await tick();
       const fitted = await scale();
       assert.equal(fitted.value, 'fit');
-      assert.equal(await js(`document.querySelector('[data-drawing-zoom] option[value=fit]').textContent`), 'Fit');
-      await setScale('100');
-      await tick();
-      assert.ok(Math.abs((await scale()).pixels - 640) < 1);
       await setScale('150');
       await tick();
       const enlarged = await scale();

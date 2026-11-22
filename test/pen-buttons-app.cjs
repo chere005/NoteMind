@@ -132,8 +132,9 @@ app.on('browser-window-created', (_, w) => {
       before = await view();
       await arm(UPPER, LOWER);
       await down(0.5, 0.5, LOWER);
-      for (const [x, y] of [[0.55, 0.55], [0.6, 0.6], [0.65, 0.65]]) await move(x, y, LOWER);
-      await up(0.65, 0.65, LOWER);
+      // Pan toward the stroke so it stays reachable at the default drawing scale.
+      for (const [x, y] of [[0.45, 0.55], [0.4, 0.6], [0.35, 0.65]]) await move(x, y, LOWER);
+      await up(0.35, 0.65, LOWER);
       await hover(0.5, 0.5, 0, 100);
       after = await view();
       check(Math.abs(after.viewport.x - before.viewport.x) > 1e-4 || Math.abs(after.viewport.y - before.viewport.y) > 1e-4,

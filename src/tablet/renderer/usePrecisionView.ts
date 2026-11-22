@@ -1,7 +1,7 @@
 import {useLayoutEffect,useRef,useState,useSyncExternalStore} from 'react'
 import type {Point,Rect,Size} from '@notemind/core'
 import type {TabletPage} from './tabletPage'
-import {DRAWING_ZOOM,PrecisionView,viewport,fit,lockScale,zoomAt,pan} from '../../precision-view.cjs'
+import {DRAWING_WIDTH,DRAWING_ZOOM,PrecisionView,viewport,fit,lockScale,zoomAt,pan} from '../../precision-view.cjs'
 import {elementPoint} from './padCoordinates'
 
 // A portal remount retains only view scalars, keyed weakly by its owning page.
@@ -14,7 +14,7 @@ type Options={page:TabletPage;focusRoot:()=>HTMLElement|null;beforeChange:()=>vo
 export function usePrecisionView(options:Options){
  const latest=useRef(options);latest.current=options
  const model=useRef<InstanceType<typeof PrecisionView>|null>(null);
- model.current ||=new PrecisionView({stateCache:savedViews,...(options.onDrawingZoom&&{minZoom:DRAWING_ZOOM[0]/100,maxZoom:DRAWING_ZOOM.at(-1)/100})})
+ model.current ||=new PrecisionView({stateCache:savedViews,...(options.onDrawingZoom&&{fixedScale:DRAWING_WIDTH,minZoom:DRAWING_ZOOM[0]/100,maxZoom:DRAWING_ZOOM.at(-1)/100})})
  const [zoom,setZoom]=useState(1),[panArmed,setPanArmed]=useState(false),[panning,setPanning]=useState(false)
  const {line,angle}=useSyncExternalStore(subscribeTools,readTools,readTools)
  const dragging=useRef<{id:number;last:Point;zoomAround?:Point}|null>(null)
