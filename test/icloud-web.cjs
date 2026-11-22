@@ -12,10 +12,11 @@ app.disableHardwareAcceleration();for(const flag of ['disable-renderer-backgroun
 const notepad=require(path.resolve('src/notepad-format.cjs'));
 fs.mkdirSync(path.join(target,'Drafts'),{recursive:true});
 fs.writeFileSync(path.join(target,'Drafts','Old Cooking Notes.nm'),notepad.encode({text:'# Old Cooking Notes\n\nflour, salt\n',assets:{},meta:{tags:['cooking']}}));
+fs.writeFileSync(path.join(target,'Large fixture.bin'),Buffer.alloc(12*1024*1024+7,0x5a));
 const uploadURL='https://cvws.icloud-content.com/notemind-fixture';
 const originalFetch=globalThis.fetch;
 globalThis.fetch=(url,options)=>url===uploadURL
- ? Promise.resolve(Response.json({singleFile:{receipt:'test-asset',size:options.body.byteLength}}))
+ ? Promise.resolve(Response.json({singleFile:{receipt:'test-asset',size:options.body.byteLength,firstByte:options.body[0]}}))
  : originalFetch(url,options);
 
 // The stand-in for CloudKit JS: the calls src/icloud-web-page.js makes, keeping records in the page.
@@ -23,10 +24,11 @@ const FAKE=`(function(){
  const records={},signIns=[],signOuts=[];let who=null,fetchAsset=null;
  window.__fake={records,signIn(){who={userRecordName:'_test-user'};document.getElementById(window.__fake.signInId).innerHTML='';signIns.splice(0).forEach(r=>r(who));},signOut(){who=null;signOuts.splice(0).forEach(r=>r());}};
  const read=async value=>{
+  if(Array.isArray(value))return Promise.all(value.map(read));
   if(!(value instanceof Blob))return value;
   const response=await fetchAsset(${JSON.stringify(uploadURL)},{method:'POST',body:value});
   const asset=(await response.json()).singleFile;
-  return {name:value.name,size:asset.size,text:await value.text()};
+  return {name:value.name,size:asset.size,firstByte:asset.firstByte};
  };
  window.CloudKit={
   configure(config){const c=config.containers[0];fetchAsset=config.services.fetch;window.__fake.config={container:c.containerIdentifier,environment:c.environment,persist:c.apiTokenAuth.persist};window.__fake.signInId=c.apiTokenAuth.signInButton.id;},
@@ -68,6 +70,8 @@ app.on('browser-window-created',(_,w)=>{w.setFocusable(false);w.webContents.setB
   const cooking=await record(recordName('Drafts/Old Cooking Notes.nm'));
   check(cooking&&cooking.recordType==='NoteMindFile'&&cooking.fields.path==='Drafts/Old Cooking Notes.nm','Each file is a record named by its place');
   check(cooking.fields.file.size===fs.statSync(path.join(target,'Drafts','Old Cooking Notes.nm')).size&&cooking.fields.file.name==='Old Cooking Notes.nm','The record carries the file itself');
+  const large=await record(recordName('Large fixture.bin'));
+  check(JSON.stringify(large.fields.parts.map(({size,firstByte})=>[size,firstByte]))===JSON.stringify([[12*1024*1024,0x5a],[7,0x5a]]),'The desktop client posts large files in order and preserves the original bytes');
   check(cooking.fields.text.includes('flour, salt')&&JSON.parse(cooking.fields.meta).tags[0]==='cooking','And the Notepad\'s text and tags for the reader\'s list');
   check(JSON.parse((await record(INDEX_NAME)).fields.files).files.some(entry=>entry[0]==='Drafts/Old Cooking Notes.nm'),'The index names it');
   check(await waitFor(()=>page(()=>/^Signed in\. 1 Notepad is on the web/.test(document.getElementById('notemind-web-status').textContent)),5000),'The window says how many Notepads are on the web');
