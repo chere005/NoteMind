@@ -1,3 +1,7 @@
+## iCloud web sync and Drawing zoom
+
+Branch `fix/notemind-web-sync` holds the signed candidate for per-file sync tooltips, the 100% Drawing default, and the CloudKit asset transport. The candidate is ready to install when the open app closes. Live upload verification follows installation.
+
 ## November 18, 8 AM Central handoff
 
 **Tested WIP, not production complete.** Integration branch `perf/pipeline-top-three` is pushed. Installed 0.35.0 remains untouched; no main/tag/release/install. See [Claude handoff](CLAUDE-HANDOFF.md).
