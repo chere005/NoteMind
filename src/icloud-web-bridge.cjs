@@ -11,6 +11,19 @@ const webURL=value=>{try{const url=new URL(value);return url.protocol==='https:'
 /** Apple's sign-in pages: the only places the sign-in window may go. */
 const isApple=url=>{const host=url.hostname;return host==='apple.com'||host.endsWith('.apple.com')||host==='icloud.com'||host.endsWith('.icloud.com')||host.endsWith('.apple-cloudkit.com');};
 
+/** Post the original bytes to Apple's short-lived asset URL without browser credentials. */
+async function uploadAsset(address,bytes,{send=fetch,signal}={}){
+ const url=webURL(address),host=url?.hostname||'';
+ if(!url||url.port||!(/\.(icloud-content|apple-cloudkit)\.com$/.test(host)||/^[a-z0-9-]+-content\.icloud\.com$/.test(host))){
+  throw Error('CloudKit returned an unexpected file upload host'+(host?' ('+host+')':'')+'.');
+ }
+ const response=await send(url.href,{method:'POST',body:bytes,headers:{'content-type':'application/octet-stream'},redirect:'error',signal});
+ if(!response.ok){await response.body?.cancel();throw Error('The iCloud file upload returned HTTP '+response.status+'.');}
+ const asset=(await response.json())?.singleFile;
+ if(typeof asset?.receipt!=='string'||!asset.receipt)throw Error('iCloud did not return a file upload receipt.');
+ return {singleFile:asset};
+}
+
 /** The page, with the container settings in it. */
 function pageHTML(config){
  const settings=JSON.stringify({container:config.container,environment:config.environment,apiToken:config.apiToken}).replace(/</g,'\\u003c');
@@ -27,6 +40,7 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
   if(!own(event))return;
   const before=state;
   state={signedIn:value?.signedIn===true,appleId:typeof value?.appleId==='string'?value.appleId:null,error:typeof value?.error==='string'?value.error:null};
+  if(before?.signedIn&&before.appleId!==state.appleId)failJobs('The Apple ID changed.');
   started?.resolve();
   if(state.error)log('Notepads on the web: '+state.error);
   try{onState(state,before);}catch{}
@@ -35,17 +49,25 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
  const onResult=(event,value)=>{
   if(!own(event))return;
   const job=jobs.get(value?.id);if(!job)return;
-  jobs.delete(value.id);clearTimeout(job.timer);
+  jobs.delete(value.id);clearTimeout(job.timer);job.abort.abort();
   if(value.ok)job.resolve();else job.reject(Error(typeof value.error==='string'?value.error:'iCloud did not take it.'));
+ };
+ const onUploadAsset=async(event,{id,index,url}={})=>{
+  const job=own(event)&&jobs.get(id),record=job?.record;
+  const bytes=index===-1?record?.file?.bytes:Number.isSafeInteger(index)&&index>=0?record?.parts?.[index]?.bytes:null;
+  if(!state?.signedIn||state.appleId!==job?.appleId||!Buffer.isBuffer(bytes))throw Error('This file upload has ended.');
+  try{return await uploadAsset(url,bytes,{signal:job.abort.signal});}
+  catch(error){if(!job.abort.signal.aborted)log('Notepads on the web: '+error.message);throw error;}
  };
  const onOpenReader=event=>{if(own(event))openReader();};
  ipcMain.on('icloud-web:state',onStateMessage);
  ipcMain.on('icloud-web:result',onResult);
  ipcMain.on('icloud-web:open-reader',onOpenReader);
+ ipcMain.handle('icloud-web:upload',onUploadAsset);
  const beforeQuit=()=>{quitting=true;};
  app.on('before-quit',beforeQuit);
 
- function failJobs(message){for(const job of jobs.values()){clearTimeout(job.timer);job.reject(Error(message));}jobs.clear();}
+ function failJobs(message){for(const job of jobs.values()){clearTimeout(job.timer);job.abort.abort();job.reject(Error(message));}jobs.clear();}
  function create(){
   if(disposed)throw Error('NoteMind is closing.');
   if(win&&!win.isDestroyed())return;
@@ -88,8 +110,9 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
   await ready();
   try{
    return await new Promise((resolve,reject)=>{
-    const id=++seq,timer=setTimeout(()=>{jobs.delete(id);reject(Error('iCloud did not answer in time.'));},timeout);
-    jobs.set(id,{resolve,reject,timer});
+    const id=++seq,abort=new AbortController();
+    const timer=setTimeout(()=>{jobs.delete(id);abort.abort();reject(Error('iCloud did not answer in time.'));},timeout);
+    jobs.set(id,{resolve,reject,timer,abort,appleId:payload.appleId,record:payload.record});
     win.webContents.send('icloud-web:job',{id,op,...payload});
    });
   }finally{touch();}
@@ -101,6 +124,7 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
  function dispose(){
   disposed=true;clearTimeout(idle);
   ipcMain.removeListener('icloud-web:state',onStateMessage);ipcMain.removeListener('icloud-web:result',onResult);ipcMain.removeListener('icloud-web:open-reader',onOpenReader);
+  ipcMain.removeHandler('icloud-web:upload');
   app.removeListener('before-quit',beforeQuit);
   failJobs('NoteMind is closing.');
   if(win&&!win.isDestroyed())win.destroy();
@@ -108,4 +132,4 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
  return {appleId,save,remove,show,sendSummary,dispose,state:()=>state,isOpen:()=>!!win&&!win.isDestroyed()};
 }
 
-module.exports={createWebBridge,pageHTML,isApple};
+module.exports={createWebBridge,pageHTML,isApple,uploadAsset};

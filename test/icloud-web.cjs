@@ -12,14 +12,24 @@ app.disableHardwareAcceleration();for(const flag of ['disable-renderer-backgroun
 const notepad=require(path.resolve('src/notepad-format.cjs'));
 fs.mkdirSync(path.join(target,'Drafts'),{recursive:true});
 fs.writeFileSync(path.join(target,'Drafts','Old Cooking Notes.nm'),notepad.encode({text:'# Old Cooking Notes\n\nflour, salt\n',assets:{},meta:{tags:['cooking']}}));
+const uploadURL='https://cvws.icloud-content.com/notemind-fixture';
+const originalFetch=globalThis.fetch;
+globalThis.fetch=(url,options)=>url===uploadURL
+ ? Promise.resolve(Response.json({singleFile:{receipt:'test-asset',size:options.body.byteLength}}))
+ : originalFetch(url,options);
 
 // The stand-in for CloudKit JS: the calls src/icloud-web-page.js makes, keeping records in the page.
 const FAKE=`(function(){
- const records={},signIns=[],signOuts=[];let who=null;
+ const records={},signIns=[],signOuts=[];let who=null,fetchAsset=null;
  window.__fake={records,signIn(){who={userRecordName:'_test-user'};document.getElementById(window.__fake.signInId).innerHTML='';signIns.splice(0).forEach(r=>r(who));},signOut(){who=null;signOuts.splice(0).forEach(r=>r());}};
- const read=async value=>value instanceof Blob?{name:value.name,size:value.size,text:await value.text()}:value;
+ const read=async value=>{
+  if(!(value instanceof Blob))return value;
+  const response=await fetchAsset(${JSON.stringify(uploadURL)},{method:'POST',body:value});
+  const asset=(await response.json()).singleFile;
+  return {name:value.name,size:asset.size,text:await value.text()};
+ };
  window.CloudKit={
-  configure(config){const c=config.containers[0];window.__fake.config={container:c.containerIdentifier,environment:c.environment,persist:c.apiTokenAuth.persist};window.__fake.signInId=c.apiTokenAuth.signInButton.id;},
+  configure(config){const c=config.containers[0];fetchAsset=config.services.fetch;window.__fake.config={container:c.containerIdentifier,environment:c.environment,persist:c.apiTokenAuth.persist};window.__fake.signInId=c.apiTokenAuth.signInButton.id;},
   getDefaultContainer(){return {
    setUpAuth:async()=>{if(!who){const b=document.createElement('div');b.className='apple-auth-button';b.textContent='Sign in with Apple';document.getElementById(window.__fake.signInId).replaceChildren(b);}return who;},
    whenUserSignsIn:()=>new Promise(r=>signIns.push(r)),

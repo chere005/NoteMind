@@ -3,7 +3,7 @@
 // temporary folder and a bridge that stands in for CloudKit.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
 const {createWebPublisher,listFiles,recordName,isNotePath,clipText,CLOUD,FILE_TYPE,INDEX_TYPE,INDEX_NAME}=require('../src/icloud-web.cjs');
-const {pageHTML,isApple}=require('../src/icloud-web-bridge.cjs');
+const {pageHTML,isApple,uploadAsset}=require('../src/icloud-web-bridge.cjs');
 
 function fakeCloud(){
  const cloud={appleId:'_apple-a',records:new Map(),saves:[],removes:[],fail:null};
@@ -31,6 +31,25 @@ test('the reader\'s container and the web token are the ones CloudKit allows for
  assert.equal(CLOUD.environment,'development');
  assert.match(CLOUD.apiToken,/^[0-9a-f]{64}$/);
  assert.equal(new URL(CLOUD.page).origin,'https://seancheren.com');
+});
+
+test('asset upload sends raw bytes to the Apple HTTPS endpoint and refuses redirects and foreign hosts',async()=>{
+ const bytes=Buffer.from([0,255,1]),asset={receipt:'asset-receipt',size:bytes.length};
+ const address='https://cvws.icloud-content.com/upload';
+ let calls=0;
+ const send=async(url,options)=>{
+  calls++;
+  assert.equal(url,address);
+  assert.equal(options.method,'POST');
+  assert.equal(options.redirect,'error');
+  assert.equal(options.body,bytes);
+  return Response.json({singleFile:asset});
+ };
+ assert.deepEqual(await uploadAsset(address,bytes,{send}),{singleFile:asset});
+ for(const foreign of ['http://cvws.icloud-content.com/upload','https://cvws.icloud-content.com.example/upload','https://cvws.icloud-content.com:9000/upload','https://private@cvws.icloud-content.com/upload']){
+  await assert.rejects(uploadAsset(foreign,bytes,{send}),/unexpected file upload host/);
+ }
+ assert.equal(calls,1);
 });
 
 test('every file in the copied folder becomes one record with its bytes; Notepads carry their text and tags for the list; an index names them all',async()=>{

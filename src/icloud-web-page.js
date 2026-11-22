@@ -7,6 +7,18 @@
  const doc=root.document,bridge=root.notemindWeb,$=id=>doc.getElementById(id);
  const config=JSON.parse($('notemind-web-config').textContent);
  let db=null,identity=null,error=null,summary=null,started=false;
+ const uploads=new WeakMap();
+ function asset(job,part,index){
+  const file=new root.File([part.bytes],part.name,{type:'application/octet-stream'});
+  uploads.set(file,{id:job.id,index});
+  return file;
+ }
+ async function sendRequest(url,options){
+  const part=options?.method==='POST'&&uploads.get(options.body);
+  if(!part)return root.fetch(url,options);
+  const reply=await bridge.upload({...part,url:String(url)});
+  return new root.Response(JSON.stringify(reply),{headers:{'content-type':'application/json'}});
+ }
 
  const describe=e=>{
   if(!e)return 'iCloud did not say why.';
@@ -50,8 +62,8 @@
   if(job.op==='save'){
    const record={recordType:job.record.recordType,recordName:job.record.recordName,fields:{}};
    for(const [key,value] of Object.entries(job.record.fields||{}))record.fields[key]={value};
-   if(job.record.file)record.fields.file={value:new root.File([job.record.file.bytes],job.record.file.name,{type:'application/octet-stream'})};
-   if(job.record.parts)record.fields.parts={value:job.record.parts.map(part=>new root.File([part.bytes],part.name,{type:'application/octet-stream'}))};
+   if(job.record.file)record.fields.file={value:asset(job,job.record.file,-1)};
+   if(job.record.parts)record.fields.parts={value:job.record.parts.map((part,index)=>asset(job,part,index))};
    const batch=db.newRecordsBatch();
    batch.forceReplace(record);
    check(await batch.commit());
@@ -76,7 +88,7 @@
   try{
    if(!CloudKit)throw Error('CloudKit could not load. Check the internet connection.');
    const dark=!!(root.matchMedia&&root.matchMedia('(prefers-color-scheme: dark)').matches);
-   CloudKit.configure({containers:[{
+   CloudKit.configure({services:{fetch:sendRequest},containers:[{
     containerIdentifier:config.container,
     apiTokenAuth:{apiToken:config.apiToken,persist:true,signInButton:{id:'notemind-web-sign-in',theme:dark?'white':'black'},signOutButton:{id:'notemind-web-sign-out',theme:dark?'black':'white-with-outline'}},
     environment:config.environment,
