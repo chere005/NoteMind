@@ -21,7 +21,7 @@ const welcome=require('./welcome.cjs')(()=>win,openPath,projectService);
 const pdfReferences=require('./pdf-reference-service.cjs').register();
 const documentIO=require('./document-io.cjs');documentIO.register(()=>win,()=>padController?.contents(),(event,doc)=>notesIPC.seed(event,doc),(event,run,{signal}={})=>notesIPC.scope(event,()=>run(async doc=>{signal?.throwIfAborted();await notesStore.preflightDraft({...doc,visual:true,dirty:true,manualTitle:true},{signal});signal?.throwIfAborted();})));
 const notepadFormat=require('./notepad-format.cjs');
-const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument:(...args)=>saveDocument(...args).then(icloudCopy.afterSave),documentIO,pdfReferences});
+const notesIPC=require('./notes-ipc.cjs')({store:notesStore,getWin:()=>win,openPath,saveDocument:(...args)=>saveDocument(...args).then(icloudCopy.afterSave),documentIO,pdfReferences,onLibraryChange:()=>icloudCopy.libraryChanged()});
 documentIO.setForeground?.(run=>notesIPC.foreground(run));
 
 const features=require('./features.cjs')(() => win, projectService);
@@ -32,10 +32,11 @@ const updater=require('./updater.cjs').createUpdater({app,autoUpdater:require('e
 
 app.on('will-quit',()=>updater.dispose());
 // Copy Notepads to iCloud Drive (src/icloud-copy.cjs): saves reach it through the 'save' handler and the autosave given to
-// notes-ipc (afterSave), and what is still waiting is copied when the window closes. A test run (NOTEMIND_DATA or
+// notes-ipc (afterSave), unsaved Notepads through notes-ipc's library changes, and what is still waiting is copied when
+// the window closes. A test run (NOTEMIND_DATA or
 // NOTEMIND_HOME) never reaches the real iCloud Drive: only NOTEMIND_ICLOUD_DIR gives it a place to copy to.
-const icloudCopy=(()=>{const {createICloudCopy,iCloudDriveRoot}=require('./icloud-copy.cjs'),home=app.getPath('home'),given=process.env.NOTEMIND_ICLOUD_DIR,testing=!!(process.env.NOTEMIND_DATA||process.env.NOTEMIND_HOME),root=given?path.dirname(path.resolve(given)):testing?null:iCloudDriveRoot(home);
- return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
+const icloudCopy=(()=>{const {createICloudCopy,iCloudDriveRoot,libraryDrafts}=require('./icloud-copy.cjs'),home=app.getPath('home'),given=process.env.NOTEMIND_ICLOUD_DIR,testing=!!(process.env.NOTEMIND_DATA||process.env.NOTEMIND_HOME),root=given?path.dirname(path.resolve(given)):testing?null:iCloudDriveRoot(home);
+ return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),drafts:()=>libraryDrafts(notesStore),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
 app.on('will-quit',()=>icloudCopy.dispose());
 const inputMonitoringCheck=require('./input-monitoring-check.cjs').createInputMonitoringCheck({inputMonitoring,dialog,shell,getWindow:()=>win,hasPenDisplay:()=>screen.getAllDisplays().some(display=>/wacom/i.test(display.label)),settingsUrl:require('./input-monitoring.cjs').SETTINGS,onGranted:()=>pen?.buttonsRestart?.(),env:process.env,log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'startup.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});
 let sheetWrite = Promise.resolve();

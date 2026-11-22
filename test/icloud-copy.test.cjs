@@ -1,7 +1,8 @@
 'use strict';
 // Copy Notepads to iCloud Drive (src/icloud-copy.cjs), against temporary folders standing in for the home folder and iCloud Drive.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {createICloudCopy,iCloudDriveRoot}=require('../src/icloud-copy.cjs');
+const {createICloudCopy,iCloudDriveRoot,libraryDrafts,draftFileName}=require('../src/icloud-copy.cjs');
+const {NotesStore}=require('../src/notes-store.cjs');
 const {sidecarFolder}=require('../src/markdown-files.cjs');
 
 function setup({enabled=true}={}){
@@ -10,11 +11,11 @@ function setup({enabled=true}={}){
  const prefsFile=path.join(data,'icloud-copy.json'),stateFile=path.join(data,'icloud-copy-state.json');
  if(enabled)fs.writeFileSync(prefsFile,JSON.stringify({enabled:true}));
  const timers=[],fake={setTimeout:(fn)=>{const t={fn,unref(){}};timers.push(t);return t;},clearTimeout:t=>{const i=timers.indexOf(t);if(i>=0)timers.splice(i,1);}};
- const logs=[];
- const copy=createICloudCopy({home,notesFolder:notes,target:path.join(cloud,'NoteMind'),iCloudRoot:cloud,prefsFile,stateFile,log:m=>logs.push(m),timers:fake});
+ const logs=[],store=new NotesStore(path.join(data,'notes-library'),path.join(data,'note-recovery'));
+ const copy=createICloudCopy({home,notesFolder:notes,target:path.join(cloud,'NoteMind'),iCloudRoot:cloud,prefsFile,stateFile,drafts:()=>libraryDrafts(store),log:m=>logs.push(m),timers:fake});
  const write=(file,text='x',time)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);if(time)fs.utimesSync(file,time,time);return file;};
  const runTimers=async()=>{while(timers.length)timers.shift().fn();await copy.flush();};
- return {root,home,notes,cloud,target:path.join(cloud,'NoteMind'),data,prefsFile,stateFile,copy,write,timers,runTimers,logs};
+ return {root,home,notes,cloud,target:path.join(cloud,'NoteMind'),data,prefsFile,stateFile,copy,write,timers,runTimers,logs,store};
 }
 const read=file=>fs.readFileSync(file,'utf8');
 const list=dir=>{const out=[];const walk=(d,p='')=>{for(const e of fs.readdirSync(d,{withFileTypes:true})){const rel=p?p+'/'+e.name:e.name;if(e.isDirectory())walk(path.join(d,e.name),rel);else out.push(rel);}};if(fs.existsSync(dir))walk(dir);return out.sort();};
@@ -127,4 +128,66 @@ test('a copy cut off by quitting leaves no hidden temporary behind for long',asy
  await t.copy.sweep();
  assert.equal(fs.existsSync(old),false,'an old one is removed');
  assert.equal(fs.existsSync(fresh),true,'one that may still be being written is left');
+});
+
+// Unsaved Notepads live only in the app's library (notes-library + note-recovery); a real NotesStore makes them here.
+const draft=(store,title,text)=>store.draft({title,text,meta:{},assets:{}});
+const archiveOf=(t,doc)=>fs.readFileSync(path.join(t.store.recoveryRoot,doc.id+'.wm'));
+
+test('unsaved Notepads are copied by title into Drafts, byte for byte; empty ones are not; same titles are numbered oldest first',async()=>{
+ const t=setup();
+ const cooking=await draft(t.store,'Old Cooking Notes','# Old Cooking Notes\n\nflour, salt');
+ await draft(t.store,'Untitled','');
+ const first=await draft(t.store,'Ideas','one'),second=await draft(t.store,'Ideas','two');
+ await draft(t.store,'a/b: c?','odd title');
+ const saved=t.write(path.join(t.notes,'Saved.nm'),'s');
+ assert.deepEqual(await t.copy.sweep(),{copied:5,removed:0});
+ assert.deepEqual(list(t.target),['Drafts/Ideas 2.nm','Drafts/Ideas.nm','Drafts/Old Cooking Notes.nm','Drafts/a-b- c-.nm','Saved.nm']);
+ assert.deepEqual(fs.readFileSync(path.join(t.target,'Drafts','Old Cooking Notes.nm')),archiveOf(t,cooking),'the copy is the Notepad as NoteMind keeps it');
+ assert.deepEqual(fs.readFileSync(path.join(t.target,'Drafts','Ideas.nm')),archiveOf(t,first),'the older of two same-titled drafts keeps the plain name');
+ assert.deepEqual(fs.readFileSync(path.join(t.target,'Drafts','Ideas 2.nm')),archiveOf(t,second));
+ assert.equal(read(saved),'s');
+ assert.deepEqual(await t.copy.sweep(),{copied:0,removed:0},'nothing changed, nothing copied');
+ assert.equal(draftFileName('   '),'Untitled');
+ assert.equal(draftFileName('..hidden.'),'hidden');
+ assert.ok(Buffer.byteLength(draftFileName('é'.repeat(200)))<=120,'long titles are cut to a file name that fits');
+});
+
+test('a draft\'s copy follows its edits once they settle, its renames, its deletion and its saving to a file; a file of the same name wins',async()=>{
+ const t=setup();
+ let doc=await draft(t.store,'Plan','v1');
+ await t.copy.sweep();
+ doc=await t.store.draft({...doc,text:'v2',meta:{},assets:{}});
+ t.copy.libraryChanged();t.copy.libraryChanged();
+ assert.equal(t.timers.length,1,'many library changes in a row make one copy');
+ await t.runTimers();
+ assert.deepEqual(fs.readFileSync(path.join(t.target,'Drafts','Plan.nm')),archiveOf(t,doc),'an edited draft replaces its copy');
+ doc=await t.store.draft({...doc,title:'Final plan',manualTitle:true,meta:{},assets:{}});
+ t.copy.libraryChanged();await t.runTimers();
+ assert.deepEqual(list(t.target),['Drafts/Final plan.nm'],'a renamed draft moves its copy');
+ t.write(path.join(t.target,'Drafts','Mine.nm'),'not a copy');
+ t.write(path.join(t.notes,'Drafts','Final plan.nm'),'a saved file');
+ await t.copy.sweep();
+ assert.equal(read(path.join(t.target,'Drafts','Final plan.nm')),'a saved file','a saved file keeps its own place');
+ assert.deepEqual(fs.readFileSync(path.join(t.target,'Drafts','Final plan 2.nm')),archiveOf(t,doc),'and the draft takes the next name');
+ fs.rmSync(path.join(t.notes,'Drafts'),{recursive:true});
+ const kept=await draft(t.store,'Kept','k');
+ await t.store.register({...kept,path:t.write(path.join(t.notes,'Kept.nm'),'kept as a file')},{adoptDraft:true});
+ await t.store.deleteDraft(doc.id);
+ t.copy.libraryChanged();await t.runTimers();
+ await t.copy.sweep();
+ assert.deepEqual(list(t.target),['Drafts/Mine.nm','Kept.nm'],'deleted and saved drafts lose their Drafts copy; files no copy made are kept');
+});
+
+test('drafts are copied only while the setting is on, and what is waiting is copied when the window closes',async()=>{
+ const t=setup({enabled:false});
+ await draft(t.store,'Note','n');
+ t.copy.libraryChanged();
+ assert.equal(t.timers.length,0,'off: nothing is scheduled');
+ assert.deepEqual(await t.copy.setEnabled(true),{copied:1,removed:0},'turning it on copies the drafts already there');
+ await draft(t.store,'Later','l');
+ t.copy.libraryChanged();
+ await t.copy.flush();
+ assert.deepEqual(list(t.target),['Drafts/Later.nm','Drafts/Note.nm']);
+ assert.equal(t.timers.length,0,'flushing leaves nothing scheduled');
 });

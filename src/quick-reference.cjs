@@ -45,7 +45,7 @@ const sections=[
   [
    "File → Welcome shows recent documents and projects. Markdown files store their images and attachments in a companion assets folder.",
    "Edits autosave. New drafts recover automatically after closing or restarting. Save As chooses a file. Version History previews and restores earlier saves; Recently Deleted restores saved files and unsaved drafts, including their latest recovered edits. File → Delete Notepad and the sidebar Delete key use the same recoverable deletion.",
-   "File → Copy Notepads to iCloud Drive keeps a copy of each Notepad you save, and of every Notepad in Documents › NoteMind, in iCloud Drive › NoteMind, in the same folders, for reading on your other devices. The originals stay where they are; a copy is replaced when its Notepad changes and removed when it is deleted. Changes made to a copy are not brought back.",
+   "File → Copy Notepads to iCloud Drive keeps a copy of each Notepad you save, and of every Notepad in Documents › NoteMind, in iCloud Drive › NoteMind, in the same folders, for reading on your other devices. Unsaved Notepads are copied by title into its Drafts folder. The originals stay where they are; a copy is replaced when its Notepad changes and removed when it is deleted. Changes made to a copy are not brought back.",
    "Tags and Pin organizes the current Notepad. Notepads options in the sidebar has sorting, tags, Smart Folders and Recently Deleted. The footer’s project menu owns Add Files and Add Folder. Link to Notepad inserts a persistent link. Search includes offline text recognition in attached images and handwriting."
   ]
  ]

@@ -1,5 +1,5 @@
 // Copy Notepads to iCloud Drive, end to end in the app: the File menu setting, a save that is copied once saving settles,
-// and turning the setting on catching up on Notepads already there. A scratch folder stands in for iCloud Drive
+// an unsaved Notepad copied into Drafts, and turning the setting on catching up on Notepads already there. A scratch folder stands in for iCloud Drive
 // (NOTEMIND_ICLOUD_DIR); nothing reaches the real one. Run: npx electron test/icloud-copy.cjs
 const {app,Menu}=require('electron'),fs=require('node:fs'),path=require('node:path');
 const root=path.resolve('test-results/icloud-copy-'+Date.now()),home=path.join(root,'home'),cloud=path.join(root,'iCloud Drive'),target=path.join(cloud,'NoteMind'),data=path.join(root,'data');
@@ -25,11 +25,15 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   check(await waitFor(()=>fs.existsSync(path.join(target,'Plans','Week.nm')),15000),'Then it is copied, in the same folder');
   check(notepad.decode(fs.readFileSync(path.join(target,'Plans','Week.nm'))).text.includes('The plan.'),'The copy is the saved Notepad');
   check(fs.existsSync(file),'The original stays where it is');
+  const drafted=await js(()=>window.notemind.notes.draft({text:'# Old Cooking Notes\n\nflour\n',title:'Old Cooking Notes',meta:{},assets:{}}).then(d=>d.id));
+  check(typeof drafted==='string','An unsaved Notepad is kept in the library');
+  check(await waitFor(()=>fs.existsSync(path.join(target,'Drafts','Old Cooking Notes.nm')),15000),'It is copied by title into Drafts once it settles');
+  check(notepad.decode(fs.readFileSync(path.join(target,'Drafts','Old Cooking Notes.nm'))).text.includes('flour'),'The copy is the unsaved Notepad');
   item().click();await pause(300);
   check(item().checked===false&&JSON.parse(fs.readFileSync(path.join(data,'icloud-copy.json'),'utf8')).enabled===false,'Unticking turns it off and is remembered');
   fs.rmSync(target,{recursive:true,force:true});
   item().click();
-  check(await waitFor(()=>fs.existsSync(path.join(target,'Existing.nm'))&&fs.existsSync(path.join(target,'Plans','Week.nm')),10000),'Ticking it again copies the Notepads already in the NoteMind folder');
+  check(await waitFor(()=>fs.existsSync(path.join(target,'Existing.nm'))&&fs.existsSync(path.join(target,'Plans','Week.nm'))&&fs.existsSync(path.join(target,'Drafts','Old Cooking Notes.nm')),10000),'Ticking it again copies the Notepads already in the NoteMind folder and the unsaved ones');
   report.ok=true;
  }catch(error){report.ok=false;report.error=error.stack;report.copies=fs.existsSync(target)?fs.readdirSync(target,{recursive:true}):null;report.log=fs.existsSync(path.join(data,'icloud-copy.log'))?fs.readFileSync(path.join(data,'icloud-copy.log'),'utf8'):null;}
  fs.writeFileSync('test-results/icloud-copy.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);
