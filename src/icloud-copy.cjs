@@ -11,7 +11,7 @@ const NOTE_EXTENSIONS=new Set(['.nm','.wm','.md','.txt','.py']);
 const WORKING_FOLDERS=new Set(['asset sources','backups','devices','image search work','installation backups','pdf markup']);
 const SETTLE_MS=8000,FLUSH_LIMIT_MS=15000,VISIT_LIMIT=20000,DEPTH_LIMIT=10;
 /** Where unsaved Notepads' copies go, inside the copied folder. */
-const DRAFTS_FOLDER='Drafts',NAME_BYTES=120;
+const DRAFTS_FOLDER='Drafts',NAME_BYTES=120,DRAFT_RETRY_MS=30000,DRAFT_RETRIES=5;
 
 /** Where iCloud Drive lives on this computer, or null when it does not. */
 function iCloudDriveRoot(home,platform=process.platform){
@@ -46,10 +46,10 @@ async function libraryDrafts(store){
 /** The companion folders NoteMind keeps a Markdown file's pictures and metadata in (src/markdown-files.cjs). */
 function markdownFolders(file){const {sidecarFolder,legacyFolder}=require('./markdown-files.cjs');return [sidecarFolder(file),legacyFolder(file)];}
 
-function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,timers={setTimeout,clearTimeout}}={}){
+function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,retryMs=DRAFT_RETRY_MS,timers={setTimeout,clearTimeout}}={}){
  if(!home||!notesFolder||!prefsFile||!stateFile)throw Error('iCloud copy needs its folders.');
  let enabled=readJson(prefsFile)?.enabled===true;
- const pending=new Map();let running=Promise.resolve(),disposed=false,draftTimer=null;
+ const pending=new Map();let running=Promise.resolve(),disposed=false,draftTimer=null,draftFailures=0;
 
  function readJson(file){try{return JSON.parse(fsSync.readFileSync(file,'utf8'));}catch{return null;}}
  async function writeJson(file,value){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+crypto.randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(value)+'\n');await fs.rename(temp,file);}
@@ -136,7 +136,9 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   * title get " 2", " 3"), and remove the copies of drafts that were deleted, saved to a file or renamed. */
  async function copyDrafts(state){
   let copied=0,removed=0,list;
-  try{list=await drafts();}catch(error){report(error);return {copied,removed};}
+  // The library can be briefly unreadable (its archive worker is restarted while a large Notepad opens): keep every
+  // copy as it is and try again a little later, a few times.
+  try{list=await drafts();draftFailures=0;}catch(error){report(error);if(++draftFailures<=DRAFT_RETRIES)scheduleDrafts(retryMs);return {copied,removed};}
   const taken=new Set(Object.entries(state.copies).filter(([,entry])=>typeof entry?.source==='string').map(([name])=>name.toLowerCase())),current=new Set();
   list=[...(Array.isArray(list)?list:[])].filter(d=>d&&typeof d.id==='string'&&typeof d.file==='string').sort((a,b)=>String(a.created||'').localeCompare(String(b.created||''))||a.id.localeCompare(b.id));
   for(const draft of list){
@@ -206,13 +208,14 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   }).catch(error=>{report(error);return {copied:0,removed:0};});
  }
 
- /** The library changed (a draft autosaved, a Notepad renamed, deleted or restored): copy the drafts once it settles. */
- function libraryChanged(){
+ function scheduleDrafts(ms){
   if(disposed||!enabled)return;
   timers.clearTimeout(draftTimer);
-  draftTimer=timers.setTimeout(()=>{draftTimer=null;void syncDrafts();},settleMs);
+  draftTimer=timers.setTimeout(()=>{draftTimer=null;void syncDrafts();},ms);
   draftTimer?.unref?.();
  }
+ /** The library changed (a draft autosaved, a Notepad renamed, deleted or restored): copy the drafts once it settles. */
+ const libraryChanged=()=>scheduleDrafts(settleMs);
 
  /** Copy what is waiting now (quitting, or the setting turned off), at most FLUSH_LIMIT_MS. */
  async function flush(){

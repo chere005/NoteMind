@@ -5,14 +5,14 @@ const {createICloudCopy,iCloudDriveRoot,libraryDrafts,draftFileName}=require('..
 const {NotesStore}=require('../src/notes-store.cjs');
 const {sidecarFolder}=require('../src/markdown-files.cjs');
 
-function setup({enabled=true}={}){
+function setup({enabled=true,drafts}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'notemind-icloud-')),home=path.join(root,'home'),notes=path.join(home,'Documents','NoteMind'),cloud=path.join(home,'Library','Mobile Documents','com~apple~CloudDocs'),data=path.join(root,'data');
  for(const dir of [notes,cloud,data])fs.mkdirSync(dir,{recursive:true});
  const prefsFile=path.join(data,'icloud-copy.json'),stateFile=path.join(data,'icloud-copy-state.json');
  if(enabled)fs.writeFileSync(prefsFile,JSON.stringify({enabled:true}));
  const timers=[],fake={setTimeout:(fn)=>{const t={fn,unref(){}};timers.push(t);return t;},clearTimeout:t=>{const i=timers.indexOf(t);if(i>=0)timers.splice(i,1);}};
  const logs=[],store=new NotesStore(path.join(data,'notes-library'),path.join(data,'note-recovery'));
- const copy=createICloudCopy({home,notesFolder:notes,target:path.join(cloud,'NoteMind'),iCloudRoot:cloud,prefsFile,stateFile,drafts:()=>libraryDrafts(store),log:m=>logs.push(m),timers:fake});
+ const copy=createICloudCopy({home,notesFolder:notes,target:path.join(cloud,'NoteMind'),iCloudRoot:cloud,prefsFile,stateFile,drafts:drafts?()=>drafts(store):()=>libraryDrafts(store),log:m=>logs.push(m),timers:fake});
  const write=(file,text='x',time)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);if(time)fs.utimesSync(file,time,time);return file;};
  const runTimers=async()=>{while(timers.length)timers.shift().fn();await copy.flush();};
  return {root,home,notes,cloud,target:path.join(cloud,'NoteMind'),data,prefsFile,stateFile,copy,write,timers,runTimers,logs,store};
@@ -190,4 +190,23 @@ test('drafts are copied only while the setting is on, and what is waiting is cop
  await t.copy.flush();
  assert.deepEqual(list(t.target),['Drafts/Later.nm','Drafts/Note.nm']);
  assert.equal(t.timers.length,0,'flushing leaves nothing scheduled');
+});
+
+test('when the library cannot be read for a moment, every copy stays and drafts are tried again later, a few times',async()=>{
+ let failing=1;
+ const t=setup({drafts:store=>failing-->0?Promise.reject(Error('The raw archive worker was lost during this operation.')):libraryDrafts(store)});
+ await draft(t.store,'Old Cooking Notes','flour');
+ t.write(path.join(t.target,'Drafts','Old Cooking Notes.nm'),'an earlier copy');
+ fs.writeFileSync(t.stateFile,JSON.stringify({copies:{[path.join('Drafts','Old Cooking Notes.nm')]:{draft:'gone-for-now'}}}));
+ await t.copy.sweep();
+ assert.equal(read(path.join(t.target,'Drafts','Old Cooking Notes.nm')),'an earlier copy','nothing is removed while the library cannot be read');
+ assert.ok(t.logs.some(line=>line.includes('archive worker was lost')),t.logs.join('\n'));
+ assert.equal(t.timers.length,1,'a retry is waiting');
+ await t.runTimers();
+ assert.deepEqual(list(t.target),['Drafts/Old Cooking Notes.nm']);
+ assert.notEqual(read(path.join(t.target,'Drafts','Old Cooking Notes.nm')),'an earlier copy','the retry copies the draft');
+ failing=Infinity;let tries=0;
+ t.copy.libraryChanged();
+ while(t.timers.length&&tries<20){tries++;await t.runTimers();}
+ assert.equal(tries,6,'one try and five retries, then it waits for the next change');
 });
