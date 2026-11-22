@@ -52,7 +52,7 @@ The installed Mac app (Apple Silicon) checks the GitHub releases of this reposit
 
 An update is installed only if it is signed by the same developer identity as the running app; macOS enforces that, so the release zip is the whole trust chain and there is no separate update key. Copies run from source or built without that signature never update.
 
-To release: raise `version` in `package.json` (and the lock file), run `npm run build`, then `npm run package:update`. It checks the signature and writes `dist/NoteMind-<version>-mac-arm64.zip`. Create the release with `gh release create v<version> dist/NoteMind-<version>-mac-arm64.zip`. The updater looks for that exact asset name in the latest non-draft, non-prerelease release.
+To release: raise `version` in `package.json` (and the lock file), run `npm run build`, then `npm run package:update`. It checks the signature and writes `dist/NoteMind-<version>-mac-arm64.zip`. Create the release with `gh release create v<version> dist/NoteMind-<version>-mac-arm64.zip`. The updater looks for that exact asset name in the latest non-draft, non-prerelease release. NoteMind is part of MindSuite: once the release is published, record its tag with `node ../MindSuite/tools/mindsuite-release.mjs record NoteMind v<version> --app-repo .`, which moves MindSuite to its next minor with a note naming the tag.
 
 ## Checks
 
