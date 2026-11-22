@@ -1,0 +1,172 @@
+// Copy Notepads to iCloud Drive: a one-way copy of each Notepad NoteMind saves, plus a catch-up pass over the
+// NoteMind folder, into iCloud Drive/NoteMind. The originals stay where they are; the copies are for reading
+// elsewhere (another Mac, a phone, the MindSuite NoteMind reader). A copy is replaced when its Notepad changes and
+// removed when its Notepad is gone. Off until turned on (File > Copy Notepads to iCloud Drive).
+'use strict';
+const fs=require('node:fs/promises'),fsSync=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+
+const NOTE_EXTENSIONS=new Set(['.nm','.wm','.md','.txt','.py']);
+/** NoteMind's own working folders inside the NoteMind folder: never Notepads. */
+const WORKING_FOLDERS=new Set(['asset sources','backups','devices','image search work','installation backups','pdf markup']);
+const SETTLE_MS=8000,FLUSH_LIMIT_MS=15000,VISIT_LIMIT=20000,DEPTH_LIMIT=10;
+
+/** Where iCloud Drive lives on this computer, or null when it does not. */
+function iCloudDriveRoot(home,platform=process.platform){
+ if(platform==='darwin')return path.join(home,'Library','Mobile Documents','com~apple~CloudDocs');
+ if(platform==='win32')return path.join(home,'iCloudDrive');
+ return null;
+}
+const inside=(file,dir)=>{const rel=path.relative(dir,file);return rel!==''&&!rel.startsWith('..')&&!path.isAbsolute(rel);};
+const isNote=file=>NOTE_EXTENSIONS.has(path.extname(file).toLowerCase())&&!path.basename(file).startsWith('.');
+
+/** The companion folders NoteMind keeps a Markdown file's pictures and metadata in (src/markdown-files.cjs). */
+function markdownFolders(file){const {sidecarFolder,legacyFolder}=require('./markdown-files.cjs');return [sidecarFolder(file),legacyFolder(file)];}
+
+function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,timers={setTimeout,clearTimeout}}={}){
+ if(!home||!notesFolder||!prefsFile||!stateFile)throw Error('iCloud copy needs its folders.');
+ let enabled=readJson(prefsFile)?.enabled===true;
+ const pending=new Map();let running=Promise.resolve(),disposed=false;
+
+ function readJson(file){try{return JSON.parse(fsSync.readFileSync(file,'utf8'));}catch{return null;}}
+ async function writeJson(file,value){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+crypto.randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(value)+'\n');await fs.rename(temp,file);}
+ /** Copies this computer made, by their path inside the target: {source}. Kept in Application Support, never in the copied folder. */
+ const readState=()=>{const state=readJson(stateFile);return state&&typeof state.copies==='object'&&state.copies?state:{copies:{}};};
+
+ const available=()=>!!target&&!!iCloudRoot&&fsSync.existsSync(iCloudRoot);
+ /** Where a Notepad's copy goes: its place in the NoteMind folder, else its place under the home folder, else under Other. */
+ function copyName(file){
+  const abs=path.resolve(file);
+  if(inside(abs,notesFolder))return path.relative(notesFolder,abs);
+  if(inside(abs,home))return path.relative(home,abs);
+  return path.join('Other',abs.replace(/^[A-Za-z]:/,'').replace(/^[\\/]+/,''));
+ }
+ /** Is this a Notepad that should be copied? Not one already in iCloud Drive, nor a working file. */
+ function wanted(file){
+  const abs=path.resolve(file);
+  if(!isNote(abs)||/\.tmp$/i.test(abs))return false;
+  if(iCloudRoot&&(abs===iCloudRoot||inside(abs,iCloudRoot)))return false;   // already synced: copying would make a second one
+  if(inside(abs,notesFolder)){const first=path.relative(notesFolder,abs).split(path.sep)[0].toLowerCase();if(WORKING_FOLDERS.has(first))return false;}
+  return true;
+ }
+
+ async function copyOne(source,destination){
+  const stat=await fs.stat(source);
+  try{const existing=await fs.stat(destination);if(existing.size===stat.size&&Math.abs(existing.mtimeMs-stat.mtimeMs)<1)return false;}catch(error){if(error.code!=='ENOENT')throw error;}
+  await fs.mkdir(path.dirname(destination),{recursive:true});
+  const temp=path.join(path.dirname(destination),'.'+path.basename(destination)+'.'+crypto.randomUUID()+'.tmp');
+  try{await fs.copyFile(source,temp);await fs.utimes(temp,stat.atime,stat.mtime);await fs.rename(temp,destination);}
+  finally{await fs.rm(temp,{force:true});}
+  return true;
+ }
+ async function copyTree(source,destination){
+  let changed=false;
+  for(const entry of await fs.readdir(source,{withFileTypes:true})){
+   if(entry.name.startsWith('.'))continue;
+   const from=path.join(source,entry.name),to=path.join(destination,entry.name);
+   if(entry.isDirectory())changed=await copyTree(from,to)||changed;else if(entry.isFile())changed=await copyOne(from,to)||changed;
+  }
+  return changed;
+ }
+
+ /** Copy one Notepad (a Markdown file with its companion folders) now. */
+ async function copyNote(file,state){
+  const abs=path.resolve(file),name=copyName(abs),destination=path.join(target,name);
+  let changed=await copyOne(abs,destination);
+  if(path.extname(abs).toLowerCase()==='.md')for(const folder of markdownFolders(abs)){
+   const from=path.join(path.dirname(abs),folder);
+   if(fsSync.existsSync(from))changed=await copyTree(from,path.join(path.dirname(destination),folder))||changed;
+  }
+  state.copies[name]={source:abs};
+  return changed;
+ }
+ async function removeCopy(name){
+  const destination=path.join(target,name);
+  if(!inside(destination,target))return;
+  await fs.rm(destination,{force:true});
+  if(path.extname(name).toLowerCase()==='.md')for(const folder of markdownFolders(name))await fs.rm(path.join(path.dirname(destination),folder),{recursive:true,force:true});
+ }
+
+ /** A copy cut off by quitting leaves its hidden temporary file; remove any older than ten minutes. */
+ async function clearStaleTemporaries(dir,depth=0){
+  let entries;try{entries=await fs.readdir(dir,{withFileTypes:true});}catch{return;}
+  for(const entry of entries){
+   const full=path.join(dir,entry.name);
+   if(entry.isDirectory()){if(depth<DEPTH_LIMIT)await clearStaleTemporaries(full,depth+1);}
+   else if(/^\..+\.[0-9a-f-]{36}\.tmp$/.test(entry.name)){try{if(now()-(await fs.stat(full)).mtimeMs>600000)await fs.rm(full,{force:true});}catch{}}
+  }
+ }
+
+ /** Run one copy job after the last, so the state file is only ever written by one. */
+ function serial(job){const next=running.then(job,job);running=next.catch(()=>{});return next;}
+ const report=error=>log('iCloud copy: '+(error?.message||error));
+
+ async function copyFiles(files){
+  if(!enabled||!available())return 0;
+  const state=readState();let count=0;
+  for(const file of files){try{if(wanted(file)&&fsSync.existsSync(file)&&await copyNote(file,state))count++;}catch(error){report(error);}}
+  await writeJson(stateFile,state);
+  return count;
+ }
+
+ /** The catch-up pass: copy every Notepad in the NoteMind folder and every Notepad copied before; remove copies whose Notepad is gone. */
+ async function sweep(){
+  return serial(async()=>{
+   if(!enabled||!available())return {copied:0,removed:0};
+   const found=[];let visited=0;
+   const walk=async(dir,depth)=>{
+    let entries;try{entries=await fs.readdir(dir,{withFileTypes:true});}catch{return;}
+    for(const entry of entries){
+     if(++visited>VISIT_LIMIT||entry.name.startsWith('.'))continue;
+     const full=path.join(dir,entry.name);
+     if(entry.isDirectory()){if(depth<DEPTH_LIMIT&&!/\.assets$/i.test(entry.name)&&!(dir===notesFolder&&WORKING_FOLDERS.has(entry.name.toLowerCase())))await walk(full,depth+1);}
+     else if(entry.isFile()&&wanted(full))found.push(full);
+    }
+   };
+   await walk(notesFolder,0);
+   await clearStaleTemporaries(target);
+   const state=readState(),sources=new Set(found);
+   for(const {source}of Object.values(state.copies))if(typeof source==='string'&&fsSync.existsSync(source)&&wanted(source))sources.add(source);
+   let copied=0,removed=0;
+   for(const file of sources){try{if(await copyNote(file,state))copied++;}catch(error){report(error);}}
+   for(const [name,{source}={}]of Object.entries(state.copies)){
+    if(typeof source==='string'&&fsSync.existsSync(source)&&copyName(source)===name)continue;
+    try{await removeCopy(name);delete state.copies[name];removed++;}catch(error){report(error);}
+   }
+   await writeJson(stateFile,state);
+   if(copied||removed)log('iCloud copy: '+copied+' copied, '+removed+' removed');
+   return {copied,removed};
+  }).catch(error=>{report(error);return {copied:0,removed:0};});
+ }
+
+ /** A Notepad was saved: copy it once saving settles (autosave can save often). */
+ function saved(file){
+  if(disposed||!enabled||!file||!wanted(file))return;
+  const abs=path.resolve(file);
+  timers.clearTimeout(pending.get(abs));
+  const timer=timers.setTimeout(()=>{pending.delete(abs);void serial(()=>copyFiles([abs])).catch(report);},settleMs);
+  timer?.unref?.();
+  pending.set(abs,timer);
+ }
+
+ /** Copy what is waiting now (quitting, or the setting turned off), at most FLUSH_LIMIT_MS. */
+ async function flush(){
+  const files=[...pending.keys()];for(const timer of pending.values())timers.clearTimeout(timer);pending.clear();
+  if(!files.length)return running;
+  let timeout;const limit=new Promise(resolve=>{timeout=setTimeout(resolve,FLUSH_LIMIT_MS);timeout.unref?.();});
+  try{await Promise.race([serial(()=>copyFiles(files)).catch(report),limit]);}finally{clearTimeout(timeout);}
+ }
+
+ async function setEnabled(value){
+  value=!!value;
+  if(!value)await flush();
+  enabled=value;await writeJson(prefsFile,{enabled});
+  if(enabled)return sweep();
+ }
+
+ /** A save's result passes through: a saved Notepad's path is noted for copying. */
+ const afterSave=result=>{if(result&&typeof result.path==='string')saved(result.path);return result;};
+
+ return {saved,afterSave,sweep,flush,setEnabled,isEnabled:()=>enabled,isAvailable:available,copyName,wanted,target,dispose:()=>{disposed=true;}};
+}
+
+module.exports={createICloudCopy,iCloudDriveRoot,WORKING_FOLDERS};
