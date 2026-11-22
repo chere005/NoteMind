@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.apple-cloudkit.com; connect-src https:; style-src 'unsafe-inline'; img-src https: data:; font-src https: data:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<title>Notepads on the Web</title>
+<style>
+:root{--bg:#ffffff;--fg:#1d2730;--muted:#5d6b76;--line:#d9e0e5;--accent:#1592b8;--error:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1f23;--fg:#e8edf1;--muted:#9aa7b2;--line:#323a41;--accent:#2bc4ea;--error:#f2b8b5}}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{padding:22px 26px}
+h1{font-size:17px;margin:0 0 10px}
+p{margin:0 0 12px}
+.muted{color:var(--muted)}
+.error{color:var(--error)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+button{font:inherit;padding:6px 14px;border-radius:7px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+[hidden]{display:none!important}
+#notemind-web-sign-in,#notemind-web-sign-out{min-height:40px}
+</style>
+</head>
+<body>
+<main>
+<h1>Notepads on the Web</h1>
+<p id="notemind-web-about">NoteMind keeps a copy of your Notepads in your own iCloud, so the NoteMind reader at seancheren.com/MindSuite can show them. Only your Apple ID can read it.</p>
+<p id="notemind-web-status" class="muted">Starting…</p>
+<p id="notemind-web-error" class="error" hidden></p>
+<div class="row">
+<div id="notemind-web-sign-in"></div>
+<div id="notemind-web-sign-out"></div>
+<button type="button" id="notemind-web-reader" class="primary" hidden>Open the reader</button>
+</div>
+</main>
+<script type="application/json" id="notemind-web-config">/*CONFIG*/</script>
+<script src="https://cdn.apple-cloudkit.com/ck/2/cloudkit.js"></script>
+<script>/*PAGE*/</script>
+</body>
+</html>

@@ -35,9 +35,32 @@ app.on('will-quit',()=>updater.dispose());
 // notes-ipc (afterSave), unsaved Notepads through notes-ipc's library changes, and what is still waiting is copied when
 // the window closes. A test run (NOTEMIND_DATA or
 // NOTEMIND_HOME) never reaches the real iCloud Drive: only NOTEMIND_ICLOUD_DIR gives it a place to copy to.
+let icloudWebChanged=()=>{};
 const icloudCopy=(()=>{const {createICloudCopy,iCloudDriveRoot,libraryDrafts}=require('./icloud-copy.cjs'),home=app.getPath('home'),given=process.env.NOTEMIND_ICLOUD_DIR,testing=!!(process.env.NOTEMIND_DATA||process.env.NOTEMIND_HOME),root=given?path.dirname(path.resolve(given)):testing?null:iCloudDriveRoot(home);
- return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),drafts:()=>libraryDrafts(notesStore),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
+ return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),drafts:()=>libraryDrafts(notesStore),onChange:()=>icloudWebChanged(),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
 app.on('will-quit',()=>icloudCopy.dispose());
+// Notepads on the web (src/icloud-web.cjs, src/icloud-web-bridge.cjs): what the iCloud copy puts in iCloud Drive/NoteMind is
+// mirrored into the private iCloud database of the Apple ID signed in under File > Show Notepads on the Web, where the
+// MindSuite NoteMind reader reads it. Nothing happens until an Apple ID signs in; a test run never has a place for it.
+const icloudWeb=(()=>{
+ const inert={changed(){},show(){},startup(){},dispose(){}};
+ if(!icloudCopy.target)return inert;
+ const {createWebPublisher,CLOUD}=require('./icloud-web.cjs'),{createWebBridge}=require('./icloud-web-bridge.cjs'),log=message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});};
+ const readFacts=async file=>{const ext=path.extname(file).toLowerCase();if(ext==='.nm'||ext==='.wm'){const doc=(await require('./archive-codec.cjs').inspectFile(file,{files:'metadata'})).doc||{};return {text:doc.text,meta:doc.meta,id:doc.id,kind:doc.kind};}return {text:(await require('./read-limited.cjs').readLimited(file,4*1024*1024,'This file is too large.')).toString('utf8'),meta:{},kind:ext.slice(1)};};
+ let publisher=null,bridge=null;
+ const getBridge=()=>bridge||(bridge=createWebBridge({config:CLOUD,icon:path.join(__dirname,'icon.png'),summary:()=>publisher.summary(),log,openReader:()=>{void shell.openExternal('https://seancheren.com/MindSuite/#notemind').catch(()=>{});},
+  onState:(state,before)=>{if(!before)return;if(state.signedIn&&!before.signedIn)void publisher.publish().then(()=>bridge?.sendSummary());else if(!state.signedIn&&before.signedIn)void publisher.forget();}}));
+ const lazy={appleId:()=>getBridge().appleId(),save:record=>getBridge().save(record),remove:names=>getBridge().remove(names)};
+ publisher=createWebPublisher({target:icloudCopy.target,stateFile:path.join(app.getPath('userData'),'icloud-web-state.json'),bridge:lazy,readFacts,app:app.getVersion(),log});
+ return {
+  changed:()=>{if(publisher.wasSignedIn())publisher.changed();},
+  async show(){if(!icloudCopy.isEnabled()){await icloudCopy.setEnabled(true);const item=Menu.getApplicationMenu()?.getMenuItemById('icloud-copy');if(item)item.checked=true;}getBridge().show();},
+  startup:()=>{if(publisher.wasSignedIn())void publisher.publish();},
+  dispose:()=>{publisher.dispose();bridge?.dispose();bridge=null;},
+ };
+})();
+app.on('will-quit',()=>icloudWeb.dispose());
+icloudWebChanged=()=>icloudWeb.changed();
 const inputMonitoringCheck=require('./input-monitoring-check.cjs').createInputMonitoringCheck({inputMonitoring,dialog,shell,getWindow:()=>win,hasPenDisplay:()=>screen.getAllDisplays().some(display=>/wacom/i.test(display.label)),settingsUrl:require('./input-monitoring.cjs').SETTINGS,onGranted:()=>pen?.buttonsRestart?.(),env:process.env,log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'startup.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});
 let sheetWrite = Promise.resolve();
 let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
@@ -140,6 +163,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
       {label:'Import',submenu:[{label:'Markdown as Notepad…',click:command('importMarkdown')},{label:'Word or PDF…',click:command('importDocument')},{label:'Read Text from Image…',click:command('readImage')}]},
       {label:'Export',submenu:[{label:'Export as PDF…',accelerator:'CmdOrCtrl+Shift+E',click:command('exportPDF')},{label:'Word…',click:command('exportWord')},{label:'Drawing…',click:command('exportDrawing')}]},
       {id:'icloud-copy',label:'Copy Notepads to iCloud Drive',type:'checkbox',checked:icloudCopy.isEnabled(),visible:icloudCopy.isAvailable(),click:item=>{void icloudCopy.setEnabled(item.checked);}},
+      {id:'icloud-web',label:'Show Notepads on the Web…',visible:icloudCopy.isAvailable(),click:()=>{void icloudWeb.show();}},
       {type:'separator'},
       {label:'Close Tab',accelerator:'CmdOrCtrl+W',click:command('closeTab')},
       {label:'Close Window',click:()=>win.close()},
@@ -192,7 +216,7 @@ if (instance&&!closeOnly) app.whenReady().then(() => {
     {label:'Window',submenu:[{label:'Minimize',click:()=>win.minimize()},{label:'Zoom Window',click:()=>win.isMaximized()?win.unmaximize():win.maximize()},{type:'separator'},{label:'Move Tab Left',click:command('moveTabLeft')},{label:'Move Tab Right',click:command('moveTabRight')}]},
 
   ]));
-  buildMenu();updater.start();setTimeout(()=>{void icloudCopy.sweep();},20000).unref();win.once('closed',()=>{void icloudCopy.flush();});setTimeout(()=>{void inputMonitoringCheck.check().catch(()=>{});},4000).unref();
+  buildMenu();updater.start();setTimeout(()=>{void icloudCopy.sweep();},20000).unref();setTimeout(()=>icloudWeb.startup(),45000).unref();win.once('closed',()=>{void icloudCopy.flush();icloudWeb.dispose();});setTimeout(()=>{void inputMonitoringCheck.check().catch(()=>{});},4000).unref();
   const refreshRecents=async()=>{const all=await projectService.recents.read();recentFiles.splice(0,recentFiles.length,...all.files.map(x=>x.path));recentProjects.splice(0,recentProjects.length,...all.projects.map(x=>x.path));buildMenu();};
   projectService.recents.onChange(refreshRecents);refreshRecents();
 

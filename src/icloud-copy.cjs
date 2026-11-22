@@ -46,7 +46,7 @@ async function libraryDrafts(store){
 /** The companion folders NoteMind keeps a Markdown file's pictures and metadata in (src/markdown-files.cjs). */
 function markdownFolders(file){const {sidecarFolder,legacyFolder}=require('./markdown-files.cjs');return [sidecarFolder(file),legacyFolder(file)];}
 
-function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,retryMs=DRAFT_RETRY_MS,timers={setTimeout,clearTimeout}}={}){
+function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],onChange=()=>{},log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,retryMs=DRAFT_RETRY_MS,timers={setTimeout,clearTimeout}}={}){
  if(!home||!notesFolder||!prefsFile||!stateFile)throw Error('iCloud copy needs its folders.');
  let enabled=readJson(prefsFile)?.enabled===true;
  const pending=new Map();let running=Promise.resolve(),disposed=false,draftTimer=null,draftFailures=0;
@@ -123,12 +123,15 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
  /** Run one copy job after the last, so the state file is only ever written by one. */
  function serial(job){const next=running.then(job,job);running=next.catch(()=>{});return next;}
  const report=error=>log('iCloud copy: '+(error?.message||error));
+ /** Something in the copied folder changed (Notepads on the web follows it). */
+ const changedFolder=()=>{try{onChange();}catch{}};
 
  async function copyFiles(files){
   if(!enabled||!available())return 0;
   const state=readState();let count=0;
   for(const file of files){try{if(wanted(file)&&fsSync.existsSync(file)&&await copyNote(file,state))count++;}catch(error){report(error);}}
   await writeJson(stateFile,state);
+  if(count)changedFolder();
   return count;
  }
 
@@ -182,7 +185,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
    }
    const fromDrafts=await copyDrafts(state);copied+=fromDrafts.copied;removed+=fromDrafts.removed;
    await writeJson(stateFile,state);
-   if(copied||removed)log('iCloud copy: '+copied+' copied, '+removed+' removed');
+   if(copied||removed){log('iCloud copy: '+copied+' copied, '+removed+' removed');changedFolder();}
    return {copied,removed};
   }).catch(error=>{report(error);return {copied:0,removed:0};});
  }
@@ -203,7 +206,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
    if(!enabled||!available())return {copied:0,removed:0};
    const state=readState(),result=await copyDrafts(state);
    await writeJson(stateFile,state);
-   if(result.copied||result.removed)log('iCloud copy: '+result.copied+' copied, '+result.removed+' removed (drafts)');
+   if(result.copied||result.removed){log('iCloud copy: '+result.copied+' copied, '+result.removed+' removed (drafts)');changedFolder();}
    return result;
   }).catch(error=>{report(error);return {copied:0,removed:0};});
  }
