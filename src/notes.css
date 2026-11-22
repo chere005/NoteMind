@@ -60,3 +60,11 @@ footer #zoomBox,.tablet-footer [data-drawing-zoom]{background:transparent;color:
 
 #rich .graphics-pane.floating-graphics{border:0;border-radius:0;background:transparent}
 @media(prefers-color-scheme:dark){#rich .graphics-pane.ink-only.floating-graphics>img{filter:drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #aeb6c4)}}
+
+
+/* File sync sits on the title line, out of the way of the row controls. */
+.note-row .note-title-line { display:flex; align-items:center; gap:5px; min-width:0; }
+.note-row .note-title-line .title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.note-row .note-sync { display:inline-flex; flex:none; width:13px; height:13px; color:var(--wm-muted); }
+.note-row .note-sync svg { width:100%; height:100%; }
+.note-row .note-sync[data-state="error"] { color:var(--wm-danger,#b64034); }

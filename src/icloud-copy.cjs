@@ -46,10 +46,12 @@ async function libraryDrafts(store){
 /** The companion folders NoteMind keeps a Markdown file's pictures and metadata in (src/markdown-files.cjs). */
 function markdownFolders(file){const {sidecarFolder,legacyFolder}=require('./markdown-files.cjs');return [sidecarFolder(file),legacyFolder(file)];}
 
-function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],onChange=()=>{},log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,retryMs=DRAFT_RETRY_MS,timers={setTimeout,clearTimeout}}={}){
+function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirname(target):null,prefsFile,stateFile,drafts=async()=>[],registeredFiles=async()=>[],onChange=()=>{},onActivity=()=>{},log=()=>{},now=()=>Date.now(),settleMs=SETTLE_MS,retryMs=DRAFT_RETRY_MS,timers={setTimeout,clearTimeout}}={}){
  if(!home||!notesFolder||!prefsFile||!stateFile)throw Error('iCloud copy needs its folders.');
  let enabled=readJson(prefsFile)?.enabled===true;
- const pending=new Map();let running=Promise.resolve(),disposed=false,draftTimer=null,draftFailures=0;
+ const pending=new Map(),inFlight=new Map(),fileErrors=new Set(),draftErrors=new Set();
+ let running=Promise.resolve(),disposed=false,draftTimer=null,draftFailures=0,draftsInFlight=0;
+ const activity=()=>{try{onActivity();}catch{}};
 
  function readJson(file){try{return JSON.parse(fsSync.readFileSync(file,'utf8'));}catch{return null;}}
  async function writeJson(file,value){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+crypto.randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(value)+'\n');await fs.rename(temp,file);}
@@ -92,7 +94,6 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   return changed;
  }
 
- /** Copy one Notepad (a Markdown file with its companion folders) now. */
  async function copyNote(file,state){
   const abs=path.resolve(file),name=copyName(abs),destination=path.join(target,name);
   let changed=await copyOne(abs,destination);
@@ -101,6 +102,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
    if(fsSync.existsSync(from))changed=await copyTree(from,path.join(path.dirname(destination),folder))||changed;
   }
   state.copies[name]={source:abs};
+  fileErrors.delete(abs);
   return changed;
  }
  async function removeCopy(name){
@@ -126,10 +128,19 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
  /** Something in the copied folder changed (Notepads on the web follows it). */
  const changedFolder=()=>{try{onChange();}catch{}};
 
+ async function copySources(files,state){
+  let copied=0;
+  for(const file of new Set(files)){
+   const abs=path.resolve(file);
+   try{if(wanted(abs)&&fsSync.existsSync(abs)&&await copyNote(abs,state))copied++;}
+   catch(error){fileErrors.add(abs);report(error);}
+  }
+  return copied;
+ }
+
  async function copyFiles(files){
   if(!enabled||!available())return 0;
-  const state=readState();let count=0;
-  for(const file of files){try{if(wanted(file)&&fsSync.existsSync(file)&&await copyNote(file,state))count++;}catch(error){report(error);}}
+  const state=readState(),count=await copySources(files,state);
   await writeJson(stateFile,state);
   if(count)changedFolder();
   return count;
@@ -141,14 +152,14 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   let copied=0,removed=0,list;
   // The library can be briefly unreadable (its archive worker is restarted while a large Notepad opens): keep every
   // copy as it is and try again a little later, a few times.
-  try{list=await drafts();draftFailures=0;}catch(error){report(error);if(++draftFailures<=DRAFT_RETRIES)scheduleDrafts(retryMs);return {copied,removed};}
+  try{list=await drafts();draftFailures=0;draftErrors.clear();}catch(error){report(error);if(++draftFailures<=DRAFT_RETRIES)scheduleDrafts(retryMs);return {copied,removed};}
   const taken=new Set(Object.entries(state.copies).filter(([,entry])=>typeof entry?.source==='string').map(([name])=>name.toLowerCase())),current=new Set();
   list=[...(Array.isArray(list)?list:[])].filter(d=>d&&typeof d.id==='string'&&typeof d.file==='string').sort((a,b)=>String(a.created||'').localeCompare(String(b.created||''))||a.id.localeCompare(b.id));
   for(const draft of list){
    const base=draftFileName(draft.title);let name,n=1;
    do{name=path.join(DRAFTS_FOLDER,(n>1?base+' '+n:base)+'.nm');n++;}while(taken.has(name.toLowerCase()));
    taken.add(name.toLowerCase());current.add(name);
-   try{if(await copyOne(draft.file,path.join(target,name)))copied++;state.copies[name]={draft:draft.id};}catch(error){report(error);}
+   try{if(await copyOne(draft.file,path.join(target,name)))copied++;state.copies[name]={draft:draft.id};}catch(error){draftErrors.add(draft.id);report(error);}
   }
   for(const [name,entry]of Object.entries(state.copies)){
    if(typeof entry?.draft!=='string'||current.has(name))continue;
@@ -159,6 +170,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
 
  /** The catch-up pass: copy every Notepad in the NoteMind folder and every Notepad copied before; remove copies whose Notepad is gone. */
  async function sweep(){
+  draftsInFlight++;activity();
   return serial(async()=>{
    if(!enabled||!available())return {copied:0,removed:0};
    timers.clearTimeout(draftTimer);draftTimer=null;
@@ -173,11 +185,11 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
     }
    };
    await walk(notesFolder,0);
+   try{found.push(...await registeredFiles());}catch(error){report(error);}
    await clearStaleTemporaries(target);
    const state=readState(),sources=new Set(found);
    for(const {source}of Object.values(state.copies))if(typeof source==='string'&&fsSync.existsSync(source)&&wanted(source))sources.add(source);
-   let copied=0,removed=0;
-   for(const file of sources){try{if(await copyNote(file,state))copied++;}catch(error){report(error);}}
+   let copied=await copySources(sources,state),removed=0;
    for(const [name,entry]of Object.entries(state.copies)){
     const source=entry?.source;
     if(typeof entry?.draft==='string'||typeof source==='string'&&fsSync.existsSync(source)&&copyName(source)===name)continue;
@@ -187,7 +199,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
    await writeJson(stateFile,state);
    if(copied||removed){log('iCloud copy: '+copied+' copied, '+removed+' removed');changedFolder();}
    return {copied,removed};
-  }).catch(error=>{report(error);return {copied:0,removed:0};});
+  }).catch(error=>{report(error);return {copied:0,removed:0};}).finally(()=>{draftsInFlight--;activity();});
  }
 
  /** A Notepad was saved: copy it once saving settles (autosave can save often). */
@@ -195,20 +207,41 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   if(disposed||!enabled||!file||!wanted(file))return;
   const abs=path.resolve(file);
   timers.clearTimeout(pending.get(abs));
-  const timer=timers.setTimeout(()=>{pending.delete(abs);void serial(()=>copyFiles([abs])).catch(report);},settleMs);
+  const timer=timers.setTimeout(()=>{
+   pending.delete(abs);
+   void queueFiles([abs]);
+  },settleMs);
   timer?.unref?.();
   pending.set(abs,timer);
+  activity();
+ }
+
+ function queueFiles(files){
+  for(const file of files)inFlight.set(file,(inFlight.get(file)||0)+1);
+  activity();
+  return serial(()=>copyFiles(files)).catch(error=>{
+   for(const file of files)fileErrors.add(file);
+   report(error);
+  }).finally(()=>{
+   for(const file of files){
+    const count=inFlight.get(file);
+    if(count===1)inFlight.delete(file);
+    else inFlight.set(file,count-1);
+   }
+   activity();
+  });
  }
 
  /** Unsaved Notepads only: copy what changed, remove what is gone. */
  function syncDrafts(){
+  draftsInFlight++;activity();
   return serial(async()=>{
    if(!enabled||!available())return {copied:0,removed:0};
    const state=readState(),result=await copyDrafts(state);
    await writeJson(stateFile,state);
    if(result.copied||result.removed){log('iCloud copy: '+result.copied+' copied, '+result.removed+' removed (drafts)');changedFolder();}
    return result;
-  }).catch(error=>{report(error);return {copied:0,removed:0};});
+  }).catch(error=>{report(error);return {copied:0,removed:0};}).finally(()=>{draftsInFlight--;activity();});
  }
 
  function scheduleDrafts(ms){
@@ -216,6 +249,7 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   timers.clearTimeout(draftTimer);
   draftTimer=timers.setTimeout(()=>{draftTimer=null;void syncDrafts();},ms);
   draftTimer?.unref?.();
+  activity();
  }
  /** The library changed (a draft autosaved, a Notepad renamed, deleted or restored): copy the drafts once it settles. */
  const libraryChanged=()=>scheduleDrafts(settleMs);
@@ -226,20 +260,40 @@ function createICloudCopy({home,notesFolder,target,iCloudRoot=target?path.dirnam
   timers.clearTimeout(draftTimer);draftTimer=null;
   if(!files.length&&!drafting)return running;
   let timeout;const limit=new Promise(resolve=>{timeout=setTimeout(resolve,FLUSH_LIMIT_MS);timeout.unref?.();});
-  try{await Promise.race([Promise.all([files.length?serial(()=>copyFiles(files)).catch(report):null,drafting?syncDrafts():null]),limit]);}finally{clearTimeout(timeout);}
+  try{await Promise.race([Promise.all([files.length?queueFiles(files):null,drafting?syncDrafts():null]),limit]);}finally{clearTimeout(timeout);}
  }
 
  async function setEnabled(value){
   value=!!value;
   if(!value)await flush();
-  enabled=value;await writeJson(prefsFile,{enabled});
+  enabled=value;await writeJson(prefsFile,{enabled});activity();
   if(enabled)return sweep();
  }
 
  /** A save's result passes through: a saved Notepad's path is noted for copying. */
  const afterSave=result=>{if(result&&typeof result.path==='string')saved(result.path);return result;};
 
- return {saved,afterSave,libraryChanged,sweep,syncDrafts,flush,setEnabled,isEnabled:()=>enabled,isAvailable:available,copyName,wanted,target,dispose:()=>{disposed=true;timers.clearTimeout(draftTimer);draftTimer=null;}};
+ /** Local copy state by original path or draft ID. Fingerprints distinguish older uploads. */
+ function status(){
+  const files=Object.create(null),drafts=Object.create(null);
+  if(!enabled)return {enabled:false,files,drafts};
+  for(const [name,entry]of Object.entries(readState().copies)){
+   const destination=path.resolve(target||notesFolder,name);
+   if(!target||!inside(destination,target))continue;
+   try{
+    const {size,mtimeMs}=fsSync.statSync(destination);
+    const copy={rel:name.split(path.sep).join('/'),size,mtime:Math.round(mtimeMs)};
+    if(entry.source)files[entry.source]=copy;
+    else if(entry.draft)drafts[entry.draft]=copy;
+   }catch{/* A copy may be absent while iCloud downloads it. */}
+  }
+  for(const file of fileErrors)files[file]={state:'error',message:'Could not copy this file to iCloud Drive.'};
+  for(const file of [...pending.keys(),...inFlight.keys()])files[file]={state:'syncing'};
+  for(const id of draftErrors)drafts[id]={state:'error',message:'Could not copy this draft to iCloud Drive.'};
+  return {enabled:true,files,drafts,draftsPending:!!draftTimer||draftsInFlight>0,draftsFailed:draftFailures>DRAFT_RETRIES};
+ }
+
+ return {status,saved,afterSave,libraryChanged,sweep,syncDrafts,flush,setEnabled,isEnabled:()=>enabled,isAvailable:available,copyName,wanted,target,dispose:()=>{disposed=true;timers.clearTimeout(draftTimer);draftTimer=null;}};
 }
 
 module.exports={createICloudCopy,iCloudDriveRoot,libraryDrafts,draftFileName,WORKING_FOLDERS,DRAFTS_FOLDER};

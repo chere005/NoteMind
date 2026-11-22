@@ -94,8 +94,8 @@ function createWebBridge({config,icon,partition='persist:notemind-icloud-web',su
    });
   }finally{touch();}
  }
- const save=record=>job('save',{record},SAVE_TIMEOUT_MS);
- const remove=names=>job('remove',{names},REMOVE_TIMEOUT_MS);
+ const save=(record,appleId)=>job('save',{record,appleId},SAVE_TIMEOUT_MS);
+ const remove=(names,appleId)=>job('remove',{names,appleId},REMOVE_TIMEOUT_MS);
  function sendSummary(){if(win&&!win.isDestroyed()){try{win.webContents.send('icloud-web:summary',summary());}catch{}}}
  function show(){create();win.show();win.focus();sendSummary();touch();}
  function dispose(){

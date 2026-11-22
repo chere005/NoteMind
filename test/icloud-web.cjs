@@ -7,6 +7,7 @@ const root=path.resolve('test-results/icloud-web-'+Date.now()),home=path.join(ro
 for(const dir of [home,target,data])fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(data,'icloud-copy.json'),JSON.stringify({enabled:true}));
 process.env.NOTEMIND_DATA=data;process.env.NOTEMIND_HOME=home;process.env.NOTEMIND_ICLOUD_DIR=target;
+if(process.platform==='darwin')app.setActivationPolicy('accessory');
 app.disableHardwareAcceleration();for(const flag of ['disable-renderer-backgrounding','disable-background-timer-throttling','disable-backgrounding-occluded-windows'])app.commandLine.appendSwitch(flag);
 const notepad=require(path.resolve('src/notepad-format.cjs'));
 fs.mkdirSync(path.join(target,'Drafts'),{recursive:true});
@@ -34,7 +35,7 @@ app.whenReady().then(()=>session.fromPartition('persist:notemind-icloud-web').pr
 
 const report={root,checks:[]},pause=ms=>new Promise(r=>setTimeout(r,ms));let tested=false;
 const waitFor=async(test,ms)=>{const end=Date.now()+ms;while(Date.now()<end){if(await test())return true;await pause(250);}return false;};
-app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(false);if(tested)return;tested=true;w.webContents.once('did-finish-load',async()=>{
+app.on('browser-window-created',(_,w)=>{w.setFocusable(false);w.webContents.setBackgroundThrottling(false);if(tested)return;tested=true;w.webContents.once('did-finish-load',async()=>{
  const js=(fn,...args)=>w.webContents.executeJavaScript('('+fn.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+')');
  const check=(ok,name)=>{if(!ok)throw Error(name);report.checks.push(name);};
  try{
@@ -61,8 +62,14 @@ app.on('browser-window-created',(_,w)=>{w.webContents.setBackgroundThrottling(fa
   check(JSON.parse((await record(INDEX_NAME)).fields.files).files.some(entry=>entry[0]==='Drafts/Old Cooking Notes.nm'),'The index names it');
   check(await waitFor(()=>page(()=>/^Signed in\. 1 Notepad is on the web/.test(document.getElementById('notemind-web-status').textContent)),5000),'The window says how many Notepads are on the web');
   const file=path.join(home,'Week.nm');
+  const unrelated=path.join(home,'Unrelated.nm');
+  for(const name of [file,unrelated])await js(f=>window.dispatchEvent(new CustomEvent('notemind-keep-file',{detail:f})),name);
+  const indicator=f=>js(value=>[...document.querySelectorAll('.note-row')].find(row=>row.dataset.path===value)?.querySelector('.note-sync')?.dataset.state,f);
   await js(f=>window.notemind.save({text:'# Week\n\nThe plan.\n',assets:{},meta:{},title:'Week',path:f},false),file);
+  check(await waitFor(async()=>await indicator(file)==='syncing',4000),'The pending file has a sync icon beside its name');
+  check(await indicator(unrelated)==='waiting','A different filename keeps its own state');
   check(await waitFor(async()=>{const r=await record(recordName('Week.nm'));return !!r&&r.fields.text.includes('The plan.');},40000),'A Notepad saved later is copied to iCloud Drive and then sent');
+  check(await waitFor(async()=>await indicator(file)==='synced',5000),'The icon confirms the file appears in the web index');
   web.close();
   check(!web.isDestroyed()&&!web.isVisible(),'Closing the window hides it; sending goes on');
   await page(()=>window.__fake.signOut());

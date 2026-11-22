@@ -8,6 +8,60 @@
 
   const tree = byId('sidebarTree'), sidebar = byId('sidebar'), pane = byId('pane'),rowActionProviders=new WeakMap();
 
+  const syncSymbols = {
+    synced: '<path d="m4 8 2.5 2.5L12 5"/>',
+    syncing: '<path d="M12.5 6A5 5 0 1 0 13 9M13 3v3H10"/>',
+    error: '<path d="M8 4v4m0 3v.2"/><circle cx="8" cy="8" r="6"/>',
+    copied: '<path d="M5 12h7a2.5 2.5 0 0 0 0-5h-.5A3.5 3.5 0 0 0 5 7a2.5 2.5 0 0 0 0 5Z"/>',
+    waiting: '<circle cx="8" cy="8" r="4.5"/><path d="M8 5.5V8l1.5 1"/>'
+  };
+  let syncSnapshot;
+  function syncState(row) {
+    const copy=syncSnapshot?.copy,web=syncSnapshot?.web;
+    if(!copy?.enabled)return null;
+    const id=row.dataset.noteId,file=row.dataset.path;
+    if(file&&!/\.(nm|wm|md|txt|py)$/i.test(file))return null;
+    const local=id?copy.drafts[id]:copy.files[file];
+    if(local?.state==='error')return local;
+    if(local?.state==='syncing'||(id&&copy.draftsPending))return {state:'syncing',message:'Updating the iCloud Drive copy'};
+    if(id&&copy.draftsFailed)return {state:'error',message:'Could not read drafts for iCloud sync'};
+    if(!local)return {state:'waiting',message:'Waiting for an iCloud Drive copy'};
+    if(!web?.signedIn)return {state:'copied',message:'Copied to iCloud Drive. Sign in to publish to the web viewer.'};
+    const remote=web.files[local.rel];
+    if(remote?.state==='synced'&&remote.size===local.size&&remote.mtime===local.mtime)return {state:'synced',message:'Available in the web viewer'};
+    if(remote?.state==='error')return remote;
+    if(web.error)return {state:'error',message:'Could not update the web viewer'};
+    return web.busy?{state:'syncing',message:'Sending to the web viewer'}:{state:'waiting',message:'Waiting to send to the web viewer'};
+  }
+  function paintSync(row) {
+    const state=syncState(row);
+    let badge=row.querySelector('.note-sync');
+    if(!state){badge?.remove();return;}
+    if(!badge){
+      badge=document.createElement('span');
+      badge.className='note-sync';
+      badge.setAttribute('role','img');
+      const title=row.querySelector('.title');
+      if(!title.parentNode.classList.contains('note-title-line')){
+        const line=document.createElement('div');
+        line.className='note-title-line';
+        title.replaceWith(line);
+        line.append(title);
+      }
+      title.after(badge);
+    }
+    if(badge.dataset.state!==state.state)badge.innerHTML='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+syncSymbols[state.state]+'</svg>';
+    badge.dataset.state=state.state;
+    badge.title=state.message;
+    badge.setAttribute('aria-label',state.message);
+  }
+  function updateSync(snapshot) {
+    syncSnapshot=snapshot;
+    for(const row of tree.querySelectorAll('.note-row'))paintSync(row);
+  }
+  window.notemind.sync?.status().then(updateSync).catch(()=>{});
+  window.notemind.sync?.onStatus(updateSync);
+
   const folderKey = 'notemind.openFolders', expanded = new Set(), contents = new Map();
 
   let roots = [], activePath = null, search = '', generation = 0, searchResults = [], menu = null, dragging = null;
@@ -44,7 +98,7 @@
   }
   function libraryRow(record){
     if(record.path){row({name:record.title,path:record.path,type:'file',library:true,excerpt:record.excerpt},0);return;}
-    const item=document.createElement('div');item.className='tree-row note-row'+(search?' hit-row':'')+(record.id===activeNoteId?' open':'');item.tabIndex=0;item.dataset.noteId=record.id;item.setAttribute('role','treeitem');if(search)item.id='sidebar-hit-'+searchResults.indexOf(record);item.innerHTML=iconMarkup('doc',15,'row-icon')+'<div class="text"><div class="title"></div><div class="snippet"></div></div>';item.querySelector('.title').textContent=record.title;item.querySelector('.snippet').textContent=record.excerpt||'Unsaved Notepad';item.onclick=()=>window.NoteMindNotes.openRecord(record).catch(error=>byId('status').textContent=error.message);item.onkeydown=event=>{if(event.target===item&&(event.key==='Enter'||event.key===' ')){event.preventDefault();item.click();}};rowControls(item,record.title,()=>draftActions(record));tree.append(item);
+    const item=document.createElement('div');item.className='tree-row note-row'+(search?' hit-row':'')+(record.id===activeNoteId?' open':'');item.tabIndex=0;item.dataset.noteId=record.id;item.setAttribute('role','treeitem');if(search)item.id='sidebar-hit-'+searchResults.indexOf(record);item.innerHTML=iconMarkup('doc',15,'row-icon')+'<div class="text"><div class="title"></div><div class="snippet"></div></div>';item.querySelector('.title').textContent=record.title;item.querySelector('.snippet').textContent=record.excerpt||'Unsaved Notepad';item.onclick=()=>window.NoteMindNotes.openRecord(record).catch(error=>byId('status').textContent=error.message);item.onkeydown=event=>{if(event.target===item&&(event.key==='Enter'||event.key===' ')){event.preventDefault();item.click();}};rowControls(item,record.title,()=>draftActions(record));paintSync(item);tree.append(item);
   }
   function orderItems(items){if(librarySettings.sort==='manual')return items;const record=item=>libraryRecords.find(r=>r.path&&samePath(r.path,item.path));return [...items].sort((a,b)=>a.type!==b.type?a.type==='directory'?-1:1:librarySettings.sort==='title'?a.name.localeCompare(b.name):(record(b)?.[librarySettings.sort==='created'?'created':'modified']||'').localeCompare(record(a)?.[librarySettings.sort==='created'?'created':'modified']||''));}
   function organizationMenu(){const tags=[...new Set(libraryRecords.flatMap(r=>r.meta?.tags||[]))].sort().map(tag=>({label:'#'+tag,run:()=>applyLibraryFilter({tags:[tag]})}));return [{label:'All Notepads…',run:()=>window.NoteMindLibrary.library()},{label:'Pinned Notepads',run:()=>applyLibraryFilter({pinned:true})},{label:'Smart Folders…',run:()=>window.NoteMindLibrary.smartFolders()},{label:'Tags',submenu:tags.length?tags:[{label:'No tags yet',disabled:true}]},{label:'Sort Notepads',submenu:[['manual','Manual'],['title','Title'],['modified','Recently Edited'],['created','Recently Created']].map(([sort,label])=>({label,checked:librarySettings.sort===sort,run:async()=>{await window.notemind.notes.settings({sort});librarySettings.sort=sort;render();}}))},{label:'Recently Deleted…',run:()=>window.NoteMindLibrary.deleted()}];}
@@ -173,6 +227,7 @@
 
     button.addEventListener('drop', async event => { const operation = intent(event), moving = dragging; event.preventDefault(); button.classList.remove('drop-target','drop-before','drop-after'); dragging = null; if (!operation || !moving) return; try { if (operation !== 'inside') { if (isRoot) roots = window.sidebarOrder.reorder(roots, moving.path, item.path, operation === 'after'); else { const parent = parentOf(item.path), entries = contents.get(parent) || []; const ordered = window.sidebarOrder.reorder(entries.map(entry => entry.path), moving.path, item.path, operation === 'after'); const workspace = workspaces.find(w => w.id === workspaceId); workspace.order ||= {}; workspace.order[parent] = ordered; contents.set(parent, window.sidebarOrder.sortItems(entries, ordered)); } saveWorkspaces(); render(); return; } const to = await window.notemind.moveEntry(moving.path, item.path); if (!to || samePath(to, moving.path)) return; for (const workspace of workspaces) { workspace.folders = workspace.folders.map(path => movePath(path, moving.path, to)); workspace.order = window.sidebarOrder.remap(workspace.order || {}, moving.path, to); } roots = workspaces.find(w => w.id === workspaceId).folders; const nextExpanded = [...expanded].map(path => movePath(path, moving.path, to)); expanded.clear(); nextExpanded.forEach(path => expanded.add(path)); expanded.add(item.path); contents.clear(); saveWorkspaces(); window.dispatchEvent(new CustomEvent('notemind-path-renamed', { detail: { from: moving.path, to } })); await refresh(); } catch (error) { byId('status').textContent = error.message; } });
 
+    if(!directory)paintSync(button);
     rowControls(button,item.name,()=>entryActions(item,isRoot));
     tree.append(button);
 

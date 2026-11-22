@@ -19,6 +19,7 @@ const CLOUD=Object.freeze({
 });
 const FILE_TYPE='NoteMindFile',INDEX_TYPE='NoteMindIndex',INDEX_NAME='notemind-index',FORMAT=1;
 const NOTE_EXTENSIONS=new Set(['.nm','.wm','.md','.txt','.py']);
+const ASSET_BYTES=12*1024*1024;
 const TEXT_CHARS=100000,TEXT_BYTES=600000,FILE_LIMIT=240*1024*1024,VISIT_LIMIT=20000,DEPTH_LIMIT=10;
 const SETTLE_MS=10000,RETRY_MS=60000,RETRIES=5;
 
@@ -28,15 +29,17 @@ const recordName=rel=>'nmf-'+crypto.createHash('sha256').update(rel).digest('hex
 const isNotePath=rel=>NOTE_EXTENSIONS.has(path.posix.extname(rel).toLowerCase())&&!rel.split('/').slice(0,-1).some(part=>/\.assets$/i.test(part));
 
 /** Every file in the copied folder: hidden files, unfinished copies and iCloud placeholders are not. */
-async function listFiles(root){
+async function listFiles(root,{onPlaceholder=()=>{}}={}){
  const files=[];let visited=0;
  const walk=async(dir,prefix,depth)=>{
-  let entries;try{entries=await fs.readdir(dir,{withFileTypes:true});}catch{return;}
+  const entries=await fs.readdir(dir,{withFileTypes:true});
   for(const entry of entries){
-   if(++visited>VISIT_LIMIT||entry.name.startsWith('.')||/\.(tmp|icloud)$/i.test(entry.name))continue;
+   if(++visited>VISIT_LIMIT)throw Error('Too many files to scan the iCloud Drive folder.');
+   if(/\.icloud$/i.test(entry.name)){onPlaceholder();continue;}
+   if(entry.name.startsWith('.')||/\.tmp$/i.test(entry.name))continue;
    const full=path.join(dir,entry.name),rel=prefix?prefix+'/'+entry.name:entry.name;
    if(entry.isDirectory()){if(depth<DEPTH_LIMIT)await walk(full,rel,depth+1);}
-   else if(entry.isFile()){try{const stat=await fs.stat(full);files.push({rel,abs:full,size:stat.size,mtime:Math.round(stat.mtimeMs)});}catch{}}
+   else if(entry.isFile()){const stat=await fs.stat(full);files.push({rel,abs:full,size:stat.size,mtime:Math.round(stat.mtimeMs)});}
   }
  };
  await walk(root,'',0);
@@ -54,9 +57,12 @@ function clipText(text){
  * The publisher. `bridge` reaches CloudKit: appleId() resolves to the signed-in Apple ID's CloudKit record name or null, save(record)
  * and remove(names) resolve when CloudKit has them. `readFacts(file)` gives a Notepad's {text, meta, id, kind}.
  */
-function createWebPublisher({target,stateFile,bridge,readFacts,app='',log=()=>{},settleMs=SETTLE_MS,retryMs=RETRY_MS,timers={setTimeout,clearTimeout}}={}){
+function createWebPublisher({target,stateFile,bridge,readFacts,app='',log=()=>{},onActivity=()=>{},settleMs=SETTLE_MS,retryMs=RETRY_MS,timers={setTimeout,clearTimeout}}={}){
  if(!target||!stateFile||!bridge)throw Error('Notepads on the web needs its folder, its state file and its bridge.');
  let timer=null,running=null,again=false,disposed=false,failures=0;
+ const fileErrors=new Map();
+ let scanned=new Map(),pending=new Set(),runError=null,indexError=null,session=null;
+ const activity=()=>{try{onActivity();}catch{}};
  const report=error=>log('Notepads on the web: '+(error?.message||error));
 
  function readState(){
@@ -74,6 +80,7 @@ function createWebPublisher({target,stateFile,bridge,readFacts,app='',log=()=>{}
   timers.clearTimeout(timer);
   timer=timers.setTimeout(()=>{timer=null;void publish();},ms);
   timer?.unref?.();
+  activity();
  }
 
  async function fieldsFor(file,hash){
@@ -89,35 +96,57 @@ function createWebPublisher({target,stateFile,bridge,readFacts,app='',log=()=>{}
 
  async function run(){
   const appleId=await bridge.appleId();
+  session=!!appleId;
+  activity();
   if(!appleId)return {signedIn:false,uploaded:0,removed:0,failed:0};
   let state=readState();
-  if(state.appleId!==appleId){state={appleId,records:{},index:null,published:null};await writeState(state);}   // another Apple ID: its database has none of these
+  if(state.appleId!==appleId){fileErrors.clear();indexError=null;state={appleId,records:{},index:null,published:null};await writeState(state);}   // another Apple ID: its database has none of these
   if(!fsSync.existsSync(target))return {signedIn:true,uploaded:0,removed:0,failed:0};
-  const files=await listFiles(target),present=new Set(files.map(file=>file.rel));
+  let placeholders=false;
+  const files=await listFiles(target,{onPlaceholder:()=>{placeholders=true;}}),present=new Set(files.map(file=>file.rel));
+  scanned=new Map(files.map(file=>[file.rel,file]));
+  pending=new Set(files.filter(file=>{
+   const known=state.records[file.rel];
+   return !known||known.size!==file.size||known.mtime!==file.mtime;
+  }).map(file=>file.rel));
+  for(const rel of fileErrors.keys())if(!present.has(rel))fileErrors.delete(rel);
+  activity();
   let uploaded=0,removed=0,failed=0;
   for(const file of files){
    if(disposed)break;
    const known=state.records[file.rel];
    if(known&&known.size===file.size&&known.mtime===file.mtime)continue;
-   if(file.size>FILE_LIMIT){report(file.rel+' is too large for iCloud on the web.');continue;}
+   if(file.size>FILE_LIMIT){const message='This file exceeds the web viewer’s size limit.';fileErrors.set(file.rel,message);pending.delete(file.rel);report(file.rel+': '+message);activity();continue;}
    try{
     const bytes=await fs.readFile(file.abs),hash=crypto.createHash('sha256').update(bytes).digest('hex'),name=recordName(file.rel);
-    await bridge.save({recordType:FILE_TYPE,recordName:name,fields:await fieldsFor(file,hash),file:{bytes,name:path.posix.basename(file.rel)}});
-    state.records[file.rel]={name,size:file.size,mtime:file.mtime};
+    const after=await fs.stat(file.abs);
+    if(bytes.length!==file.size||Math.round(after.mtimeMs)!==file.mtime)throw Error('The file changed during upload preparation.');
+    const filename=path.posix.basename(file.rel),fields=await fieldsFor(file,hash);
+    const record={recordType:FILE_TYPE,recordName:name,fields};
+    if(bytes.length<=ASSET_BYTES)record.file={bytes,name:filename};
+    else{
+     record.parts=[];
+     for(let offset=0;offset<bytes.length;offset+=ASSET_BYTES)record.parts.push({bytes:bytes.subarray(offset,offset+ASSET_BYTES),name:'part-'+record.parts.length});
+    }
+    await bridge.save(record,appleId);
+    state.records[file.rel]={name,size:file.size,mtime:file.mtime,listed:false};
+    fileErrors.delete(file.rel);
     uploaded++;
     await writeState(state);
-   }catch(error){failed++;report(file.rel+': '+(error?.message||error));}
+   }catch(error){failed++;fileErrors.set(file.rel,String(error?.message||error));report(file.rel+': '+(error?.message||error));}
+   finally{pending.delete(file.rel);activity();}
   }
-  const gone=Object.keys(state.records).filter(rel=>!present.has(rel));
+  const gone=placeholders?[]:Object.keys(state.records).filter(rel=>!present.has(rel));
   if(gone.length&&!disposed){
-   try{await bridge.remove(gone.map(rel=>state.records[rel].name));for(const rel of gone)delete state.records[rel];removed=gone.length;}
+   try{await bridge.remove(gone.map(rel=>state.records[rel].name),appleId);for(const rel of gone)delete state.records[rel];removed=gone.length;}
    catch(error){failed++;report(error);}
   }
   const entries=Object.entries(state.records).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([rel,record])=>[rel,record.name,record.size,record.mtime]);
   const index=JSON.stringify({format:FORMAT,files:entries}),digest=crypto.createHash('sha256').update(index).digest('hex');
   if(digest!==state.index&&!disposed){
-   try{await bridge.save({recordType:INDEX_TYPE,recordName:INDEX_NAME,fields:{files:index,written:Date.now(),app:String(app)}});state.index=digest;state.published=Date.now();}
-   catch(error){failed++;report(error);}
+   try{await bridge.save({recordType:INDEX_TYPE,recordName:INDEX_NAME,fields:{files:index,written:Date.now(),app:String(app)}},appleId);state.index=digest;state.published=Date.now();
+    for(const item of Object.values(state.records))item.listed=true;indexError=null;}
+   catch(error){failed++;indexError=String(error?.message||error);report(error);}
   }
   await writeState(state);
   if(uploaded||removed)log('Notepads on the web: '+uploaded+' sent, '+removed+' removed'+(failed?', '+failed+' failed':''));
@@ -129,27 +158,51 @@ function createWebPublisher({target,stateFile,bridge,readFacts,app='',log=()=>{}
   if(disposed)return Promise.resolve({signedIn:false,uploaded:0,removed:0,failed:0});
   if(running){again=true;return running;}
   timers.clearTimeout(timer);timer=null;
-  running=run().catch(error=>{report(error);return {signedIn:false,uploaded:0,removed:0,failed:1};}).then(result=>{
+  runError=null;
+  running=run().catch(error=>{runError=String(error?.message||error);report(error);return {signedIn:false,uploaded:0,removed:0,failed:1};}).then(result=>{
    if(result.failed){if(++failures<=RETRIES)schedule(retryMs);}else failures=0;
    return result;
-  }).finally(()=>{running=null;if(again){again=false;schedule(settleMs);}});
+  }).finally(()=>{running=null;pending.clear();if(again){again=false;schedule(settleMs);}activity();});
+  activity();
   return running;
  }
 
  /** The copied folder changed: publish once it settles. */
- const changed=()=>schedule(settleMs);
+ const changed=()=>{failures=0;schedule(settleMs);};
 
  /** What the window says: how many files are on the web, and when the list was last sent. */
  function summary(){
   const state=readState();
-  return {appleId:state.appleId,files:Object.keys(state.records).length,notepads:Object.keys(state.records).filter(isNotePath).length,published:state.published};
+  const records=Object.keys(state.records).filter(rel=>state.index&&state.records[rel].listed!==false);
+  return {appleId:state.appleId,files:records.length,notepads:records.filter(isNotePath).length,published:state.published,error:runError||indexError||(fileErrors.size?'Some Notepads could not be sent to iCloud.':null)};
  }
  /** Signed out: forget what was sent, so the next Apple ID gets everything. */
- async function forget(){await writeState({appleId:null,records:{},index:null,published:null});}
+ async function forget(){
+  session=false;fileErrors.clear();runError=indexError=null;activity();
+  await running;
+  await writeState({appleId:null,records:{},index:null,published:null});
+  activity();
+ }
  /** Was an Apple ID signed in when this computer last published? (Then publish at start without being asked.) */
  const wasSignedIn=()=>!!readState().appleId;
 
- return {changed,publish,summary,forget,wasSignedIn,dispose:()=>{disposed=true;timers.clearTimeout(timer);timer=null;}};
+ function status(){
+  const state=readState();
+  // Compare current scan fingerprints with the last successful upload and index write.
+  // A pending copy can invalidate a previous scan even before the publisher sees new bytes.
+  const files=Object.create(null);
+  for(const rel of new Set([...Object.keys(state.records),...scanned.keys()])){
+   const record=state.records[rel],file=scanned.get(rel);
+   const current=record&&(!file||(record.size===file.size&&record.mtime===file.mtime));
+   if(pending.has(rel))files[rel]={state:'syncing'};
+   else if(fileErrors.has(rel))files[rel]={state:'error',message:'This file could not be sent to iCloud.'};
+   else if(current&&state.index&&record.listed!==false)files[rel]={state:'synced',size:record.size,mtime:record.mtime};
+   else if(indexError)files[rel]={state:'error',message:'iCloud could not update the web viewer’s list.'};
+  }
+  return {signedIn:session??!!state.appleId,busy:!!running||!!timer,error:!!(runError||indexError),files};
+ }
+
+ return {status,changed,publish,summary,forget,wasSignedIn,dispose:()=>{disposed=true;timers.clearTimeout(timer);timer=null;}};
 }
 
 module.exports={createWebPublisher,listFiles,recordName,isNotePath,clipText,CLOUD,FILE_TYPE,INDEX_TYPE,INDEX_NAME,FORMAT};

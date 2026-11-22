@@ -29,7 +29,8 @@
   else if(!identity)status.textContent='Sign in with your Apple ID to put your Notepads on the web.';
   else if(summary&&summary.notepads)status.textContent='Signed in. '+summary.notepads+(summary.notepads===1?' Notepad is':' Notepads are')+' on the web'+(summary.published?', updated '+ago(summary.published):'')+'.';
   else status.textContent='Signed in. Your Notepads are being sent to iCloud.';
-  problem.textContent=error||'';problem.hidden=!error;
+  const issue=error||summary?.error;
+  problem.textContent=issue||'';problem.hidden=!issue;
   $('notemind-web-sign-in').hidden=!!identity;
   $('notemind-web-sign-out').hidden=!identity;
   $('notemind-web-reader').hidden=!identity;
@@ -37,16 +38,20 @@
 
  /** CloudKit answers a whole batch at once; any error but "already gone" (when deleting) fails the request. */
  function check(response,{missingOk=false}={}){
-  if(!response||!response.hasErrors)return;
+  if(!response)throw Error('iCloud sent no response.');
+  if(!response.hasErrors)return;
   const real=(response.errors||[]).filter(e=>!(missingOk&&/NOT_FOUND|UNKNOWN_ITEM/.test(e.ckErrorCode||e.serverErrorCode||'')));
   if(real.length)throw real[0];
+  if(!response.errors?.length)throw Error('iCloud could not save the changes.');
  }
  async function run(job){
   if(!db||!identity)throw Error('Not signed in to iCloud.');
+  if(job.appleId!==identity.userRecordName)throw Error('The Apple ID changed. Sign in again to continue.');
   if(job.op==='save'){
    const record={recordType:job.record.recordType,recordName:job.record.recordName,fields:{}};
    for(const [key,value] of Object.entries(job.record.fields||{}))record.fields[key]={value};
    if(job.record.file)record.fields.file={value:new root.File([job.record.file.bytes],job.record.file.name,{type:'application/octet-stream'})};
+   if(job.record.parts)record.fields.parts={value:job.record.parts.map(part=>new root.File([part.bytes],part.name,{type:'application/octet-stream'}))};
    const batch=db.newRecordsBatch();
    batch.forceReplace(record);
    check(await batch.commit());

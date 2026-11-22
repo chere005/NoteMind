@@ -210,3 +210,17 @@ test('when the library cannot be read for a moment, every copy stays and drafts 
  while(t.timers.length&&tries<20){tries++;await t.runTimers();}
  assert.equal(tries,6,'one try and five retries, then it waits for the next change');
 });
+
+test('copy status tracks the source filename independently from its neighbours',async()=>{
+ const t=setup();
+ const first=t.write(path.join(t.notes,'First.nm'),'first');
+ const second=t.write(path.join(t.notes,'Second.nm'),'second');
+ t.copy.saved(first);
+ assert.equal(t.copy.status().files[first].state,'syncing');
+ assert.equal(t.copy.status().files[second],undefined);
+ await t.copy.flush();
+ const copy=t.copy.status().files[first];
+ assert.equal(copy.rel,'First.nm');
+ assert.equal(copy.size,5);
+ assert.equal(t.copy.status().files[second],undefined);
+});

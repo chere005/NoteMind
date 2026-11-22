@@ -144,3 +144,32 @@ test('the sign-in page is NoteMind\'s own, with only the container settings put 
  for(const ok of ['https://idmsa.apple.com/IDMSWebAuth/auth','https://appleid.apple.com/x','https://api.apple-cloudkit.com/'])assert.ok(isApple(new URL(ok)),ok);
  for(const bad of ['https://apple.com.example.com/','https://notapple.com/','https://seancheren.com/'])assert.ok(!isApple(new URL(bad)),bad);
 });
+
+test('a large Notepad uploads in ordered parts and becomes synced only after the web index is saved',async()=>{
+ const t=setup(),limit=12*1024*1024;
+ const bytes=Buffer.concat([Buffer.alloc(limit,0x41),Buffer.from('last part')]);
+ t.write('Large.nm',bytes);
+ t.cloud.fail=record=>record.recordName===INDEX_NAME;
+ assert.equal((await t.publisher.publish()).failed,1);
+ const file=t.cloud.saves.find(record=>record.recordName===recordName('Large.nm'));
+ assert.equal(file.file,undefined);
+ assert.deepEqual(file.parts.map(part=>part.bytes.length),[limit,9]);
+ assert.deepEqual(Buffer.concat(file.parts.map(part=>part.bytes)),bytes);
+ assert.equal(t.publisher.status().files['Large.nm'].state,'error');
+ assert.equal(t.publisher.summary().notepads,0);
+ t.cloud.fail=null;
+ assert.equal((await t.publisher.publish()).uploaded,0);
+ assert.equal(t.publisher.status().files['Large.nm'].state,'synced');
+ assert.equal(t.publisher.summary().notepads,1);
+});
+
+test('a placeholder or incomplete scan preserves previously published files',async()=>{
+ const t=setup();
+ fs.mkdirSync(path.join(t.target,'sub'));
+ const file=t.write('sub/Keep.nm','abc');
+ await t.publisher.publish();
+ fs.renameSync(file,path.join(t.target,'sub','.Keep.nm.icloud'));
+ await t.publisher.publish();
+ assert.deepEqual(t.index().files.map(entry=>entry[0]),['sub/Keep.nm']);
+ assert.equal(t.cloud.removes.length,0);
+});

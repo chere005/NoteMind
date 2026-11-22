@@ -35,24 +35,27 @@ app.on('will-quit',()=>updater.dispose());
 // notes-ipc (afterSave), unsaved Notepads through notes-ipc's library changes, and what is still waiting is copied when
 // the window closes. A test run (NOTEMIND_DATA or
 // NOTEMIND_HOME) never reaches the real iCloud Drive: only NOTEMIND_ICLOUD_DIR gives it a place to copy to.
-let icloudWebChanged=()=>{};
+let icloudWebChanged=()=>{},icloudStatusChanged=()=>{};
 const icloudCopy=(()=>{const {createICloudCopy,iCloudDriveRoot,libraryDrafts}=require('./icloud-copy.cjs'),home=app.getPath('home'),given=process.env.NOTEMIND_ICLOUD_DIR,testing=!!(process.env.NOTEMIND_DATA||process.env.NOTEMIND_HOME),root=given?path.dirname(path.resolve(given)):testing?null:iCloudDriveRoot(home);
- return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),drafts:()=>libraryDrafts(notesStore),onChange:()=>icloudWebChanged(),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
+ return createICloudCopy({home,notesFolder:process.env.NOTEMIND_HOME||path.join(app.getPath('documents'),'NoteMind'),target:given?path.resolve(given):root&&path.join(root,'NoteMind'),iCloudRoot:root,prefsFile:path.join(app.getPath('userData'),'icloud-copy.json'),stateFile:path.join(app.getPath('userData'),'icloud-copy-state.json'),drafts:()=>libraryDrafts(notesStore),
+  registeredFiles:async()=>Object.values((await notesStore.readIndex()).records).filter(record=>!record.deleted&&typeof record.path==='string'&&path.isAbsolute(record.path)).map(record=>record.path),
+  onChange:()=>icloudWebChanged(),onActivity:()=>icloudStatusChanged(),log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});})();
 app.on('will-quit',()=>icloudCopy.dispose());
 // Notepads on the web (src/icloud-web.cjs, src/icloud-web-bridge.cjs): what the iCloud copy puts in iCloud Drive/NoteMind is
 // mirrored into the private iCloud database of the Apple ID signed in under File > Show Notepads on the Web, where the
 // MindSuite NoteMind reader reads it. Nothing happens until an Apple ID signs in; a test run never has a place for it.
 const icloudWeb=(()=>{
- const inert={changed(){},show(){},startup(){},dispose(){}};
+ const inert={changed(){},show(){},startup(){},dispose(){},status:()=>({files:{}})};
  if(!icloudCopy.target)return inert;
  const {createWebPublisher,CLOUD}=require('./icloud-web.cjs'),{createWebBridge}=require('./icloud-web-bridge.cjs'),log=message=>{void fs.appendFile(path.join(app.getPath('userData'),'icloud-copy.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});};
  const readFacts=async file=>{const ext=path.extname(file).toLowerCase();if(ext==='.nm'||ext==='.wm'){const doc=(await require('./archive-codec.cjs').inspectFile(file,{files:'metadata'})).doc||{};return {text:doc.text,meta:doc.meta,id:doc.id,kind:doc.kind};}return {text:(await require('./read-limited.cjs').readLimited(file,4*1024*1024,'This file is too large.')).toString('utf8'),meta:{},kind:ext.slice(1)};};
  let publisher=null,bridge=null;
  const getBridge=()=>bridge||(bridge=createWebBridge({config:CLOUD,icon:path.join(__dirname,'icon.png'),summary:()=>publisher.summary(),log,openReader:()=>{void shell.openExternal('https://seancheren.com/MindSuite/#notemind').catch(()=>{});},
-  onState:(state,before)=>{if(!before)return;if(state.signedIn&&!before.signedIn)void publisher.publish().then(()=>bridge?.sendSummary());else if(!state.signedIn&&before.signedIn)void publisher.forget();}}));
- const lazy={appleId:()=>getBridge().appleId(),save:record=>getBridge().save(record),remove:names=>getBridge().remove(names)};
- publisher=createWebPublisher({target:icloudCopy.target,stateFile:path.join(app.getPath('userData'),'icloud-web-state.json'),bridge:lazy,readFacts,app:app.getVersion(),log});
+  onState:(state,before)=>{icloudStatusChanged();if(!before)return;if(state.signedIn&&!before.signedIn)void publisher.publish().then(()=>bridge?.sendSummary());else if(!state.signedIn&&before.signedIn)void publisher.forget();}}));
+ const lazy={appleId:()=>getBridge().appleId(),save:(record,id)=>getBridge().save(record,id),remove:(names,id)=>getBridge().remove(names,id)};
+ publisher=createWebPublisher({target:icloudCopy.target,stateFile:path.join(app.getPath('userData'),'icloud-web-state.json'),bridge:lazy,readFacts,app:app.getVersion(),log,onActivity:()=>{icloudStatusChanged();bridge?.sendSummary();}});
  return {
+  status:()=>publisher.status(),
   changed:()=>{if(publisher.wasSignedIn())publisher.changed();},
   async show(){if(!icloudCopy.isEnabled()){await icloudCopy.setEnabled(true);const item=Menu.getApplicationMenu()?.getMenuItemById('icloud-copy');if(item)item.checked=true;}getBridge().show();},
   startup:()=>{if(publisher.wasSignedIn())void publisher.publish();},
@@ -61,6 +64,22 @@ const icloudWeb=(()=>{
 })();
 app.on('will-quit',()=>icloudWeb.dispose());
 icloudWebChanged=()=>icloudWeb.changed();
+// Send the sidebar the latest per-file states without re-rendering the workspace.
+const syncSnapshot=()=>({copy:icloudCopy.status(),web:icloudWeb.status()});
+let syncStatusTimer;
+icloudStatusChanged=()=>{
+ if(syncStatusTimer)return;
+ syncStatusTimer=setTimeout(()=>{
+  syncStatusTimer=null;
+  if(win&&!win.isDestroyed())win.webContents.send('notemind:sync-status',syncSnapshot());
+ },120);
+ syncStatusTimer.unref?.();
+};
+ipcMain.handle('notemind:sync-status',event=>{
+ if(!win||event.sender!==win.webContents)return null;
+ return syncSnapshot();
+});
+
 const inputMonitoringCheck=require('./input-monitoring-check.cjs').createInputMonitoringCheck({inputMonitoring,dialog,shell,getWindow:()=>win,hasPenDisplay:()=>screen.getAllDisplays().some(display=>/wacom/i.test(display.label)),settingsUrl:require('./input-monitoring.cjs').SETTINGS,onGranted:()=>pen?.buttonsRestart?.(),env:process.env,log:message=>{void fs.appendFile(path.join(app.getPath('userData'),'startup.log'),new Date().toISOString()+' '+message+'\n').catch(()=>{});}});
 let sheetWrite = Promise.resolve();
 let sheetPersistenceService=null;const sheetPersistence=()=>sheetPersistenceService ||= new(require('./sheet-persistence.cjs').SheetPersistence)(path.join(app.getPath('userData'),'sheets.json'));
