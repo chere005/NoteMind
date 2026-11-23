@@ -61,7 +61,7 @@ test('the test address override accepts only a server on this Mac', () => {
   }
 });
 
-function harness({version = '0.50.0', releaseDoc = release('0.51.0'), packaged = true, env = {}, platform = 'darwin', arch = 'arm64', fetchError = null, answers = []} = {}) {
+function harness({version = '0.50.0', releaseDoc = release('0.51.0'), packaged = true, env = {}, platform = 'darwin', arch = 'arm64', fetchError = null, answers = [], prepare, clock = {time: 1000}} = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'notemind-updater-'));
   const events = [];
   const dialogs = [];
@@ -85,12 +85,14 @@ function harness({version = '0.50.0', releaseDoc = release('0.51.0'), packaged =
   const updater = createUpdater({
     app: fakeApp, autoUpdater, dialog, env, platform, arch,
     fetchJson: async () => { fetches++; if (fetchError) throw fetchError; return releaseDoc; },
+    prepare: prepare === undefined ? async update => ({url: update.url}) : prepare,
+    now: () => clock.time,
     setTimer: (fn, ms) => { const timer = {fn, ms, cleared: false, unref() {}}; timers.push(timer); return timer; },
     clearTimer: timer => { if (timer) timer.cleared = true; },
     prefsFile: path.join(dir, 'updates.json'),
     log: message => events.push(message),
   });
-  return {updater, autoUpdater, dialogs, timers, events, dir, fetches: () => fetches, fakeApp};
+  return {updater, autoUpdater, dialogs, timers, events, dir, clock, fetches: () => fetches, fakeApp};
 }
 
 const getJson = url => new Promise((resolve, reject) => {
@@ -120,7 +122,7 @@ test('a newer release is handed to Squirrel through a one-shot local feed, then 
   assert.equal(seen[0].feed.serverType, 'json');
   assert.match(seen[0].feed.url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/update$/);
   assert.equal(seen[0].response.status, 200);
-  assert.deepEqual(JSON.parse(seen[0].response.text), {url: zip('0.51.0'), name: '0.51.0', notes: 'Notes', pub_date: '2026-11-19T12:00:00Z'});
+  assert.deepEqual(JSON.parse(seen[0].response.text), {url: zip('0.51.0'), name: '0.51.0', notes: 'Notes', pub_date: '2026-11-19T12:00:00Z'}, 'with no checked file, the address is passed through');
   assert.equal(h.dialogs.length, 1);
   assert.match(h.dialogs[0].message, /0\.51\.0 is ready/);
   assert.deepEqual(h.dialogs[0].buttons, ['Restart and Install', 'Later']);

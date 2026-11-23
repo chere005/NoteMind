@@ -1,0 +1,261 @@
+# The Windows installer for a NoteMind release. The Mac files (signed, notarized zip and dmg) are made and uploaded by the
+# local release lane (`npm run release`), which keeps the Apple credentials and the notarytool profile on the Mac. Pushing a tag
+# v<major>.<minor>.<patch> (or running this workflow by hand for an existing tag) runs:
+#
+#   windows   (windows-latest)  the tag must be the version in package.json; build, make the NSIS installer with
+#                               electron-builder (installer, .blockmap, latest.yml), install it silently, check the files
+#                               and the update feed address, uninstall; then wait for the release the lane creates and upload
+#                               the three files into it. NOT Authenticode-signed: there is no certificate, by decision.
+#   check     (ubuntu)          all three files must be on the release; if one is missing this dispatches itself again for the
+#                               same tag (input `attempt`, at most 3 runs) and after the third leaves the lane to report it.
+#
+# The in-app updater on Windows (electron-updater) reads latest.yml from the latest published release. The release lane
+# publishes the release only after these files are on its draft.
+#
+# Preflight (workflow_dispatch with preflight=true): the same build, install check and uninstall, nothing uploaded:
+#   gh workflow run windows-release.yml --ref <branch> -f preflight=true
+#
+# QUIET CI (AgentSuite/ci.md; `python3 ../AgentSuite/tools/check-workflows.py .` checks it). A person's run only hands off to
+# github-actions[bot], whose run does the work, so nobody is mailed whatever happens. Every job is continue-on-error.
+# Retry by dispatching, never `gh run rerun`:
+#   gh workflow run windows-release.yml --ref v<version> -f tag=v<version>
+name: Windows installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to build, e.g. v1.2.0 (it must be the version in package.json). Not needed in preflight."
+        required: false
+        type: string
+      preflight:
+        description: "Preflight: build and check the installer, upload nothing"
+        required: false
+        default: false
+        type: boolean
+      attempt:
+        description: "Set by the workflow itself when it retries a missing file (1 = the first run)"
+        required: false
+        default: "1"
+        type: string
+
+permissions:
+  contents: write
+
+# A person's run (handoff only) gets a group of its own: it must never queue behind, or be cancelled by, the bot's run.
+concurrency:
+  group: ${{ github.triggering_actor != 'github-actions[bot]' && format('handoff-{0}', github.run_id) || format('{0}{1}', inputs.preflight && 'preflight-' || 'windows-', inputs.tag || github.ref_name) }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  # A person's run does only this: hand the same work to the bot (see QUIET CI above). Identical in every workflow.
+  handoff:
+    name: Hand off to the bot
+    if: github.triggering_actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUTS: ${{ toJSON(inputs) }}
+      # What a push hands over: a tag push builds that tag.
+      PUSH_INPUTS: ${{ github.ref_type == 'tag' && format('{{"tag":"{0}"}}', github.ref_name) || '{}' }}
+    steps:
+      - name: Dispatch this workflow as github-actions[bot]
+        shell: bash
+        run: |
+          set -euo pipefail
+          wf="${GITHUB_WORKFLOW_REF%%@*}"; wf="${wf##*/}"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then json="$INPUTS"; else json="$PUSH_INPUTS"; fi
+          [ -n "$json" ] && [ "$json" != null ] || json='{}'
+          json=$(jq -c 'with_entries(select(.value != null) | .value |= tostring)' <<< "$json")
+          echo "dispatching $wf at $GITHUB_REF_NAME with $json"
+          for i in 1 2 3 4 5; do
+            if gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" --json <<< "$json"; then
+              echo "### Handed off to github-actions[bot]" >> "$GITHUB_STEP_SUMMARY"
+              echo "The work runs in the bot's run of $wf on $GITHUB_REF_NAME (Actions tab)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep $((i * 10))
+          done
+          echo "::error title=Handoff failed::could not dispatch $wf; nothing was built"
+          exit 1
+
+  windows:
+    name: windows installer
+    if: github.triggering_actor == 'github-actions[bot]'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.preflight == true && github.sha || format('refs/tags/{0}', env.TAG) }}
+
+      - name: The tag is the app's version
+        id: version
+        run: |
+          set -euo pipefail
+          read -r pkg lock lockroot < <(node -e '
+            const fs = require("fs");
+            const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
+            const lock = read("package-lock.json");
+            console.log(read("package.json").version, lock.version, lock.packages?.[""]?.version);
+          ')
+          if [ "$pkg" != "$lock" ] || [ "$pkg" != "$lockroot" ]; then
+            echo "::error title=Version files differ::package.json says $pkg, package-lock.json says $lock (and $lockroot for the root package)."
+            exit 1
+          fi
+          tag="${TAG:-}"
+          if [ -z "$tag" ]; then
+            if [ "${{ inputs.preflight }}" != "true" ]; then
+              echo "::error title=No tag::Name the tag to build (gh workflow run windows-release.yml -f tag=v<version>)."
+              exit 1
+            fi
+            tag="v$pkg"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error title=Not a version tag::'$tag' is not v<major>.<minor>.<patch>."
+            exit 1
+          fi
+          if [ "$tag" != "v$pkg" ]; then
+            echo "::error title=Tag and version differ::The tag is $tag but package.json and package-lock.json say $pkg."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$pkg" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm run build
+      - run: npm run package:win
+
+      - name: The installer installs, carries the update feed address, and uninstalls
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $PWD "dist\installer\NoteMind-$env:VERSION-win-x64-setup.exe"
+          Get-ChildItem dist\installer | Format-Table Name, Length
+          $header = [System.IO.File]::ReadAllBytes($installer)[0..1]
+          if ([System.Text.Encoding]::ASCII.GetString($header) -ne 'MZ') { throw 'The installer is not a Windows executable.' }
+          $feed = Get-Content dist\installer\latest.yml -Raw
+          if ($feed -notmatch "version: $([regex]::Escape($env:VERSION))") { throw 'latest.yml names another version.' }
+          if ($feed -notmatch 'sha512: ') { throw 'latest.yml has no sha512.' }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The installer exited with $($process.ExitCode)." }
+          $target = Join-Path $env:LOCALAPPDATA 'Programs\NoteMind'
+          foreach ($file in 'NoteMind.exe', 'resources\app-update.yml', 'resources\app\package.json') {
+            if (-not (Test-Path (Join-Path $target $file))) { throw "The installed app has no $file." }
+          }
+          $installed = Get-Content (Join-Path $target 'resources\app\package.json') -Raw | ConvertFrom-Json
+          if ($installed.version -ne $env:VERSION) { throw "The installed app is $($installed.version)." }
+          $uninstaller = Join-Path $target 'Uninstall NoteMind.exe'
+          $gone = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($gone.ExitCode -ne 0) { throw "The uninstaller exited with $($gone.ExitCode)." }
+          Write-Host 'Installed, checked and uninstalled.'
+
+      # The release lane creates the draft release for the tag a moment after the tag is pushed; wait for it.
+      - name: Upload into the release
+        if: inputs.preflight != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          files="dist/installer/NoteMind-${VERSION}-win-x64-setup.exe dist/installer/NoteMind-${VERSION}-win-x64-setup.exe.blockmap dist/installer/latest.yml"
+          # shellcheck disable=SC2086
+          ls -l $files
+          for i in $(seq 1 60); do
+            found="$(gh api "repos/${GH_REPO}/releases?per_page=100" --paginate --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id")"
+            if [ -n "$found" ]; then break; fi
+            echo "No release for ${RELEASE_TAG} yet (${i}/60)"
+            sleep 30
+          done
+          [ -n "$found" ] || { echo "::error title=No release::${RELEASE_TAG} has no release to upload into."; exit 1; }
+          # shellcheck disable=SC2086
+          gh release upload "$RELEASE_TAG" $files --clobber
+
+  # always(): a build GitHub never gave a runner must not skip this. Nothing to retry when no tag was named.
+  check:
+    name: check
+    if: ${{ always() && github.triggering_actor == 'github-actions[bot]' && inputs.preflight != true && (github.event_name == 'push' || inputs.tag != '') }}
+    needs: [windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ATTEMPT: ${{ inputs.attempt || '1' }}
+      MAX_ATTEMPTS: "3"
+    steps:
+      - name: Every Windows file is on the release
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          have="$(gh api "repos/${GH_REPO}/releases?per_page=100" --paginate --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[].name")"
+          printf '%s\n' "$have" | sed 's/^/  /'
+          missing=""
+          for f in "NoteMind-${version}-win-x64-setup.exe" "NoteMind-${version}-win-x64-setup.exe.blockmap" "latest.yml"; do
+            printf '%s\n' "$have" | grep -Fxq "$f" || missing="$missing $f"
+          done
+          if [ -z "$missing" ]; then
+            echo "### ${TAG}: the Windows installer and its update feed are on the release" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Missing:${missing}"
+          wf="${GITHUB_WORKFLOW_REF%%@*}"; wf="${wf##*/}"
+          if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+            next=$((ATTEMPT + 1))
+            gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f "tag=$TAG" -f "attempt=$next"
+            echo "### Run $ATTEMPT of $MAX_ATTEMPTS left a file missing; run $next builds again" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ${TAG} is still missing${missing} after ${MAX_ATTEMPTS} runs" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Windows files missing::${TAG} is missing${missing} after ${MAX_ATTEMPTS} runs."
+            exit 1
+          fi
+
+  # Preflight only: what each job concluded.
+  summary:
+    name: summary (preflight)
+    if: always() && github.triggering_actor == 'github-actions[bot]' && inputs.preflight == true
+    needs: [windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Job results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Windows installer preflight: job results"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            gh run view "$GITHUB_RUN_ID" --json jobs --jq '.jobs[] | select(.name | startswith("summary") | not) | "| \(.name) | \(.conclusion // .status) |"'
+          } >> "$GITHUB_STEP_SUMMARY"

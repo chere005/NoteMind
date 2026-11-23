@@ -8,11 +8,14 @@
     "start": "electron .",
     "build": "node scripts/build.cjs",
     "package:update": "node scripts/package-update.cjs",
+    "release": "node scripts/release.cjs",
     "test": "node --test --test-concurrency=1 test/*.test.cjs",
-    "preflight": "npm test"
+    "preflight": "npm test",
+    "package:win": "node scripts/package-win.cjs"
   },
   "dependencies": {
     "docx": "^9.15.0",
+    "electron-updater": "6.8.12",
     "highlight.js": "11.12.0",
     "image-size": "2.1.0",
     "koffi": "^3.3.2",
@@ -30,7 +33,51 @@
   },
   "devDependencies": {
     "electron": "44.11.3",
+    "electron-builder": "26.18.0",
     "esbuild": "^0.28.2",
     "rcedit": "^5.0.2"
+  },
+  "build": {
+    "appId": "com.seancheren.notemind",
+    "productName": "NoteMind",
+    "directories": {
+      "output": "dist/installer",
+      "buildResources": "build"
+    },
+    "artifactName": "NoteMind-${version}-win-x64-setup.${ext}",
+    "win": {
+      "icon": "src/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "fileAssociations": [
+        {
+          "ext": "nm",
+          "name": "NoteMind document",
+          "description": "NoteMind document",
+          "role": "Editor"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "NoteMind",
+      "differentialPackage": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "chere005",
+        "repo": "NoteMind"
+      }
+    ]
   }
 }
