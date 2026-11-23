@@ -2,14 +2,15 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {packageRelease,names,DEFAULT_PROFILE}=require('../scripts/mac-release.cjs');
 const GOOD='Authority=Developer ID Application: Example Dev (TEAMID0000)\nTeamIdentifier=TEAMID0000\nCodeDirectory v=20500 flags=0x10000(runtime)\nTimestamp=Nov 23, 2026\n';
 
-function fixture({version='1.2.0',built='1.2.0',notaryStatus='Accepted',gatekeeper='source=Notarized Developer ID',identities='  1) AA "Developer ID Application: Example Dev (TEAMID0000)"\n',profileWorks=true,env={}}={}){
+function fixture({version='1.2.0',built='1.2.0',notaryStatus='Accepted',gatekeeper='source=Notarized Developer ID',identities='  1) AA "Developer ID Application: Example Dev (TEAMID0000)"\n',profileWorks=true,env={NOTEMIND_CODESIGN_IDENTITY:'Developer ID Application: Example Dev (TEAMID0000)'},stapleFailures=0}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nm-release-test-'));
  const app=path.join(root,'dist/NoteMind/NoteMind.app');fs.mkdirSync(path.join(app,'Contents/MacOS'),{recursive:true});
  fs.writeFileSync(path.join(app,'Contents/MacOS/NoteMind'),Buffer.from('cffaedfe00','hex'));fs.writeFileSync(path.join(app,'Contents/Info.plist'),'');
- const calls=[],log=[];
+ const calls=[],log=[];let stapleTries=0;
  const exec=(command,args)=>{
   calls.push([command,...args]);
   const tool=path.basename(command),verb=args[0];
+  if(tool==='xcrun'&&verb==='stapler'&&args[1]==='staple'&&stapleTries++<stapleFailures)throw Object.assign(Error('x'),{stderr:'Could not find base64 encoded ticket in response (error 65)'});
   if(tool==='PlistBuddy')return built+'\n';
   if(tool==='lipo')return 'arm64\n';
   if(tool==='security')return identities;
@@ -30,7 +31,7 @@ function fixture({version='1.2.0',built='1.2.0',notaryStatus='Accepted',gatekeep
   if(args[0]==='--verify')return {status:0,stderr:''};
   return {status:0,stdout:'',stderr:GOOD};
  };
- return {root,calls,log,run:(options={})=>packageRelease({root,version,exec,spawn,env,platform:'darwin',arch:'arm64',log:message=>log.push(message),...options})};
+ return {root,calls,log,run:(options={})=>packageRelease({root,version,exec,spawn,env,platform:'darwin',arch:'arm64',log:message=>log.push(message),sleep:ms=>log.push('slept '+ms),...options})};
 }
 const verbs=calls=>calls.map(call=>call.slice(0,3).map(part=>path.basename(part)).join(' '));
 const index=(calls,...needle)=>calls.findIndex(call=>needle.every(part=>call.some(value=>String(value).includes(part))));
@@ -62,7 +63,7 @@ test('a rejected notarization stops with Apple\'s log and writes no release file
  assert.ok(!fs.existsSync(path.join(h.root,'dist/NoteMind-1.2.0-mac-arm64.zip')));assert.ok(!h.calls.some(call=>call.includes('staple')));
 });
 test('a stale build, a missing identity or a broken profile stops before anything is submitted',()=>{
- for(const [options,pattern] of [[{built:'1.1.0'},/says 1\.2\.0/],[{identities:''},/Developer ID Application identity/],[{profileWorks:false},/profile "DisplayMind" does not work/]]){
+ for(const [options,pattern] of [[{built:'1.1.0'},/says 1\.2\.0/],[{env:{}},/full name of one Developer ID Application identity/],[{profileWorks:false},/profile "DisplayMind" does not work/]]){
   const h=fixture(options);assert.throws(h.run,pattern);assert.ok(!h.calls.some(call=>call.includes('submit')));
  }
 });
@@ -70,11 +71,32 @@ test('Gatekeeper not calling the app notarized Developer ID is a failure',()=>{
  const h=fixture({gatekeeper:'source=Developer ID'});assert.throws(h.run,/does not accept NoteMind\.app as a notarized Developer ID/);
 });
 test('NOTEMIND_NOTARY_PROFILE chooses another keychain profile',()=>{
- const h=fixture({env:{NOTEMIND_NOTARY_PROFILE:'Other'}});h.run();assert.ok(h.calls.some(call=>call.includes('submit')&&call.includes('Other')));assert.ok(!h.calls.some(call=>call.includes('submit')&&call.includes('DisplayMind')));
+ const h=fixture({env:{NOTEMIND_CODESIGN_IDENTITY:'Developer ID Application: Example Dev (TEAMID0000)',NOTEMIND_NOTARY_PROFILE:'Other'}});h.run();assert.ok(h.calls.some(call=>call.includes('submit')&&call.includes('Other')));assert.ok(!h.calls.some(call=>call.includes('submit')&&call.includes('DisplayMind')));
 });
 test('a scratch run without notarization submits nothing and says so by skipping the Gatekeeper check',()=>{
  const h=fixture();h.run({notarize:false});assert.ok(!h.calls.some(call=>call.includes('notarytool')||call.includes('staple')));
 });
 test('only Apple Silicon Macs make release files',()=>{
  const h=fixture();assert.throws(()=>h.run({arch:'x64'}),/Apple Silicon/);
+});
+
+test('a release is signed only with the identity the owner names in full, never one found in the keychain',()=>{
+ for(const env of [{},{NOTEMIND_CODESIGN_IDENTITY:'-'},{NOTEMIND_CODESIGN_IDENTITY:'Developer ID Application: Example Dev'},{NOTEMIND_CODESIGN_IDENTITY:'ABCDEF0123456789ABCDEF0123456789ABCDEF01'},{NOTEMIND_CODESIGN_IDENTITY:'Apple Development: Example Dev (TEAMID0000)'}]){
+  const h=fixture({env});assert.throws(h.run,/full name of one Developer ID Application identity/);
+  assert.ok(!h.calls.some(call=>path.basename(call[0])==='security'),'the keychain is not searched');assert.ok(!h.calls.some(call=>call.includes('submit')));
+ }
+ const other=fixture({env:{NOTEMIND_CODESIGN_IDENTITY:'Developer ID Application: Someone Else (TEAMID0000)'},identities:'  1) AA "Developer ID Application: Example Dev (TEAMID0000)"\n'});
+ other.run();assert.ok(other.calls.some(call=>call.includes('Developer ID Application: Someone Else (TEAMID0000)')&&call.includes('--force')),'the named identity signs the dmg');
+ assert.ok(!other.calls.some(call=>call.includes('Developer ID Application: Example Dev (TEAMID0000)')));
+ const scratch=fixture({env:{}});scratch.run({notarize:false});
+});
+
+test('a ticket Apple has just accepted is stapled again after a pause, and a ticket that never arrives is a clear failure',()=>{
+ const slow=fixture({stapleFailures:2});slow.run();
+ assert.equal(slow.calls.filter(call=>call.includes('staple')&&call[0].endsWith('xcrun')&&call.some(part=>part.endsWith('NoteMind.app'))).length>=3,true);
+ assert.equal(slow.log.filter(message=>/^slept /.test(message)).length,2,'one pause per failed try');
+ assert.ok(fs.existsSync(path.join(slow.root,'dist/NoteMind-1.2.0-mac-arm64.dmg')));
+ const never=fixture({stapleFailures:99});assert.throws(never.run,/could not staple NoteMind\.app after 5 tries[\s\S]*error 65/);
+ assert.equal(never.log.filter(message=>/^slept /.test(message)).length,4);
+ assert.ok(!fs.existsSync(path.join(never.root,'dist/NoteMind-1.2.0-mac-arm64.dmg')));
 });

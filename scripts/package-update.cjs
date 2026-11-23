@@ -15,9 +15,9 @@ const flags = new Set(process.argv.slice(2));
 
 try {
   if (flags.has('--check')) {
-    const { auditMacSignature, resolveIdentity, teamOf } = require('./mac-signing.cjs');
+    const { auditMacSignature, requireReleaseIdentity } = require('./mac-signing.cjs');
     const app = path.join(root, 'dist', 'NoteMind', 'NoteMind.app');
-    const team = teamOf(resolveIdentity({ env: process.env, execFileSync: require('node:child_process').execFileSync, warn: console.warn }));
+    const { team } = requireReleaseIdentity(process.env);
     console.log(`${auditMacSignature(app, { team })} signatures are Developer ID, hardened and timestamped`);
     console.log(`notarytool profile ${makeTools().checkCredentials()} works`);
   } else {

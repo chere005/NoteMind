@@ -15,6 +15,28 @@ const FAT_MAGIC = new Set(['cafebabe', 'bebafeca']);
 /** The ten-character Apple team id at the end of an identity name such as "Developer ID Application: Name (TEAMID0000)". */
 const teamOf = identity => /\(([A-Z0-9]{10})\)\s*$/.exec(String(identity || ''))?.[1] ?? null;
 
+const FULL_IDENTITY = /^Developer ID Application: .+ \(([A-Z0-9]{10})\)$/;
+
+/**
+ * The identity a RELEASE is signed with: NOTEMIND_CODESIGN_IDENTITY, as the full name of one Developer ID Application identity.
+ * A release never discovers an identity from the keychain: if the one certificate went away and another team's were the only one
+ * left, the lane would sign, notarize and publish under that team, and every installed copy (whose updater accepts only its own
+ * team) would reject the update without saying so. Ad hoc and discovery stay for scratch builds (resolveIdentity).
+ */
+function requireReleaseIdentity(env) {
+  const identity = env.NOTEMIND_CODESIGN_IDENTITY?.trim();
+  if (!identity || !FULL_IDENTITY.test(identity)) {
+    throw Error('A release is signed with the full name of one Developer ID Application identity, never a discovered or ad hoc one: set NOTEMIND_CODESIGN_IDENTITY to "Developer ID Application: <name> (<TEAM ID>)".');
+  }
+  return { identity, team: teamOf(identity) };
+}
+
+/** The team that signed an installed app, or null when it is unsigned, ad hoc or not there. */
+function teamOfApp(app, { spawn = cp.spawnSync } = {}) {
+  const shown = spawn('/usr/bin/codesign', ['-dv', '--verbose=2', app], { encoding: 'utf8' });
+  return /^TeamIdentifier=([A-Z0-9]{10})$/m.exec(`${shown.stdout || ''}${shown.stderr || ''}`)?.[1] ?? null;
+}
+
 /**
  * The identity to sign with, as a full name (never a hash). NOTEMIND_CODESIGN_IDENTITY wins ("-" is ad hoc). Otherwise the
  * keychain must hold exactly one Developer ID Application identity; several coexist with Apple Development and local ones,
@@ -180,4 +202,4 @@ function auditMacSignature(bundle, { spawn = cp.spawnSync, execFileSync = cp.exe
   return targets.length;
 }
 
-module.exports = { signMacApp, auditMacSignature, signables, assertArm64, resolveIdentity, teamOf, ENTITLEMENTS };
+module.exports = { signMacApp, auditMacSignature, signables, assertArm64, resolveIdentity, requireReleaseIdentity, teamOfApp, teamOf, ENTITLEMENTS };

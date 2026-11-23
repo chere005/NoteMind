@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 // NoteMind's release lane (`npm run release`): the dtp for this repository. From a clean, pushed-or-pushable main it
-//   1. checks the version, the tree and the tag are releasable (never a downgrade, never an existing tag or release),
+//   1. checks the version, the tree and the tag are releasable (never a downgrade, never an existing tag or release), that the
+//      signing identity is named in full in NOTEMIND_CODESIGN_IDENTITY (never discovered) and is the installed app's team,
 //   2. builds the signed app under the shared heavy-build lock and notarizes, staples and packages it (package-update.cjs),
 //   3. tags, scans the public tree, pushes main and the tag (the tag push starts the Windows installer workflow),
 //   4. creates a DRAFT release with the Mac zip, dmg and checksums,
-//   5. waits for the Windows installer, its blockmap and latest.yml (windows-release.yml uploads them), publishes,
-//   6. downloads every published file again and verifies it as a user or the updater would see it,
-//   7. records the tag in MindSuite, and
+//   5. waits for the Windows installer, its blockmap and latest.yml (windows-release.yml uploads them),
+//   6. downloads every file of the DRAFT and verifies it as a user or the updater would see it, and only then publishes,
+//   7. confirms GitHub's latest-release feed offers the new zip, records the tag in MindSuite, and
 //   8. installs the verified app into /Applications.
 // `--mac-only` publishes without waiting for the Windows files (the release then has no Windows update feed).
-// `--resume` continues from step 5 for a tag and draft that exist (after a Windows build failed), using the notarized files in dist.
+// `--resume` continues a run that stopped after the tag was made, using the notarized files in dist: it pushes whatever is not on
+// origin, creates the draft or uploads the files it lacks, waits for Windows, verifies and publishes. A release that is already
+// published is verified, recorded and installed without being published again.
+// `--allow-team-change` accepts a signing team other than the installed app's (installed copies then cannot update).
 // `--no-install` stops after the record step. Nothing here runs in a test: every external command goes through `sh`.
 'use strict';
 const cp = require('node:child_process');
@@ -18,7 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { names } = require('./mac-release.cjs');
-const { resolveIdentity, teamOf } = require('./mac-signing.cjs');
+const { requireReleaseIdentity, teamOfApp } = require('./mac-signing.cjs');
 const { pickUpdate, compareVersions, parseVersion } = require('../src/updater.cjs');
 
 const REPO = 'chere005/NoteMind';
@@ -95,26 +99,42 @@ function release({ root, sh = defaultSh, log = console.log, options = {}, env = 
     if (env[variable]) return fileSystem.existsSync(env[variable]) ? env[variable] : null;
     return [path.resolve(root, '../MindSuite', relative), path.join(os.homedir(), 'GIT/MindSuite', relative)].find(candidate => fileSystem.existsSync(candidate)) || null;
   };
+  const installDestination = options.installDestination || '/Applications/NoteMind.app';
+  const step = message => log(`==> ${message}`);
+  const gh = (...args) => sh('gh', args, { cwd: root });
+  const git = (...args) => sh('git', args, { cwd: root });
+  const readPackage = () => JSON.parse(fileSystem.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  let team = null;
+
+  /**
+   * The release identity is the one the owner names in full (never discovered), and its team must be the team of the copy it
+   * replaces: an installed NoteMind only accepts an update signed by its own team, so a release under another team would be
+   * published and then refused by every installed copy without a word.
+   */
+  const pinIdentity = () => {
+    ({ team } = requireReleaseIdentity(env));
+    const installed = fileSystem.existsSync(installDestination) ? teamOfApp(installDestination, { spawn }) : null;
+    if (installed && installed !== team && !options.allowTeamChange) {
+      throw new ReleaseError(`The installed NoteMind is signed by team ${installed} but NOTEMIND_CODESIGN_IDENTITY is team ${team}. Installed copies would refuse this update. Use the same team, or pass --allow-team-change if every user will reinstall by hand.`);
+    }
+  };
+
   const run = async () => {
-    const pkg = JSON.parse(fileSystem.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const pkg = readPackage();
     const version = pkg.version;
     const tag = `v${version}`;
-    const file = names(version);
-    const win = winNames(version);
-    const git = (...args) => sh('git', args, { cwd: root });
-    const gh = (...args) => sh('gh', args, { cwd: root });
-    const step = message => log(`==> ${message}`);
     if (platform !== 'darwin' || arch !== 'arm64') throw new ReleaseError('The release lane runs on an Apple Silicon Mac.');
     if (!parseVersion(version)) throw new ReleaseError(`${version} is not a release version.`);
 
     step('Checking that this can be released');
+    pinIdentity();
     const lock = JSON.parse(fileSystem.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
     if (lock.version !== version || lock.packages?.['']?.version !== version) throw new ReleaseError(`package.json says ${version} but package-lock.json says ${lock.version}.`);
     if (git('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim() !== 'main') throw new ReleaseError('Release from main.');
     if (git('status', '--porcelain', '--untracked-files=no').stdout.trim()) throw new ReleaseError('The working tree has uncommitted changes to tracked files.');
     git('fetch', 'origin', 'main', '--tags');
     if (sh('git', ['merge-base', '--is-ancestor', 'origin/main', 'HEAD'], { cwd: root, allowFail: true }).status !== 0) throw new ReleaseError('main is behind or has diverged from origin/main; bring it up to date first.');
-    if (sh('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], { cwd: root, allowFail: true }).status === 0) throw new ReleaseError(`${tag} already exists as a tag; a released version is never rebuilt.`);
+    if (sh('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], { cwd: root, allowFail: true }).status === 0) throw new ReleaseError(`${tag} already exists as a tag; a released version is never rebuilt. If an earlier run stopped after tagging, continue it with: npm run release -- --resume`);
     if (findRelease({ sh, root, repo: REPO, tag })) throw new ReleaseError(`${tag} already has a release.`);
     gh('auth', 'status');
     const latest = sh('gh', ['release', 'view', '--repo', REPO, '--json', 'tagName', '--jq', '.tagName'], { cwd: root, allowFail: true });
@@ -146,28 +166,60 @@ function release({ root, sh = defaultSh, log = console.log, options = {}, env = 
     const problems = scanProblems({ status: scanned.status, output: `${scanned.stdout}\n${scanned.stderr}`, baseline: fileSystem.existsSync(baselineFile) ? JSON.parse(fileSystem.readFileSync(baselineFile, 'utf8')) : null });
     if (problems.length) { git('tag', '-d', tag); throw new ReleaseError(`The public scan blocks the push (nothing pushed, tag removed):\n  ${problems.join('\n  ')}`.slice(0, 4000)); }
 
-    step('Pushing main and the tag');
-    git('push', 'origin', 'main');
-    git('push', 'origin', tag);
-
-    step('Creating the draft release');
-    const notes = path.join(fileSystem.mkdtempSync(path.join(os.tmpdir(), 'notemind-notes-')), 'notes.md');
-    fileSystem.writeFileSync(notes, releaseNotes(version, tag, subject));
-    gh('release', 'create', tag, '--repo', REPO, '--draft', '--verify-tag', '--title', `NoteMind ${version}`, '--notes-file', notes, made.zip, made.dmg, made.sums);
-
-    return await finish({ made, subject });
+    // From here the notarized files in dist and the local tag are kept whatever fails: --resume picks up at any of these steps.
+    await ship({ made, tag, version, subject });
+    return await finish({ made });
   };
 
-  /** Everything after the draft exists: wait for Windows, publish, verify the published files, record, install. */
+  /**
+   * Put the tag and main on origin, and make sure the draft release exists with the three Mac files. Every part is idempotent,
+   * so it is also what --resume runs: a failed push or a failed draft upload is repaired by running the lane again with --resume.
+   */
+  const ship = async ({ made, tag, version, subject }) => {
+    const again = 'Nothing is lost: the notarized files are in dist and the tag is kept. Fix the cause, then run: npm run release -- --resume';
+    try {
+      const onRemote = sh('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], { cwd: root }).stdout.trim() !== '';
+      if (!onRemote) {
+        const head = git('rev-parse', 'HEAD').stdout.trim();
+        const tagged = git('rev-parse', `${tag}^{commit}`).stdout.trim();
+        if (head !== tagged) throw Object.assign(new ReleaseError(`main has moved on from ${tag} (${head.slice(0, 9)} against ${tagged.slice(0, 9)}); main is pushed only at the tagged commit.`), { plain: true });
+        step('Pushing main and the tag');
+        git('push', 'origin', 'main');
+        git('push', 'origin', tag);
+      }
+      const found = findRelease({ sh, root, repo: REPO, tag });
+      const files = [made.zip, made.dmg, made.sums];
+      if (!found) {
+        step('Creating the draft release');
+        const notes = path.join(fileSystem.mkdtempSync(path.join(os.tmpdir(), 'notemind-notes-')), 'notes.md');
+        fileSystem.writeFileSync(notes, releaseNotes(version, tag, subject));
+        gh('release', 'create', tag, '--repo', REPO, '--draft', '--verify-tag', '--title', `NoteMind ${version}`, '--notes-file', notes, ...files);
+      } else {
+        const missing = files.filter(file => !found.assets.includes(path.basename(file)));
+        if (missing.length) {
+          step(`Uploading the missing files to the draft: ${missing.map(file => path.basename(file)).join(', ')}`);
+          gh('release', 'upload', tag, '--repo', REPO, '--clobber', ...missing);
+        }
+      }
+    } catch (error) {
+      if (error.plain) throw error;
+      throw new ReleaseError(`${error.message}\n${again}`, error.code || 5);
+    }
+  };
+
+  /**
+   * Everything after the draft exists: wait for Windows, check every file on the DRAFT, publish, confirm GitHub's latest-release
+   * feed, record, install. A release that is already published (a lane that stopped after publishing) skips the wait and the
+   * publish and goes straight to the checks, so --resume can finish it.
+   */
   const finish = async ({ made }) => {
-    const pkg = JSON.parse(fileSystem.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const version = pkg.version, tag = `v${version}`, win = winNames(version);
-    const gh = (...args) => sh('gh', args, { cwd: root });
-    const step = message => log(`==> ${message}`);
+    const version = readPackage().version, tag = `v${version}`, win = winNames(version);
+    const found = findRelease({ sh, root, repo: REPO, tag });
+    const published = !!found && !found.draft;
     const assetNames = () => (findRelease({ sh, root, repo: REPO, tag })?.assets || []);
     const latest = sh('gh', ['release', 'view', '--repo', REPO, '--json', 'tagName', '--jq', '.tagName'], { cwd: root, allowFail: true });
     const previous = latest.status === 0 && latest.stdout.trim() !== tag ? latest.stdout.trim() : '';
-    if (!options.macOnly) {
+    if (!published && !options.macOnly) {
       step('Waiting for the Windows installer');
       const needed = [win.installer, win.blockmap, win.feed];
       const deadline = now() + (options.waitMinutes ?? 45) * 60 * 1000;
@@ -185,69 +237,92 @@ function release({ root, sh = defaultSh, log = console.log, options = {}, env = 
         if (now() > deadline) throw new ReleaseError(`The Windows files (${needed.filter(name => !have.includes(name)).join(', ')}) are not on the draft ${tag}. The draft stays unpublished. Retry the build with: gh workflow run ${WINDOWS_WORKFLOW} --repo ${REPO} --ref ${tag} -f tag=${tag}; then run this lane again with --resume (or --resume --mac-only to publish without Windows).`, 2);
         await sleep(30 * 1000);
       }
-    } else log('--mac-only: publishing without the Windows installer');
+    } else if (!published) log('--mac-only: publishing without the Windows installer');
 
-    step('Publishing');
-    gh('release', 'edit', tag, '--repo', REPO, '--draft=false', '--latest');
-
-    step('Downloading the published files again and verifying them');
+    // Everything is judged on the draft, before a user or an updater can fetch any of it.
+    step(published ? `Downloading the published files and verifying them (${tag} is already published)` : 'Downloading the draft\'s files and verifying them before publishing');
     const scratch = fileSystem.mkdtempSync(path.join(os.tmpdir(), 'notemind-verify-'));
-    const downloaded = verifyPublished({ sh, root, repo: REPO, tag, version, scratch, localHashes: made.hashes, macOnly: !!options.macOnly, previous, spawn, fileSystem });
+    const downloaded = verifyAssets({ sh, root, repo: REPO, tag, version, scratch, localHashes: made.hashes, macOnly: !!options.macOnly, spawn, fileSystem });
     log(`verified ${downloaded.checked.join(', ')}`);
 
-    step('Recording the release in MindSuite');
-    const recorder = tool('NOTEMIND_MINDSUITE_RELEASE', 'tools/mindsuite-release.mjs');
-    if (!recorder) throw new ReleaseError('MindSuite tools/mindsuite-release.mjs was not found; the release is published but not recorded.', 3);
-    sh('node', [recorder, 'record', 'NoteMind', tag, '--app-repo', root], { cwd: root });
+    const afterPublish = 'The release is published. Finish it (check the feed, record in MindSuite, install) with: npm run release -- --resume';
+    if (!published) {
+      step('Publishing');
+      gh('release', 'edit', tag, '--repo', REPO, '--draft=false', '--latest');
+    }
+    try {
+      step('Checking GitHub\'s latest-release feed');
+      await verifyLatestFeed({ sh, root, repo: REPO, tag, version, previous, sleep, attempts: options.feedAttempts ?? 8 });
+      downloaded.checked.push('updater feed');
 
-    if (!options.noInstall) {
-      step('Installing into /Applications');
-      installApp({ sh, app: downloaded.app, version, spawn, fileSystem, log, team: teamOf(resolveIdentity({ env, execFileSync: (command, args) => sh(command, args).stdout, warn() {} })), ...(options.installDestination ? { destination: options.installDestination } : {}) });
+      step('Recording the release in MindSuite');
+      const recorder = tool('NOTEMIND_MINDSUITE_RELEASE', 'tools/mindsuite-release.mjs');
+      if (!recorder) throw new ReleaseError('MindSuite tools/mindsuite-release.mjs was not found; the release is published but not recorded.', 3);
+      sh('node', [recorder, 'record', 'NoteMind', tag, '--app-repo', root], { cwd: root });
+
+      if (!options.noInstall) {
+        step('Installing into /Applications');
+        installApp({ sh, app: downloaded.app, version, spawn, fileSystem, log, team, destination: installDestination });
+      }
+    } catch (error) {
+      if (published) throw error;
+      throw new ReleaseError(`${error.message}\n${afterPublish}`, error.code || 3);
     }
     return { tag, version, assets: downloaded.checked };
   };
 
-  /** --resume: the tag and the draft exist; the files are the ones in dist, which must still match the checksums written when they were notarized. */
+  /**
+   * --resume: the tag exists locally and the files in dist must still match the checksums written when they were notarized.
+   * It pushes what is not on origin yet, creates or completes the draft, and carries on; a release that is already published
+   * is checked, recorded and installed.
+   */
   const resume = async () => {
-    const pkg = JSON.parse(fileSystem.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    const version = pkg.version, tag = `v${version}`, file = names(version);
+    const version = readPackage().version, tag = `v${version}`, file = names(version);
     log(`==> Resuming ${tag}`);
+    if (platform !== 'darwin' || arch !== 'arm64') throw new ReleaseError('The release lane runs on an Apple Silicon Mac.');
     if (sh('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], { cwd: root, allowFail: true }).status !== 0) throw new ReleaseError(`${tag} does not exist; nothing to resume.`);
-    const found = findRelease({ sh, root, repo: REPO, tag });
-    if (!found) throw new ReleaseError(`${tag} has no release to resume.`);
-    if (!found.draft) throw new ReleaseError(`${tag} is already published.`);
+    pinIdentity();
     const dist = name => path.join(root, 'dist', name);
     const hashes = {};
     for (const name of [file.zip, file.dmg]) {
-      const line = fileSystem.readFileSync(dist(file.sums), 'utf8').split('\n').find(entry => entry.endsWith(`  ${name}`));
+      const line = fileSystem.existsSync(dist(file.sums)) ? fileSystem.readFileSync(dist(file.sums), 'utf8').split('\n').find(entry => entry.endsWith(`  ${name}`)) : null;
       hashes[name] = line?.slice(0, 64);
-      if (!hashes[name] || sha256(dist(name)) !== hashes[name]) throw new ReleaseError(`dist/${name} no longer matches ${file.sums}; build and notarize again.`);
+      if (!hashes[name] || !fileSystem.existsSync(dist(name)) || sha256(dist(name)) !== hashes[name]) throw new ReleaseError(`dist/${name} no longer matches ${file.sums}; build and notarize again.`);
     }
-    return finish({ made: { zip: dist(file.zip), dmg: dist(file.dmg), sums: dist(file.sums), hashes } });
+    const made = { zip: dist(file.zip), dmg: dist(file.dmg), sums: dist(file.sums), hashes };
+    const found = findRelease({ sh, root, repo: REPO, tag });
+    if (!found || found.draft) {
+      const subject = sh('git', ['tag', '-l', '--format=%(contents:subject)', tag], { cwd: root }).stdout.trim();
+      await ship({ made, tag, version, subject });
+    }
+    return finish({ made });
   };
   return options.resume ? resume() : run();
 }
 
-/** Fetch every published asset of the release and check it the way a user, the updater or Gatekeeper would. */
-function verifyPublished({ sh, root, repo, tag, version, scratch, localHashes, macOnly, previous, spawn, fileSystem = fs }) {
+/**
+ * Fetch every asset of the release (a draft's included: gh finds a draft by its tag) and check it the way a user, the updater
+ * or Gatekeeper would. Nothing here depends on the release being public.
+ */
+function verifyAssets({ sh, root, repo, tag, version, scratch, localHashes, macOnly, spawn, fileSystem = fs }) {
   const file = names(version), win = winNames(version);
   const dir = path.join(scratch, 'download');
   fileSystem.mkdirSync(dir);
   sh('gh', ['release', 'download', tag, '--repo', repo, '--dir', dir, '--clobber'], { cwd: root });
   const checked = [];
-  const need = name => { const p = path.join(dir, name); if (!fileSystem.existsSync(p)) throw new ReleaseError(`The published release has no ${name}.`); return p; };
+  const need = name => { const p = path.join(dir, name); if (!fileSystem.existsSync(p)) throw new ReleaseError(`The release has no ${name}.`); return p; };
   const verdict = (target, kind) => {
     const args = kind === 'dmg' ? ['--assess', '--type', 'open', '--context', 'context:primary-signature', '-vv', target] : ['--assess', '--type', 'execute', '-vv', target];
     const result = spawn('/usr/sbin/spctl', args, { encoding: 'utf8' });
     const said = `${result.stdout || ''}${result.stderr || ''}`;
-    if (result.status !== 0 || !/source=Notarized Developer ID/.test(said)) throw new ReleaseError(`Gatekeeper does not accept the published ${path.basename(target)}: ${said.trim()}`);
+    if (result.status !== 0 || !/source=Notarized Developer ID/.test(said)) throw new ReleaseError(`Gatekeeper does not accept the release's ${path.basename(target)}: ${said.trim()}`);
   };
 
   const sums = fileSystem.readFileSync(need(file.sums), 'utf8');
   for (const name of [file.zip, file.dmg]) {
     const downloadedHash = sha256(need(name));
-    if (downloadedHash !== localHashes[name]) throw new ReleaseError(`${name} as published differs from the file that was notarized.`);
-    if (!sums.split('\n').some(line => line.startsWith(`${downloadedHash}  ${name}`))) throw new ReleaseError(`${file.sums} does not list ${name} with the published hash.`);
+    if (downloadedHash !== localHashes[name]) throw new ReleaseError(`${name} on the release differs from the file that was notarized.`);
+    if (!sums.split('\n').some(line => line.startsWith(`${downloadedHash}  ${name}`))) throw new ReleaseError(`${file.sums} does not list ${name} with the release's hash.`);
     checked.push(name);
   }
 
@@ -260,22 +335,13 @@ function verifyPublished({ sh, root, repo, tag, version, scratch, localHashes, m
   sh('/usr/bin/xcrun', ['stapler', 'validate', app]);
   verdict(app, 'app');
   const shown = String(sh('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', path.join(app, 'Contents/Info.plist')]).stdout).trim();
-  if (shown !== version) throw new ReleaseError(`The published app is ${shown}, not ${version}.`);
-  if (sh('/usr/bin/lipo', ['-archs', path.join(app, 'Contents/MacOS/NoteMind')]).stdout.trim() !== 'arm64') throw new ReleaseError('The published app is not arm64.');
+  if (shown !== version) throw new ReleaseError(`The release's app is ${shown}, not ${version}.`);
+  if (sh('/usr/bin/lipo', ['-archs', path.join(app, 'Contents/MacOS/NoteMind')]).stdout.trim() !== 'arm64') throw new ReleaseError('The release\'s app is not arm64.');
 
   // The dmg: stapled, accepted by Gatekeeper, and intact.
   sh('/usr/bin/xcrun', ['stapler', 'validate', need(file.dmg)]);
   verdict(need(file.dmg), 'dmg');
   sh('/usr/bin/hdiutil', ['verify', need(file.dmg)]);
-
-  // What the in-app updater will see: GitHub's own "latest release" document must offer this zip to the previous version.
-  const doc = JSON.parse(sh('gh', ['api', `repos/${repo}/releases/latest`], { cwd: root }).stdout);
-  if (doc.tag_name !== tag) throw new ReleaseError(`GitHub's latest release is ${doc.tag_name}, not ${tag}.`);
-  const probe = previous ? previous.replace(/^v/, '') : '0.0.0';
-  const offer = pickUpdate(doc, probe);
-  if (!offer || offer.version !== version) throw new ReleaseError(`The updater would not offer ${version} to ${probe}.`);
-  if (!offer.sumsUrl) throw new ReleaseError('The updater would see no checksum file for the update.');
-  checked.push('updater feed');
 
   if (!macOnly) {
     const installer = need(win.installer);
@@ -283,15 +349,36 @@ function verifyPublished({ sh, root, repo, tag, version, scratch, localHashes, m
     const fd = fileSystem.openSync(installer, 'r');
     fileSystem.readSync(fd, header, 0, 2, 0);
     fileSystem.closeSync(fd);
-    if (header.toString('latin1') !== 'MZ') throw new ReleaseError('The published Windows installer is not a Windows executable.');
+    if (header.toString('latin1') !== 'MZ') throw new ReleaseError('The Windows installer on the release is not a Windows executable.');
     need(win.blockmap);
     const feed = fileSystem.readFileSync(need(win.feed), 'utf8');
     const expected = /sha512: (\S+)/.exec(feed)?.[1];
     const actual = crypto.createHash('sha512').update(fileSystem.readFileSync(installer)).digest('base64');
-    if (!feed.includes(`version: ${version}`) || !feed.includes(win.installer) || expected !== actual) throw new ReleaseError('latest.yml does not describe the published Windows installer.');
+    if (!feed.includes(`version: ${version}`) || !feed.includes(win.installer) || expected !== actual) throw new ReleaseError('latest.yml does not describe the Windows installer on the release.');
     checked.push(win.installer, win.feed);
   }
   return { checked, app };
+}
+
+/**
+ * What the in-app updater will see once the release is public: GitHub's own "latest release" document must be this tag and offer
+ * its zip to the previous version. The document can lag a publish by a few seconds, so it is asked again before it counts.
+ */
+async function verifyLatestFeed({ sh, root, repo, tag, version, previous, sleep, attempts = 8, delayMs = 10 * 1000 }) {
+  let last = '';
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const doc = JSON.parse(sh('gh', ['api', `repos/${repo}/releases/latest`], { cwd: root }).stdout);
+    if (doc.tag_name === tag) {
+      const probe = previous ? previous.replace(/^v/, '') : '0.0.0';
+      const offer = pickUpdate(doc, probe);
+      if (!offer || offer.version !== version) throw new ReleaseError(`The updater would not offer ${version} to ${probe}.`);
+      if (!offer.sumsUrl) throw new ReleaseError('The updater would see no checksum file for the update.');
+      return;
+    }
+    last = `GitHub's latest release is ${doc.tag_name}, not ${tag}.`;
+    if (attempt < attempts) await sleep(delayMs);
+  }
+  throw new ReleaseError(last);
 }
 
 /** Replace /Applications/NoteMind.app with the verified app: quit the running copy, stage beside, swap, verify, relaunch. */
@@ -336,7 +423,7 @@ function installApp({ sh, app, version, spawn, team, fileSystem = fs, log = cons
 
 async function main() {
   const flags = process.argv.slice(2);
-  const options = { macOnly: flags.includes('--mac-only'), noInstall: flags.includes('--no-install'), resume: flags.includes('--resume') };
+  const options = { macOnly: flags.includes('--mac-only'), noInstall: flags.includes('--no-install'), resume: flags.includes('--resume'), allowTeamChange: flags.includes('--allow-team-change') };
   try {
     await release({ root: path.resolve(__dirname, '..'), options });
   } catch (error) {
@@ -347,4 +434,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { parseScan, scanProblems, findRelease, release, verifyPublished, installApp, heavyLockScript, releaseNotes, ReleaseError, winNames };
+module.exports = { parseScan, scanProblems, findRelease, release, verifyAssets, verifyLatestFeed, installApp, heavyLockScript, releaseNotes, ReleaseError, winNames };

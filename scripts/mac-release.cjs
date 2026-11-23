@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { auditMacSignature, assertArm64, resolveIdentity, teamOf } = require('./mac-signing.cjs');
+const { auditMacSignature, assertArm64, resolveIdentity, requireReleaseIdentity, teamOf } = require('./mac-signing.cjs');
 
 /** The notarytool keychain profile every MindSuite app shares. */
 const DEFAULT_PROFILE = 'DisplayMind';
@@ -20,7 +20,11 @@ const names = version => ({
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const text = value => (value == null ? '' : String(value));
 
-function makeTools({ exec = cp.execFileSync, env = process.env, log = console.log } = {}) {
+const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const STAPLE_TRIES = 5;
+const STAPLE_BACKOFF_MS = 8 * 1000;
+
+function makeTools({ exec = cp.execFileSync, env = process.env, log = console.log, sleep = pause } = {}) {
   const run = (command, args, options = {}) => exec(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options });
   const profile = env.NOTEMIND_NOTARY_PROFILE?.trim() || DEFAULT_PROFILE;
   const credentials = ['--keychain-profile', profile];
@@ -56,8 +60,21 @@ function makeTools({ exec = cp.execFileSync, env = process.env, log = console.lo
     return result.id;
   }
 
+  /**
+   * A ticket Apple has just accepted is sometimes not fetchable for a few seconds ("Could not find base64 encoded ticket",
+   * error 65), so stapling is retried with a pause before it counts as a failure.
+   */
   const staple = file => {
-    run('/usr/bin/xcrun', ['stapler', 'staple', file]);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        run('/usr/bin/xcrun', ['stapler', 'staple', file]);
+        break;
+      } catch (error) {
+        if (attempt >= STAPLE_TRIES) throw Error(`stapler could not staple ${path.basename(file)} after ${attempt} tries: ${text(error.stderr || error.stdout || error.message).trim()}`);
+        log(`The ticket for ${path.basename(file)} is not ready yet (try ${attempt} of ${STAPLE_TRIES}); waiting`);
+        sleep(STAPLE_BACKOFF_MS * attempt);
+      }
+    }
     run('/usr/bin/xcrun', ['stapler', 'validate', file]);
   };
 
@@ -76,9 +93,9 @@ function makeTools({ exec = cp.execFileSync, env = process.env, log = console.lo
  * Build the release files in `dist` from the app `npm run build` left there.
  * Returns { zip, dmg, sums, hashes } (paths and sha256 by file name).
  */
-function packageRelease({ root, version, exec = cp.execFileSync, env = process.env, log = console.log, spawn = cp.spawnSync, platform = process.platform, arch = process.arch, fileSystem = fs, notarize = true } = {}) {
+function packageRelease({ root, version, exec = cp.execFileSync, env = process.env, log = console.log, spawn = cp.spawnSync, platform = process.platform, arch = process.arch, fileSystem = fs, notarize = true, sleep = pause } = {}) {
   if (platform !== 'darwin' || arch !== 'arm64') throw Error('The release files are made on an Apple Silicon Mac.');
-  const tools = makeTools({ exec, env, log });
+  const tools = makeTools({ exec, env, log, sleep });
   const { run } = tools;
   const app = path.join(root, 'dist', 'NoteMind', 'NoteMind.app');
   const file = names(version);
@@ -87,8 +104,11 @@ function packageRelease({ root, version, exec = cp.execFileSync, env = process.e
 
   const built = text(run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', path.join(app, 'Contents', 'Info.plist')])).trim();
   if (built !== version) throw Error(`The built app is ${built || 'unreadable'} but package.json says ${version}; run npm run build.`);
-  const identity = resolveIdentity({ env, execFileSync: exec, warn() {} });
-  const team = teamOf(identity);
+  // A notarized release is signed with the identity the owner names in full; scratch runs (no notarization) may discover one.
+  const { identity, team } = notarize ? requireReleaseIdentity(env) : (() => {
+    const found = resolveIdentity({ env, execFileSync: exec, warn() {} });
+    return { identity: found, team: teamOf(found) };
+  })();
   if (identity === '-' || !team) throw Error('Releases are signed with a Developer ID Application identity; none is available (ad hoc and unnamed identities cannot be notarized).');
 
   log('Checking every signature in the app');

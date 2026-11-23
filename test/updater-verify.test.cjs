@@ -7,7 +7,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const {createUpdater, pickUpdate, compareVersions, DOWNLOAD_PREFIX} = require('../src/updater.cjs');
-const {prepareUpdate, inspectZip, listedHash, defaultFetchFile, allowedAddress, rateLimited, requirementFor} = require('../src/update-bundle.cjs');
+const {prepareUpdate, inspectZip, machOArch, listedHash, defaultFetchFile, allowedAddress, rateLimited, requirementFor} = require('../src/update-bundle.cjs');
 const TEAM = 'TEAMID0000';
 const REQUIREMENT = requirementFor(TEAM);
 
@@ -21,6 +21,8 @@ test('a release that publishes checksums hands their address to the update', () 
   const offered = pickUpdate(release([asset(zipName), asset(sumsName)]), '0.50.0');
   assert.equal(offered.sumsUrl, `${DOWNLOAD_PREFIX}v${NAME}/${sumsName}`);
   assert.equal(pickUpdate(release([asset(zipName)]), '0.50.0').sumsUrl, '');
+  assert.equal(pickUpdate(release([{...asset(zipName), size: 1234}]), '0.50.0').size, 1234, 'the listed size travels with the update');
+  assert.equal(pickUpdate(release([asset(zipName)]), '0.50.0').size, 0);
   assert.equal(pickUpdate(release([asset(zipName), asset(sumsName, 'https://example.com/sums.txt')]), '0.50.0').sumsUrl, '', 'a checksum file from elsewhere is ignored');
   assert.equal(pickUpdate(release([asset(zipName), asset(`NoteMind-0.99.0-mac-SHA256SUMS.txt`)]), '0.50.0').sumsUrl, '', 'only this version\'s checksums count');
 });
@@ -99,14 +101,14 @@ test('inspectZip demands exactly NoteMind.app, this bundle id, arm64 and a signa
       const tool = path.basename(command);
       if (tool === 'ditto') for (const entry of entries) fs.mkdirSync(path.join(args.at(-1), entry), {recursive: true});
       if (tool === 'plutil') return {CFBundleIdentifier: id, CFBundleExecutable: 'NoteMind', CFBundleShortVersionString: '0.51.0'}[args[1]] + '\n';
-      if (tool === 'lipo') return archs + '\n';
       if (tool === 'codesign' && failVerify && args.join(' ').includes(failVerify)) throw Error('signature invalid');
       return '';
     };
-    return {calls, run};
+    return {calls, run, archOf: () => archs};
   };
   const ok = harness();
-  assert.equal(inspectZip(zip, {run: ok.run, team: TEAM}), '0.51.0');
+  assert.equal(inspectZip(zip, {run: ok.run, team: TEAM, archOf: ok.archOf}), '0.51.0');
+  assert.ok(!ok.calls.some(call => ['lipo', 'otool', 'xcrun'].includes(call[0])), 'no developer-tools shim on a user\'s Mac');
   assert.ok(ok.calls.some(call => call[0] === 'codesign' && call.includes('--deep') && call.includes('--strict')));
   const requirement = ok.calls.find(call => call.some(part => part.startsWith('-R=')));
   assert.ok(requirement && requirement.includes(`-R=${REQUIREMENT}`));
@@ -116,11 +118,11 @@ test('inspectZip demands exactly NoteMind.app, this bundle id, arm64 and a signa
     [{entries: ['NoteMind.app', 'extra.app']}, /exactly NoteMind\.app/],
     [{entries: ['Other.app']}, /exactly NoteMind\.app/],
     [{id: 'com.example.other'}, /not NoteMind/],
-    [{archs: 'x86_64'}, /Apple Silicon/],
-    [{archs: 'arm64 x86_64'}, /Apple Silicon/],
+    [{archs: 'other'}, /Apple Silicon/],
+    [{archs: null}, /Apple Silicon/],
     [{failVerify: '--deep'}, /signature invalid/],
     [{failVerify: '-R='}, /signature invalid/],
-  ]) assert.throws(() => inspectZip(zip, {run: harness(options).run, team: TEAM}), pattern);
+  ]) { const bad = harness(options); assert.throws(() => inspectZip(zip, {run: bad.run, team: TEAM, archOf: bad.archOf}), pattern); }
   assert.throws(() => inspectZip(zip, {run: harness().run, team: null}), /not signed by a team/);
   assert.deepEqual(fs.readdirSync(path.dirname(zip)), ['u.zip'], 'the unpacked app is always removed');
 });
@@ -159,6 +161,8 @@ test('the download streams to a file with its sha256, and refuses a redirect awa
     assert.equal(got.bytes, 5000);
     assert.equal(fs.readFileSync(file).length, 5000);
     await assert.rejects(defaultFetchFile(`${base}/big`, file, {loopback: true, maxBytes: 4000}), /larger than NoteMind allows/);
+    await assert.rejects(defaultFetchFile(`${base}/ok`, file, {loopback: true, expectedBytes: 4999}), /5000 bytes but the release lists 4999/, 'a body of another size than the release lists is not downloaded');
+    assert.equal((await defaultFetchFile(`${base}/ok`, file, {loopback: true, expectedBytes: 5000})).bytes, 5000);
     await assert.rejects(defaultFetchFile(`${base}/ok`, file, {loopback: false}), /not a GitHub release address/);
     await assert.rejects(defaultFetchFile(`${base}/missing`, file, {loopback: true}), /answered 404/);
     const limited = await defaultFetchFile(`${base}/limited`, file, {loopback: true}).catch(error => error);
@@ -273,4 +277,84 @@ test('a failed check that is not a rate limit is still just an error', async () 
   assert.deepEqual(await h.updater.check(), {status: 'error', message: 'The update server answered 500.'});
   await h.updater.check();
   assert.equal(h.fetches(), 2);
+});
+
+test('the architecture comes from the Mach-O header, so the update check needs no developer tools', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'notemind-macho-'));
+  const header = (magic, cpu) => { const buffer = Buffer.alloc(32); buffer.writeUInt32LE(magic, 0); buffer.writeUInt32LE(cpu, 4); return buffer; };
+  const write = (name, bytes) => { const file = path.join(dir, name); fs.writeFileSync(file, bytes); return file; };
+  assert.equal(machOArch(write('arm64', header(0xfeedfacf, 0x0100000c))), 'arm64');
+  assert.equal(machOArch(write('x86_64', header(0xfeedfacf, 0x01000007))), 'other');
+  const fat = Buffer.alloc(32); fat.writeUInt32BE(0xcafebabe, 0);
+  assert.equal(machOArch(write('fat', fat)), 'other', 'a universal file is not an Apple Silicon-only build');
+  assert.equal(machOArch(write('script', Buffer.from('#!/bin/sh\necho hi\n'))), null);
+  assert.equal(machOArch(write('tiny', Buffer.from('abc'))), null);
+  const real = process.platform === 'darwin' && fs.existsSync('/bin/ls') ? machOArch('/bin/ls') : null;
+  if (real) assert.ok(['arm64', 'other'].includes(real), 'reads a real system binary');
+});
+
+test('nothing on the update path runs an xcrun shim (lipo, otool, swift, ...): users do not have developer tools', () => {
+  const shims = /['"`/](?:lipo|otool|swift|swiftc|xcodebuild|xcrun|clang|git|make|python3?|ruby|perl)['"`]/;
+  for (const file of ['src/update-bundle.cjs', 'src/updater.cjs', 'src/updater-win.cjs']) {
+    const code = fs.readFileSync(path.join(__dirname, '..', file), 'utf8').split('\n').filter(line => !/^\s*(?:\/\/|\*|\/\*)/.test(line)).join('\n');
+    assert.doesNotMatch(code, shims, `${file} spawns a developer-tools shim`);
+  }
+  // Every command the real update check spawns is a binary macOS ships, not a shim.
+  const spawned = new Set([...fs.readFileSync(path.join(__dirname, '..', 'src/update-bundle.cjs'), 'utf8').matchAll(/['"](\/usr\/(?:bin|sbin|libexec)\/[a-zA-Z]+)['"]/g)].map(match => match[1]));
+  assert.deepEqual([...spawned].sort(), ['/usr/bin/codesign', '/usr/bin/ditto', '/usr/bin/plutil']);
+});
+
+test('a release whose checksum file was already refused is not downloaded again; a changed release is', async () => {
+  const bad = Buffer.from('not the real zip');
+  const refusedSums = `${'0'.repeat(64)}  ${zipName}\n`;
+  const first = bundleHarness({bytes: bad, sums: refusedSums});
+  let rejection = null;
+  await assert.rejects(prepareUpdate(first.update, first.options), error => { rejection = error.rejection; return /does not match the checksum/.test(error.message); });
+  assert.equal(rejection.version, NAME);
+  assert.match(rejection.key, /^sums:[0-9a-f]{64}$/);
+
+  const again = bundleHarness({bytes: bad, sums: refusedSums});
+  let downloads = 0;
+  again.options.fetchFile = async () => { downloads++; throw Error('must not download'); };
+  await assert.rejects(prepareUpdate(again.update, {...again.options, rejected: rejection}), error => error.alreadyRejected === true && !error.rejection);
+  assert.equal(downloads, 0, 'the body is not fetched a second time');
+  assert.deepEqual(again.leftovers(), []);
+
+  const fixed = bundleHarness();
+  const prepared = await prepareUpdate(fixed.update, {...fixed.options, rejected: rejection});
+  prepared.cleanup();
+
+  const otherVersion = bundleHarness({bytes: bad, sums: refusedSums});
+  otherVersion.update.version = '0.52.0';
+  otherVersion.options.inspect = () => '0.52.0';
+  await assert.rejects(prepareUpdate(otherVersion.update, {...otherVersion.options, rejected: rejection}), /does not match the checksum/, 'a different release is tried');
+
+  const wrongInside = bundleHarness({inside: '0.40.0'});
+  await assert.rejects(prepareUpdate(wrongInside.update, wrongInside.options), error => error.rejection?.version === NAME, 'a wrong app inside is remembered too');
+  const network = bundleHarness({fetchFail: Object.assign(Error('offline'), {status: 500})});
+  await assert.rejects(prepareUpdate(network.update, network.options), error => !error.rejection, 'a failed download is not a refusal');
+});
+
+test('the updater remembers a refused release across restarts and skips it, until another release or a manual check', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'notemind-rejected-'));
+  const prefsFile = path.join(dir, 'updates.json');
+  const make = prepared => {
+    const autoUpdater = new EventEmitter();
+    autoUpdater.setFeedURL = () => {}; autoUpdater.checkForUpdates = () => {};
+    return createUpdater({app: {getVersion: () => '0.50.0', isPackaged: true, getPath: () => dir}, autoUpdater, dialog: {showMessageBox: async () => ({response: 1})}, platform: 'darwin', arch: 'arm64', env: {}, fetchJson: async () => release([asset(zipName), asset(sumsName)]), prepare: prepared, prefsFile, setTimer: () => ({unref() {}}), clearTimer() {}});
+  };
+  const seen = [];
+  const refuse = async (update, extra) => { seen.push(extra.rejected); throw Object.assign(Error('The update zip does not match the checksum the release publishes.'), {rejection: {version: update.version, key: 'sums:abc'}}); };
+  const first = make(refuse);
+  assert.equal((await first.check()).status, 'error');
+  assert.deepEqual(JSON.parse(fs.readFileSync(prefsFile, 'utf8')), {automatic: true, rejected: {version: NAME, key: 'sums:abc'}});
+  first.setAutomatic(false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(prefsFile, 'utf8')).rejected, {version: NAME, key: 'sums:abc'}, 'the setting keeps the refusal');
+
+  const restarted = make(async (update, extra) => { seen.push(extra.rejected); throw Object.assign(Error('refused earlier'), {alreadyRejected: true}); });
+  assert.equal(restarted.isAutomatic(), false);
+  assert.deepEqual(await restarted.check(), {status: 'rejected', message: 'refused earlier'});
+  assert.deepEqual(seen.at(-1), {version: NAME, key: 'sums:abc'}, 'the saved refusal is passed to the check');
+  await restarted.check({manual: true});
+  assert.equal(seen.at(-1), null, 'asking by hand tries again');
 });

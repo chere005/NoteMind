@@ -132,3 +132,13 @@ test('the audit reports a file whose signature does not verify',()=>{
  const bad=APP+'/Contents/Resources/app/src/helpers/wm-pen-display';
  assert.throws(auditHarness({text:()=>good,invalid:bad}),/wm-pen-display: invalid signature/);
 });
+
+test('requireReleaseIdentity accepts only a full Developer ID Application name from the environment', () => {
+  const {requireReleaseIdentity, teamOfApp} = require('../scripts/mac-signing.cjs');
+  assert.deepEqual(requireReleaseIdentity({NOTEMIND_CODESIGN_IDENTITY: ' Developer ID Application: Example Dev (TEAMID0000) '}), {identity: 'Developer ID Application: Example Dev (TEAMID0000)', team: 'TEAMID0000'});
+  for (const value of [undefined, '', '-', 'Developer ID Application: Example Dev', 'Apple Development: Example Dev (TEAMID0000)', '0123456789ABCDEF0123456789ABCDEF01234567']) {
+    assert.throws(() => requireReleaseIdentity({NOTEMIND_CODESIGN_IDENTITY: value}), /full name of one Developer ID Application identity/);
+  }
+  assert.equal(teamOfApp('/x/NoteMind.app', {spawn: () => ({stderr: 'Identifier=x\nTeamIdentifier=TEAMID0000\n'})}), 'TEAMID0000');
+  assert.equal(teamOfApp('/x/NoteMind.app', {spawn: () => ({stderr: 'TeamIdentifier=not set\n'})}), null);
+});

@@ -41,8 +41,9 @@ on:
         default: "1"
         type: string
 
+# Nothing here may write by default. Only the windows job's upload step needs write access, and the job declares it (below).
 permissions:
-  contents: write
+  contents: read
 
 # A person's run (handoff only) gets a group of its own: it must never queue behind, or be cancelled by, the bot's run.
 concurrency:
@@ -96,12 +97,19 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 75
     continue-on-error: true
+    # contents: write is for the last step, which uploads three files into the draft release. The token is never written to
+    # .git/config (persist-credentials: false) and is handed to that one step only, not to npm or the build. Splitting the
+    # upload into its own job would need upload-artifact/download-artifact, which AgentSuite/ci.md forbids.
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to the commit their v5 tag pointed at on 2026-11-23; move them on purpose, not by tag.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          persist-credentials: false
           ref: ${{ inputs.preflight == true && github.sha || format('refs/tags/{0}', env.TAG) }}
 
       - name: The tag is the app's version
@@ -137,7 +145,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$pkg" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
           cache: npm

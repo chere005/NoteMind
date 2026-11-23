@@ -64,6 +64,7 @@ function pickUpdate(release, current, { prefix = DOWNLOAD_PREFIX } = {}) {
   return {
     version: text,
     url,
+    size: Number.isSafeInteger(asset.size) && asset.size > 0 ? asset.size : 0,
     sumsUrl,
     notes: typeof release.body === 'string' ? release.body.slice(0, 4000) : '',
     publishedAt: typeof release.published_at === 'string' ? release.published_at : '',
@@ -82,11 +83,14 @@ function loopbackOverride(value) {
   }
 }
 
-function readAutomatic(file) {
+/** updates.json: { automatic, rejected: { version, key } }; rejected is the last release that was downloaded and refused. */
+function readPrefs(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')).automatic !== false;
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const rejected = saved.rejected && typeof saved.rejected.version === 'string' && typeof saved.rejected.key === 'string' ? { version: saved.rejected.version, key: saved.rejected.key } : null;
+    return { automatic: saved.automatic !== false, rejected };
   } catch {
-    return true;
+    return { automatic: true, rejected: null };
   }
 }
 
@@ -127,7 +131,9 @@ function createMacUpdater({
 }) {
   const override = loopbackOverride(env.NOTEMIND_UPDATE_API);
   const supported = platform === 'darwin' && arch === 'arm64' && (app.isPackaged || !!override);
-  let automatic = readAutomatic(prefsFile);
+  const saved = readPrefs(prefsFile);
+  let automatic = saved.automatic;
+  let rejected = saved.rejected;
   let running = null;
   let ready = null;
   let declined = null;
@@ -135,7 +141,18 @@ function createMacUpdater({
   let started = false;
   let disposed = false;
   let backoffUntil = 0;
-  const prepareZip = prepare || (update => prepareUpdate(update, { current: app.getVersion(), compareVersions, loopback: !!override, log }));
+  const prepareZip = prepare || ((update, extra) => prepareUpdate(update, { current: app.getVersion(), compareVersions, loopback: !!override, log, ...extra }));
+
+  function savePrefs() {
+    try {
+      fs.mkdirSync(path.dirname(prefsFile), { recursive: true });
+      const temp = `${prefsFile}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, JSON.stringify({ automatic, ...(rejected ? { rejected } : {}) }) + '\n');
+      fs.renameSync(temp, prefsFile);
+    } catch (error) {
+      log(`could not save the update settings: ${error.message}`);
+    }
+  }
 
   const parent = () => {
     const window = getWindow();
@@ -181,8 +198,10 @@ function createMacUpdater({
    * Check the release zip (update-bundle.cjs), then hand it to Squirrel through a one-shot server on this Mac; resolves when
    * Squirrel has downloaded it or failed. Squirrel is given the checked file, never the GitHub address.
    */
-  async function download(update) {
-    const prepared = await prepareZip(update);
+  async function download(update, manual) {
+    // A release that was downloaded and refused is not downloaded again until its files change or another release replaces it;
+    // asking by hand tries again.
+    const prepared = await prepareZip(update, { rejected: manual ? null : rejected });
     return new Promise((resolve, reject) => {
       const token = crypto.randomBytes(16).toString('hex');
       let port = 0;
@@ -275,7 +294,7 @@ function createMacUpdater({
     log(`downloading ${update.version}`);
     if (manual) void note(`NoteMind ${update.version} is available.`, 'It downloads in the background and you are asked to restart when it is ready.');
     try {
-      const done = await download(update);
+      const done = await download(update, manual);
       if (!done) return { status: 'current' };
       ready = update;
       log(`downloaded ${update.version}`);
@@ -283,6 +302,14 @@ function createMacUpdater({
       return { status: 'ready', version: update.version };
     } catch (error) {
       if (error.status === 403 || error.status === 429) backoffUntil = now() + (error.retryAfterMs || 60 * 60 * 1000);
+      if (error.alreadyRejected) {
+        log(error.message);
+        return { status: 'rejected', message: error.message };
+      }
+      if (error.rejection) {
+        rejected = error.rejection;
+        savePrefs();
+      }
       log(`download failed: ${error.message}`);
       if (manual) await note('NoteMind could not download the update.', error.message);
       return { status: 'error', message: error.message };
@@ -319,14 +346,7 @@ function createMacUpdater({
 
   function setAutomatic(value) {
     automatic = !!value;
-    try {
-      fs.mkdirSync(path.dirname(prefsFile), { recursive: true });
-      const temp = `${prefsFile}.${process.pid}.tmp`;
-      fs.writeFileSync(temp, JSON.stringify({ automatic }) + '\n');
-      fs.renameSync(temp, prefsFile);
-    } catch (error) {
-      log(`could not save the update setting: ${error.message}`);
-    }
+    savePrefs();
     if (started) schedule(FIRST_CHECK_MS);
   }
 
