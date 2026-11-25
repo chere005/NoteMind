@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Hardened runtime exceptions for NoteMind's Electron app and its helper apps. Anything not listed is denied. -->
+	<!-- V8 and WebAssembly (the OCR worker) generate code at run time. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- The camera pane (video only; NoteMind never asks for the microphone). -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>
